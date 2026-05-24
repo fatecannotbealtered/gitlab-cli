@@ -119,17 +119,17 @@ func cleanup(dir string) {
 
 // sensitiveFlags contains flag names whose values must be redacted in audit logs.
 var sensitiveFlags = map[string]bool{
-	"token":         true,
-	"t":             true, // short for --token
-	"private-token": true, // common GitLab API header name
-	"oauth-token":   true,
-	"job-token":     true,
-	"password":      true, // defensive
-	"value":         true, // CI/CD variable values are secrets
-	"variable":              true, // pipeline create --variable KEY=VAL (repeatable)
-	"content":               true,
-	"content-file":          true,
-	"body":                  true,
+	"token":                true,
+	"t":                    true, // short for --token
+	"private-token":        true, // common GitLab API header name
+	"oauth-token":          true,
+	"job-token":            true,
+	"password":             true, // defensive
+	"value":                true, // CI/CD variable values are secrets
+	"variable":             true, // pipeline create --variable KEY=VAL (repeatable)
+	"content":              true,
+	"content-file":         true,
+	"body":                 true,
 	"merge-commit-message": true,
 }
 

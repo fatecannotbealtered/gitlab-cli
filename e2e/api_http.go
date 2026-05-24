@@ -75,11 +75,11 @@ type createdProject struct {
 // createProject creates a new project under the authenticated user's namespace.
 func (h *httpAPI) createProject(ctx context.Context, name, path string) (*createdProject, error) {
 	body := map[string]any{
-		"name":                      name,
-		"path":                      path,
-		"initialize_with_readme":    true,
-		"visibility":                "private",
-		"merge_method":              "merge",
+		"name":                                  name,
+		"path":                                  path,
+		"initialize_with_readme":                true,
+		"visibility":                            "private",
+		"merge_method":                          "merge",
 		"only_allow_merge_if_pipeline_succeeds": false,
 	}
 	var out createdProject

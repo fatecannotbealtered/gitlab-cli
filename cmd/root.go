@@ -27,8 +27,8 @@ const (
 	ExitRateLimit = 6
 	ExitNetwork   = 7
 	ExitTimeout   = 8
-	ExitCIFailed    = 9  // pipeline/job wait finished in a non-success terminal state
-	ExitCancelled   = 10 // user cancelled or confirmation not provided
+	ExitCIFailed  = 9  // pipeline/job wait finished in a non-success terminal state
+	ExitCancelled = 10 // user cancelled or confirmation not provided
 )
 
 // ErrSilent indicates the error has been printed; cobra should not print again.

@@ -17,7 +17,7 @@ type CommandCase struct {
 	ExtraEnv func(f *Fixture) map[string]string
 }
 
-func j(args ...string) []string { return append(args, "--json") }
+func j(args ...string) []string   { return append(args, "--json") }
 func dry(args ...string) []string { return append(args, "--dry-run", "--json") }
 
 func pa(f *Fixture, parts ...string) []string {
@@ -107,14 +107,18 @@ func BuildCommandCases(f *Fixture) []CommandCase {
 		{Path: "issue label", Args: func(f *Fixture) []string { return pad(f, "issue", "label", f.IssueIIDStr(), "--add", f.LabelName) }},
 		{Path: "issue comment list", Args: func(f *Fixture) []string { return pa(f, "issue", "comment", "list", f.IssueIIDStr(), "--limit", "5") }},
 		{Path: "issue comment add", Args: func(f *Fixture) []string { return pad(f, "issue", "comment", "add", f.IssueIIDStr(), "--body", "e2e") }},
-		{Path: "issue comment delete", Args: func(f *Fixture) []string { return pad(f, "issue", "comment", "delete", f.IssueIIDStr(), "--note-id", f.NoteIDStr()) }},
+		{Path: "issue comment delete", Args: func(f *Fixture) []string {
+			return pad(f, "issue", "comment", "delete", f.IssueIIDStr(), "--note-id", f.NoteIDStr())
+		}},
 
 		// mr
 		{Path: "mr list", Args: func(f *Fixture) []string { return pa(f, "mr", "list", "--limit", "5") }},
 		{Path: "mr get", Args: func(f *Fixture) []string { return pa(f, "mr", "get", f.MRIIDStr()) }},
 		{Path: "mr current", Args: func(f *Fixture) []string { return j() }, WorkDir: func(f *Fixture) string { return f.GitCloneDir }, SkipIf: skipNoGit},
 		{Path: "mr diff", Args: func(f *Fixture) []string { return pa(f, "mr", "diff", f.MRIIDStr()) }},
-		{Path: "mr create", Args: func(f *Fixture) []string { return pad(f, "mr", "create", "--title", "e2e", "--source-branch", f.BranchFeature) }},
+		{Path: "mr create", Args: func(f *Fixture) []string {
+			return pad(f, "mr", "create", "--title", "e2e", "--source-branch", f.BranchFeature)
+		}},
 		{Path: "mr update", Args: func(f *Fixture) []string { return pad(f, "mr", "update", f.MRIIDStr(), "--title", "e2e mr") }},
 		{Path: "mr merge", Args: func(f *Fixture) []string { return pad(f, "mr", "merge", f.MRIIDStr()) }},
 		{Path: "mr close", Args: func(f *Fixture) []string { return pad(f, "mr", "close", f.MRIIDStr()) }},
@@ -123,26 +127,36 @@ func BuildCommandCases(f *Fixture) []CommandCase {
 		{Path: "mr unapprove", Args: func(f *Fixture) []string { return pad(f, "mr", "unapprove", f.MRIIDStr()) }},
 		{Path: "mr comment list", Args: func(f *Fixture) []string { return pa(f, "mr", "comment", "list", f.MRIIDStr(), "--limit", "5") }},
 		{Path: "mr comment add", Args: func(f *Fixture) []string { return pad(f, "mr", "comment", "add", f.MRIIDStr(), "--body", "e2e") }},
-		{Path: "mr comment delete", Args: func(f *Fixture) []string { return pad(f, "mr", "comment", "delete", f.MRIIDStr(), "--note-id", f.MRNoteIDStr()) }},
+		{Path: "mr comment delete", Args: func(f *Fixture) []string {
+			return pad(f, "mr", "comment", "delete", f.MRIIDStr(), "--note-id", f.MRNoteIDStr())
+		}},
 
 		// label
 		{Path: "label list", Args: func(f *Fixture) []string { return pa(f, "label", "list", "--limit", "10") }},
-		{Path: "label create", Args: func(f *Fixture) []string { return pad(f, "label", "create", "--name", "e2e-other", "--color", "#abcdef") }},
-		{Path: "label update", Args: func(f *Fixture) []string { return pad(f, "label", "update", "--label-id", f.LabelIDStr(), "--description", "e2e") }},
+		{Path: "label create", Args: func(f *Fixture) []string {
+			return pad(f, "label", "create", "--name", "e2e-other", "--color", "#abcdef")
+		}},
+		{Path: "label update", Args: func(f *Fixture) []string {
+			return pad(f, "label", "update", "--label-id", f.LabelIDStr(), "--description", "e2e")
+		}},
 		{Path: "label delete", Args: func(f *Fixture) []string { return pad(f, "label", "delete", "--label-id", "999999") }},
 
 		// milestone
 		{Path: "milestone list", Args: func(f *Fixture) []string { return pa(f, "milestone", "list", "--limit", "5") }},
 		{Path: "milestone get", Args: func(f *Fixture) []string { return pa(f, "milestone", "get", "--milestone-id", f.MilestoneIDStr()) }},
 		{Path: "milestone create", Args: func(f *Fixture) []string { return pad(f, "milestone", "create", "--title", "e2e-ms") }},
-		{Path: "milestone update", Args: func(f *Fixture) []string { return pad(f, "milestone", "update", "--milestone-id", f.MilestoneIDStr(), "--title", "e2e-milestone") }},
+		{Path: "milestone update", Args: func(f *Fixture) []string {
+			return pad(f, "milestone", "update", "--milestone-id", f.MilestoneIDStr(), "--title", "e2e-milestone")
+		}},
 		{Path: "milestone close", Args: func(f *Fixture) []string { return pad(f, "milestone", "close", "--milestone-id", f.MilestoneIDStr()) }},
 
 		// variable
 		{Path: "variable list", Args: func(f *Fixture) []string { return pa(f, "variable", "list", "--limit", "10") }},
 		{Path: "variable get", Args: func(f *Fixture) []string { return pa(f, "variable", "get", "--key", f.VariableKey) }},
 		{Path: "variable create", Args: func(f *Fixture) []string { return pad(f, "variable", "create", "--key", "E2E_OTHER", "--value", "v") }},
-		{Path: "variable update", Args: func(f *Fixture) []string { return pad(f, "variable", "update", "--key", f.VariableKey, "--value", "v2") }},
+		{Path: "variable update", Args: func(f *Fixture) []string {
+			return pad(f, "variable", "update", "--key", f.VariableKey, "--value", "v2")
+		}},
 		{Path: "variable delete", Args: func(f *Fixture) []string { return pad(f, "variable", "delete", "--key", "E2E_OTHER") }},
 
 		// release
@@ -154,11 +168,19 @@ func BuildCommandCases(f *Fixture) []CommandCase {
 
 		// repo
 		{Path: "repo file get", Args: func(f *Fixture) []string { return pa(f, "repo", "file", "get", "--path", f.FilePath, "--ref", "main") }},
-		{Path: "repo file create", Args: func(f *Fixture) []string { return pad(f, "repo", "file", "create", "--path", "e2e-new.txt", "--branch", "main", "--content", "x", "--commit-message", "e2e") }},
-		{Path: "repo file update", Args: func(f *Fixture) []string { return pad(f, "repo", "file", "update", "--path", f.FilePath, "--branch", "main", "--content", "readme", "--commit-message", "e2e") }},
-		{Path: "repo file delete", Args: func(f *Fixture) []string { return pad(f, "repo", "file", "delete", "--path", "e2e-del.txt", "--branch", "main", "--commit-message", "e2e") }},
+		{Path: "repo file create", Args: func(f *Fixture) []string {
+			return pad(f, "repo", "file", "create", "--path", "e2e-new.txt", "--branch", "main", "--content", "x", "--commit-message", "e2e")
+		}},
+		{Path: "repo file update", Args: func(f *Fixture) []string {
+			return pad(f, "repo", "file", "update", "--path", f.FilePath, "--branch", "main", "--content", "readme", "--commit-message", "e2e")
+		}},
+		{Path: "repo file delete", Args: func(f *Fixture) []string {
+			return pad(f, "repo", "file", "delete", "--path", "e2e-del.txt", "--branch", "main", "--commit-message", "e2e")
+		}},
 		{Path: "repo branch list", Args: func(f *Fixture) []string { return pa(f, "repo", "branch", "list", "--limit", "10") }},
-		{Path: "repo branch create", Args: func(f *Fixture) []string { return pad(f, "repo", "branch", "create", "--name", "feat/e2e-2", "--ref", "main") }},
+		{Path: "repo branch create", Args: func(f *Fixture) []string {
+			return pad(f, "repo", "branch", "create", "--name", "feat/e2e-2", "--ref", "main")
+		}},
 		{Path: "repo branch delete", Args: func(f *Fixture) []string { return pad(f, "repo", "branch", "delete", "--name", "feat/e2e-2") }},
 		{Path: "repo commit list", Args: func(f *Fixture) []string { return pa(f, "repo", "commit", "list", "--limit", "3") }},
 		{Path: "repo commit get", Args: func(f *Fixture) []string { return pa(f, "repo", "commit", "get", f.CommitSHA) }, SkipIf: func(f *Fixture) string {

@@ -9,8 +9,8 @@ import (
 )
 
 type refCommand struct {
-	Name     string        `json:"name"`
-	Commands []refCommand  `json:"commands,omitempty"`
+	Name     string       `json:"name"`
+	Commands []refCommand `json:"commands,omitempty"`
 }
 
 type refTree struct {

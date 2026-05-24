@@ -56,17 +56,17 @@ type refCommand struct {
 
 // refTree is the root JSON document for `reference --json`.
 type refTree struct {
-	Version        string       `json:"version"`
-	GlobalFlags    []refFlag    `json:"globalFlags"`
-	ExitCodes      map[int]string `json:"exitCodes"`
-	Commands       []refCommand `json:"commands"`
+	Version     string         `json:"version"`
+	GlobalFlags []refFlag      `json:"globalFlags"`
+	ExitCodes   map[int]string `json:"exitCodes"`
+	Commands    []refCommand   `json:"commands"`
 }
 
 var positionalArgRe = regexp.MustCompile(`<([^>]+)>`)
 
 func buildReferenceTree(root *cobra.Command) refTree {
 	tree := refTree{
-		Version: root.Version,
+		Version:     root.Version,
 		GlobalFlags: collectPersistentRefFlags(root),
 		ExitCodes: map[int]string{
 			0:  "success",

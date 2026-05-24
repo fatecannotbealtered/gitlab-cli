@@ -54,7 +54,7 @@ func BuildCLI(t *testing.T) string {
 
 // RunOptions overrides process environment and working directory for a CLI invocation.
 type RunOptions struct {
-	WorkDir string
+	WorkDir  string
 	ExtraEnv map[string]string
 }
 
