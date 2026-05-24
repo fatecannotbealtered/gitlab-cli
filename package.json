@@ -22,6 +22,9 @@
     "url": "git+https://github.com/fatecannotbealtered/gitlab-cli.git"
   },
   "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
   "bin": {
     "gitlab-cli": "scripts/run.js"
   },
