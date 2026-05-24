@@ -16,7 +16,7 @@ func TestDoctor_Help(t *testing.T) {
 	rootCmd.SetOut(nil)
 	// Reset the help flag so it doesn't persist into subsequent tests.
 	if f := doctorCmd.Flags().Lookup("help"); f != nil {
-		f.Value.Set("false")
+		_ = f.Value.Set("false")
 	}
 	out := buf.String()
 	if !strings.Contains(out, "doctor") {

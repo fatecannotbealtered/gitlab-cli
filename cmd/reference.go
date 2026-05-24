@@ -220,7 +220,7 @@ func printReference(cmd *cobra.Command, root *cobra.Command) {
 
 	out := cmd.OutOrStdout()
 	for _, line := range lines {
-		fmt.Fprintln(out, line)
+		_, _ = fmt.Fprintln(out, line)
 	}
 }
 

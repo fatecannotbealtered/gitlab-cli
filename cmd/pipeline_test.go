@@ -654,7 +654,7 @@ func TestPipeline_Current_NotInGitRepo(t *testing.T) {
 	origDir, _ := os.Getwd()
 	tmpDir := t.TempDir()
 	_ = os.Chdir(tmpDir)
-	defer os.Chdir(origDir)
+	defer func() { _ = os.Chdir(origDir) }()
 	rootCmd.SetArgs([]string{"pipeline", "current"})
 	_ = rootCmd.Execute()
 	if lastExit == ExitOK {

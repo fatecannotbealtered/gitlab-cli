@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/url"
 	"strconv"
-	"strings"
 )
 
 // IssueAPI wraps issue-related API calls.
@@ -214,20 +213,4 @@ func (a *IssueAPI) AddNote(ctx context.Context, projectID string, iid int, body 
 func (a *IssueAPI) DeleteNote(ctx context.Context, projectID string, iid, noteID int) error {
 	path := a.client.APIPath("/projects/" + EncodeProjectPath(projectID) + "/issues/" + strconv.Itoa(iid) + "/notes/" + strconv.Itoa(noteID))
 	return a.client.Delete(ctx, path)
-}
-
-// resolveAssigneeID looks up a user by username and returns their ID.
-// Returns 0 if username is empty.
-func (a *IssueAPI) resolveAssigneeID(ctx context.Context, username string) (int, error) {
-	if strings.TrimSpace(username) == "" {
-		return 0, nil
-	}
-	u, err := a.client.Users.GetByUsername(ctx, username)
-	if err != nil {
-		return 0, err
-	}
-	if u == nil {
-		return 0, fmt.Errorf("user %q not found", username)
-	}
-	return u.ID, nil
 }

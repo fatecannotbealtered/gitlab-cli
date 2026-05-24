@@ -282,7 +282,7 @@ var jobWaitCmd = &cobra.Command{
 				return ErrSilent
 			}
 			if !jsonMode && !quietMode {
-				fmt.Fprintf(cmd.ErrOrStderr(), "Waiting... status=%s (%.0fs elapsed)\n", j.Status, elapsed.Seconds())
+				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Waiting... status=%s (%.0fs elapsed)\n", j.Status, elapsed.Seconds())
 			}
 			if err := sleepContext(cmd.Context(), interval); err != nil {
 				output.Error(err.Error())

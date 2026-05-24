@@ -98,7 +98,7 @@ func TestJobWaitCmd(t *testing.T) {
 			status = "failed"
 		}
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprintf(w, `{"id":99,"name":"build","status":%q,"stage":"build","ref":"main"}`, status)
+		_, _ = fmt.Fprintf(w, `{"id":99,"name":"build","status":%q,"stage":"build","ref":"main"}`, status)
 	}))
 	defer srv.Close()
 
@@ -230,7 +230,7 @@ func TestJob_Wait_Success(t *testing.T) {
 			status = "success"
 		}
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprintf(w, `{"id":10,"name":"build","status":%q,"stage":"build","ref":"main"}`, status)
+		_, _ = fmt.Fprintf(w, `{"id":10,"name":"build","status":%q,"stage":"build","ref":"main"}`, status)
 	}))
 	defer srv.Close()
 
@@ -474,8 +474,8 @@ func TestJob_Artifacts_JSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp file: %v", err)
 	}
-	tmpFile.Close()
-	defer os.Remove(tmpFile.Name())
+	_ = tmpFile.Close()
+	defer func() { _ = os.Remove(tmpFile.Name()) }()
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/zip")

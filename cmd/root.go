@@ -260,19 +260,6 @@ func newClient() (*api.Client, *config.Config, error) {
 	return api.NewClient(cfg), cfg, nil
 }
 
-// resolveUsername resolves "me" to the current user's username.
-// For GitLab, "me" maps to the current user's username (used by mr/issue assign etc).
-func resolveUsername(client *api.Client, name string) (string, error) {
-	if name == "me" {
-		me, err := client.Users.Me(apiCtx())
-		if err != nil {
-			return "", handleAPIError(err, jsonMode)
-		}
-		return me.Username, nil
-	}
-	return name, nil
-}
-
 // resolveUserID resolves "me" or a username string to a numeric GitLab user ID
 // using exactly one API call:
 //   - "me"  -> GET /user

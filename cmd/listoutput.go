@@ -48,12 +48,3 @@ func printListJSON(cmd *cobra.Command, rows []map[string]any, pag api.Pagination
 	}
 	output.PrintJSON(output.NewListEnvelope(items, meta))
 }
-
-// printFlatListJSON prints list envelope with heuristic hasMore when API pagination is unavailable.
-func printFlatListJSON(cmd *cobra.Command, rows []map[string]any, limit int, fetchAll bool) {
-	pag := api.Pagination{PerPage: limit}
-	if limit > 0 && len(rows) >= limit && !fetchAll {
-		pag.NextPage = 2
-	}
-	printListJSON(cmd, rows, pag, limit, fetchAll)
-}

@@ -692,7 +692,7 @@ func TestMR_Current_NotInGitRepo(t *testing.T) {
 	origDir, _ := os.Getwd()
 	tmpDir := t.TempDir()
 	_ = os.Chdir(tmpDir)
-	defer os.Chdir(origDir)
+	defer func() { _ = os.Chdir(origDir) }()
 	rootCmd.SetArgs([]string{"mr", "current"})
 	_ = rootCmd.Execute()
 	// Should fail with ExitNotFound since not in a git repo
@@ -712,7 +712,7 @@ func TestMR_Create_Auto_NotInGitRepo(t *testing.T) {
 	origDir, _ := os.Getwd()
 	tmpDir := t.TempDir()
 	_ = os.Chdir(tmpDir)
-	defer os.Chdir(origDir)
+	defer func() { _ = os.Chdir(origDir) }()
 	rootCmd.SetArgs([]string{"mr", "create", "--auto"})
 	_ = rootCmd.Execute()
 	if lastExit == ExitOK {

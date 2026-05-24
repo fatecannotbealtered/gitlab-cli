@@ -316,10 +316,10 @@ func TestIssue_Create_JSON(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case strings.Contains(r.URL.Path, "/users"):
-			fmt.Fprint(w, `[{"id":42,"username":"alice"}]`)
+			_, _ = fmt.Fprint(w, `[{"id":42,"username":"alice"}]`)
 		default:
 			w.WriteHeader(http.StatusCreated)
-			fmt.Fprint(w, `{"id":1,"iid":1,"title":"bug","state":"opened","author":{"username":"alice"},"web_url":"http://x","created_at":"2024-01-01","updated_at":"2024-01-01"}`)
+			_, _ = fmt.Fprint(w, `{"id":1,"iid":1,"title":"bug","state":"opened","author":{"username":"alice"},"web_url":"http://x","created_at":"2024-01-01","updated_at":"2024-01-01"}`)
 		}
 	}))
 	defer srv.Close()
@@ -341,7 +341,7 @@ func TestIssue_Create_JSON(t *testing.T) {
 func TestIssue_Update_JSON(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"id":1,"iid":1,"title":"fixed","state":"opened","author":{"username":"alice"},"web_url":"http://x","created_at":"2024-01-01","updated_at":"2024-01-01"}`)
+		_, _ = fmt.Fprint(w, `{"id":1,"iid":1,"title":"fixed","state":"opened","author":{"username":"alice"},"web_url":"http://x","created_at":"2024-01-01","updated_at":"2024-01-01"}`)
 	}))
 	defer srv.Close()
 	t.Setenv("GITLAB_CLI_HOST", srv.URL)

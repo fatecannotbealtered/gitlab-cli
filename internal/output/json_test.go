@@ -18,7 +18,7 @@ func TestPrintJSON_Compact(t *testing.T) {
 	r, w, _ := os.Pipe()
 	os.Stdout = w
 	PrintJSON(map[string]any{"a": 1})
-	w.Close()
+	_ = w.Close()
 	os.Stdout = old
 	_, _ = indented.ReadFrom(r)
 	if !strings.Contains(indented.String(), "\n") {
@@ -30,7 +30,7 @@ func TestPrintJSON_Compact(t *testing.T) {
 	r2, w2, _ := os.Pipe()
 	os.Stdout = w2
 	PrintJSON(map[string]any{"a": 1})
-	w2.Close()
+	_ = w2.Close()
 	os.Stdout = old
 	_, _ = compact.ReadFrom(r2)
 	out := strings.TrimSpace(compact.String())

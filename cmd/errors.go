@@ -11,12 +11,6 @@ func failArg(msg string) error {
 	return ErrSilent
 }
 
-// failAuth reports missing or invalid credentials (exit 3).
-func failAuth(msg string) error {
-	emitError(msg, ExitAuth, output.ErrAuth)
-	return ErrSilent
-}
-
 // failNotFound reports a missing resource (exit 4).
 func failNotFound(msg string) error {
 	emitError(msg, ExitNotFound, output.ErrNotFound)
