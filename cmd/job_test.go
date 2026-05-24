@@ -300,7 +300,7 @@ func TestJob_Retry_JSON(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/retry") {
 			w.Header().Set("Content-Type", "application/json")
-			fmt.Fprint(w, `{"id":10,"name":"build","status":"pending","stage":"build","ref":"main","web_url":"http://x","created_at":"2024-01-01","duration":0}`)
+			_, _ = fmt.Fprint(w, `{"id":10,"name":"build","status":"pending","stage":"build","ref":"main","web_url":"http://x","created_at":"2024-01-01","duration":0}`)
 			return
 		}
 		http.NotFound(w, r)

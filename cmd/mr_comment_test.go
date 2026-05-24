@@ -223,7 +223,7 @@ func TestMRComment_List_LongBody(t *testing.T) {
 	longBody := strings.Repeat("x", 100)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `[{"id":1,"body":%q,"system":false,"author":{"username":"alice"},"created_at":"2024-01-01"}]`, longBody)
+		_, _ = fmt.Fprintf(w, `[{"id":1,"body":%q,"system":false,"author":{"username":"alice"},"created_at":"2024-01-01"}]`, longBody)
 	}))
 	defer srv.Close()
 	t.Setenv("GITLAB_CLI_HOST", srv.URL)

@@ -362,7 +362,7 @@ func TestIssue_Update_JSON(t *testing.T) {
 func TestIssue_Close_JSON(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"id":1,"iid":1,"title":"bug","state":"closed","author":{"username":"alice"},"web_url":"http://x","created_at":"2024-01-01","updated_at":"2024-01-01"}`)
+		_, _ = fmt.Fprint(w, `{"id":1,"iid":1,"title":"bug","state":"closed","author":{"username":"alice"},"web_url":"http://x","created_at":"2024-01-01","updated_at":"2024-01-01"}`)
 	}))
 	defer srv.Close()
 	t.Setenv("GITLAB_CLI_HOST", srv.URL)
@@ -383,7 +383,7 @@ func TestIssue_Close_JSON(t *testing.T) {
 func TestIssue_Reopen_JSON(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"id":1,"iid":1,"title":"bug","state":"opened","author":{"username":"alice"},"web_url":"http://x","created_at":"2024-01-01","updated_at":"2024-01-01"}`)
+		_, _ = fmt.Fprint(w, `{"id":1,"iid":1,"title":"bug","state":"opened","author":{"username":"alice"},"web_url":"http://x","created_at":"2024-01-01","updated_at":"2024-01-01"}`)
 	}))
 	defer srv.Close()
 	t.Setenv("GITLAB_CLI_HOST", srv.URL)

@@ -132,7 +132,7 @@ func TestPipelineWaitCmd(t *testing.T) {
 			status = "success"
 		}
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprintf(w, `{"id":10,"iid":1,"ref":"main","status":%q}`, status)
+		_, _ = fmt.Fprintf(w, `{"id":10,"iid":1,"ref":"main","status":%q}`, status)
 	}))
 	defer srv.Close()
 
@@ -303,7 +303,7 @@ func TestPipeline_Wait_Success(t *testing.T) {
 			status = "success"
 		}
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprintf(w, `{"id":1,"iid":1,"ref":"main","status":%q,"project_id":1}`, status)
+		_, _ = fmt.Fprintf(w, `{"id":1,"iid":1,"ref":"main","status":%q,"project_id":1}`, status)
 	}))
 	defer srv.Close()
 
