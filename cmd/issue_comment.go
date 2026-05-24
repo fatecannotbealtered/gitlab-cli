@@ -1,0 +1,193 @@
+package cmd
+
+import (
+	"fmt"
+	"strconv"
+
+	"github.com/fatecannotbealtered/gitlab-cli/internal/output"
+	"github.com/spf13/cobra"
+)
+
+var issueCommentCmd = &cobra.Command{
+	Use:   "comment",
+	Short: "Manage issue comments",
+}
+
+func init() {
+	issueCmd.AddCommand(issueCommentCmd)
+
+	// comment add
+	issueCommentAddCmd.Flags().String("project", "", "Project ID or path (required)")
+	issueCommentAddCmd.Flags().String("body", "", "Comment body")
+	issueCommentAddCmd.Flags().String("body-file", "", "Read comment body from file")
+	issueCommentCmd.AddCommand(issueCommentAddCmd)
+	markWrite(issueCommentAddCmd)
+
+	// comment list
+	issueCommentListCmd.Flags().String("project", "", "Project ID or path (required)")
+	issueCommentListCmd.Flags().Int("limit", 20, "Max results (1-100)")
+	issueCommentListCmd.Flags().String("fields", "", "Comma-separated fields to include in JSON output")
+	issueCommentCmd.AddCommand(issueCommentListCmd)
+
+	// comment delete
+	issueCommentDeleteCmd.Flags().String("project", "", "Project ID or path (required)")
+	issueCommentDeleteCmd.Flags().Int("note-id", 0, "Note ID (required)")
+	issueCommentCmd.AddCommand(issueCommentDeleteCmd)
+	markWrite(issueCommentDeleteCmd)
+	markConfirm(issueCommentDeleteCmd)
+}
+
+var issueCommentAddCmd = &cobra.Command{
+	Use:   "add <iid>",
+	Short: "Add a comment to an issue",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		project, _ := cmd.Flags().GetString("project")
+		if project == "" {
+			return failArg("--project is required")
+		}
+		iid, err := strconv.Atoi(args[0])
+		if err != nil {
+			return failArg("iid must be a number")
+		}
+		body, _ := cmd.Flags().GetString("body")
+		bodyFile, _ := cmd.Flags().GetString("body-file")
+		if bodyFile != "" {
+			content, err := readBodyFile(bodyFile)
+			if err != nil {
+				output.Error(err.Error())
+				setExitCode(ExitBadArgs)
+				return ErrSilent
+			}
+			body = content
+		}
+		if body == "" {
+			return failArg("--body or --body-file is required")
+		}
+		if dryRunOutput("add comment", map[string]any{"project": project, "iid": iid, "body": body}) {
+			return nil
+		}
+		client, _, err := newClient()
+		if err != nil {
+			return err
+		}
+		note, err := client.Issues.AddNote(apiCtx(), project, iid, body)
+		if err != nil {
+			return handleAPIError(err, jsonMode)
+		}
+		if jsonMode {
+			output.PrintJSON(map[string]any{
+				"id":   note.ID,
+				"body": note.Body,
+			})
+			return nil
+		}
+		output.Success(fmt.Sprintf("Added comment #%d to issue #%d", note.ID, iid))
+		return nil
+	},
+}
+
+var issueCommentListCmd = &cobra.Command{
+	Use:   "list <iid>",
+	Short: "List comments on an issue",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		client, _, err := newClient()
+		if err != nil {
+			return err
+		}
+		project, _ := cmd.Flags().GetString("project")
+		if project == "" {
+			return failArg("--project is required")
+		}
+		iid, err := strconv.Atoi(args[0])
+		if err != nil {
+			return failArg("iid must be a number")
+		}
+		limit, err := requireLimit(cmd)
+		if err != nil {
+			return err
+		}
+		notes, err := client.Issues.ListNotes(apiCtx(), project, iid, limit)
+		if err != nil {
+			return handleAPIError(err, jsonMode)
+		}
+		if jsonMode {
+			fields := getFieldsFlag(cmd)
+			out := make([]map[string]any, 0, len(notes))
+			for _, n := range notes {
+				if n.System {
+					continue
+				}
+				m := map[string]any{"id": n.ID, "body": n.Body}
+				if n.Author != nil {
+					m["author"] = n.Author.Username
+				}
+				out = append(out, output.FilterMap(m, fields))
+			}
+			output.PrintJSON(out)
+			return nil
+		}
+		if len(notes) == 0 {
+			output.Info("No comments found.")
+			return nil
+		}
+		headers := []string{"ID", "AUTHOR", "BODY"}
+		rows := [][]string{}
+		for _, n := range notes {
+			if n.System {
+				continue
+			}
+			body := n.Body
+			if len(body) > 80 {
+				body = body[:77] + "..."
+			}
+			rows = append(rows, []string{
+				fmt.Sprintf("%d", n.ID),
+				usernameOf(n.Author),
+				body,
+			})
+		}
+		output.Table(headers, rows)
+		return nil
+	},
+}
+
+var issueCommentDeleteCmd = &cobra.Command{
+	Use:   "delete <iid>",
+	Short: "Delete a comment from an issue",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		project, _ := cmd.Flags().GetString("project")
+		if project == "" {
+			return failArg("--project is required")
+		}
+		iid, err := strconv.Atoi(args[0])
+		if err != nil {
+			return failArg("iid must be a number")
+		}
+		noteID, _ := cmd.Flags().GetInt("note-id")
+		if noteID == 0 {
+			return failArg("--note-id is required")
+		}
+		if dryRunOutput("delete comment", map[string]any{"project": project, "iid": iid, "noteId": noteID}) {
+			return nil
+		}
+		client, _, err := newClient()
+		if err != nil {
+			return err
+		}
+		if err := requireConfirm(cmd, fmt.Sprintf("Type the note ID (%d) to confirm deletion", noteID), strconv.Itoa(noteID)); err != nil {
+			return err
+		}
+		if err := client.Issues.DeleteNote(apiCtx(), project, iid, noteID); err != nil {
+			return handleAPIError(err, jsonMode)
+		}
+		if jsonMode {
+			output.PrintJSON(map[string]any{"deleted": true, "noteId": noteID})
+			return nil
+		}
+		output.Success(fmt.Sprintf("Deleted comment #%d", noteID))
+		return nil
+	},
+}

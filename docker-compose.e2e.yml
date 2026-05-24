@@ -1,0 +1,66 @@
+# Local GitLab CE for gitlab-cli E2E testing.
+# Usage: docker compose -f docker-compose.e2e.yml up -d
+# UI:    http://localhost:8929  (user: root, password: see GITLAB_ROOT_PASSWORD below)
+# CLI:   GITLAB_CLI_HOST=http://localhost:8929  GITLAB_CLI_TOKEN=<PAT from scripts/e2e-up.ps1>
+#
+# Store GitLab data on D: (bind mounts; create dirs in e2e-up.ps1 -DataRoot):
+#   .\scripts\e2e-up.ps1 -DataRoot D:\gitlab-cli-e2e
+
+services:
+  gitlab:
+    image: gitlab/gitlab-ce:17.11.4-ce.0
+    container_name: gitlab-cli-e2e
+    hostname: gitlab.local
+    shm_size: "256m"
+    restart: unless-stopped
+    # external_url 含 :8929 时，容器内 nginx 监听 8929（不是 80），必须 8929:8929
+    ports:
+      - "8929:8929"
+      - "2289:22"
+    environment:
+      # 仅首次初始化数据卷时生效；已有数据卷请用 scripts/e2e-reset-password.ps1
+      GITLAB_ROOT_PASSWORD: ${GITLAB_ROOT_PASSWORD:-Xk9#mQ7vL2pRn4W8!}
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url 'http://localhost:8929'
+        gitlab_rails['gitlab_shell_ssh_port'] = 2289
+        gitlab_rails['allow_local_requests_from_web_hooks_and_services'] = true
+        gitlab_rails['allow_local_requests_from_system_hooks'] = true
+        # Faster boot for dev (not for production)
+        prometheus_monitoring['enable'] = false
+        sidekiq['max_concurrency'] = 10
+    volumes:
+      - ${GITLAB_E2E_CONFIG:-gitlab-cli-e2e-config}:/etc/gitlab
+      - ${GITLAB_E2E_LOGS:-gitlab-cli-e2e-logs}:/var/log/gitlab
+      - ${GITLAB_E2E_DATA:-gitlab-cli-e2e-data}:/var/opt/gitlab
+    healthcheck:
+      test: ["CMD", "/opt/gitlab/bin/gitlab-healthcheck", "--fail"]
+      interval: 30s
+      timeout: 10s
+      retries: 20
+      start_period: 300s
+    networks:
+      - e2e
+
+  # Demo CI runner: docker executor, shares GitLab network for job clones (localhost:8929).
+  gitlab-runner:
+    image: gitlab/gitlab-runner:v17.11.0
+    container_name: gitlab-cli-e2e-runner
+    restart: unless-stopped
+    depends_on:
+      gitlab:
+        condition: service_healthy
+    volumes:
+      - gitlab-cli-e2e-runner-config:/etc/gitlab-runner
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - e2e
+
+networks:
+  e2e:
+    name: gitlab-cli-e2e-net
+
+volumes:
+  gitlab-cli-e2e-config:
+  gitlab-cli-e2e-logs:
+  gitlab-cli-e2e-data:
+  gitlab-cli-e2e-runner-config:

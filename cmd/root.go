@@ -1,0 +1,359 @@
+package cmd
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"runtime/debug"
+	"strings"
+	"time"
+
+	"github.com/fatecannotbealtered/gitlab-cli/internal/api"
+	"github.com/fatecannotbealtered/gitlab-cli/internal/audit"
+	"github.com/fatecannotbealtered/gitlab-cli/internal/config"
+	"github.com/fatecannotbealtered/gitlab-cli/internal/output"
+	"github.com/spf13/cobra"
+)
+
+// Exit codes for machine-readable error classification.
+const (
+	ExitOK        = 0
+	ExitBadArgs   = 2
+	ExitAuth      = 3
+	ExitNotFound  = 4
+	ExitForbidden = 5
+	ExitRateLimit = 6
+	ExitNetwork   = 7
+	ExitTimeout   = 8
+	ExitCIFailed    = 9  // pipeline/job wait finished in a non-success terminal state
+	ExitCancelled   = 10 // user cancelled or confirmation not provided
+)
+
+// ErrSilent indicates the error has been printed; cobra should not print again.
+var ErrSilent = errors.New("")
+
+// version is injected by goreleaser ldflags.
+var version = "dev"
+
+// Global flags.
+var (
+	jsonMode    bool
+	compactJSON bool
+	forceMode   bool
+	quietMode   bool
+	dryRun      bool
+)
+
+// fieldsFlag is set by commands that opt into the global --fields flag.
+// It's a comma-separated list of field names to include in JSON output.
+//
+// Each command that wants --fields registers it on its own flag set
+// (this keeps it from leaking onto commands that don't have a flat schema).
+//
+// Helper: getFieldsFlag(cmd) returns the parsed list.
+
+// lastExit tracks the exit code for the current command execution.
+var lastExit int
+
+// cmdStartTime records when the current command began (for audit logging).
+var cmdStartTime time.Time
+
+// activeCmd is the innermost command currently running (for context propagation).
+var activeCmd *cobra.Command
+
+// LastExitCode returns the exit code from the last command execution.
+func LastExitCode() int { return lastExit }
+
+// apiCtx returns the context for API calls from CLI commands (honours SIGINT when set).
+func apiCtx() context.Context {
+	if activeCmd != nil {
+		if ctx := activeCmd.Context(); ctx != nil {
+			return ctx
+		}
+	}
+	return context.Background()
+}
+
+// setExitCode sets the exit code (only increases severity, never decreases).
+func setExitCode(code int) {
+	if code > lastExit {
+		lastExit = code
+	}
+}
+
+var rootCmd = &cobra.Command{
+	Use:           "gitlab-cli",
+	Short:         "Full GitLab CLI scaffold for AI Agents",
+	Version:       version,
+	SilenceErrors: true,
+	SilenceUsage:  true,
+	Long: fmt.Sprintf("\n  %s\n  %s",
+		output.FormatCyanBold("gitlab-cli"),
+		output.FormatGray("AI-Agent-friendly GitLab control from your terminal")),
+}
+
+func init() {
+	if version == "dev" {
+		if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" {
+			version = info.Main.Version
+		}
+	}
+	rootCmd.Version = version
+	rootCmd.CompletionOptions.DisableDefaultCmd = true
+
+	rootCmd.PersistentFlags().BoolVar(&jsonMode, "json", false, "Output result as JSON")
+	rootCmd.PersistentFlags().BoolVar(&compactJSON, "compact", false, "Compact JSON (no indentation; use with --json)")
+	rootCmd.PersistentFlags().BoolVar(&forceMode, "force", false, "Skip confirmation prompts")
+	rootCmd.PersistentFlags().BoolVar(&quietMode, "quiet", false, "Suppress non-JSON stdout output (for scripts and AI Agents)")
+	rootCmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "Show what would be done without executing")
+	initConfirmFlag()
+
+	cobra.OnInitialize(func() {
+		output.Quiet = quietMode
+		output.Compact = compactJSON
+	})
+
+	rootCmd.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
+		cmdStartTime = time.Now()
+		activeCmd = cmd
+		return nil
+	}
+
+	rootCmd.PersistentPostRunE = func(cmd *cobra.Command, args []string) error {
+		if !isWriteCommand(cmd) {
+			return nil
+		}
+		duration := time.Since(cmdStartTime)
+		audit.Log(cmd.CommandPath(), os.Args[1:], lastExit, duration.Milliseconds())
+		return nil
+	}
+}
+
+// Execute runs the root command with a background context.
+func Execute() error {
+	return ExecuteContext(context.Background())
+}
+
+// ExecuteContext runs the root command with the given context (e.g. signal.NotifyContext).
+func ExecuteContext(ctx context.Context) error {
+	lastExit = 0
+	cmdStartTime = time.Now()
+	return rootCmd.ExecuteContext(ctx)
+}
+
+// handleAPIError handles API errors with JSON mode support.
+func handleAPIError(err error, jsonMode bool) error {
+	var apiErr *api.APIError
+	if errors.As(err, &apiErr) {
+		msg := apiErr.Error()
+		code := output.ErrorCodeFromStatus(apiErr.StatusCode)
+		if jsonMode {
+			output.PrintErrorJSONWithCode(msg, apiErr.StatusCode, code)
+		} else {
+			output.Error(msg)
+		}
+		setExitCode(exitCodeForStatus(apiErr.StatusCode))
+		return ErrSilent
+	}
+	msg := err.Error()
+	if jsonMode {
+		output.PrintErrorJSONWithCode(msg, 0, output.ErrNetwork)
+	} else {
+		output.Error(msg)
+	}
+	setExitCode(ExitNetwork)
+	return ErrSilent
+}
+
+// exitCodeForStatus maps HTTP status codes to semantic exit codes.
+func exitCodeForStatus(status int) int {
+	switch {
+	case status == 401:
+		return ExitAuth
+	case status == 403:
+		return ExitForbidden
+	case status == 404:
+		return ExitNotFound
+	case status == 429:
+		return ExitRateLimit
+	case status >= 500:
+		return ExitNetwork
+	default:
+		return ExitBadArgs
+	}
+}
+
+// dryRunOutput outputs a dry-run message and returns true if --dry-run is set.
+func dryRunOutput(action string, detail map[string]any) bool {
+	if !dryRun {
+		return false
+	}
+	if jsonMode {
+		if detail == nil {
+			detail = map[string]any{}
+		}
+		detail["action"] = action
+		detail["dryRun"] = true
+		output.PrintJSON(detail)
+	} else {
+		output.Info("[dry-run] " + action)
+	}
+	return true
+}
+
+// isWriteCommand returns true if the command has the "write" annotation.
+func isWriteCommand(cmd *cobra.Command) bool {
+	return cmd.Annotations["write"] == "true"
+}
+
+// markWrite sets the "write" annotation on a command for audit logging.
+func markWrite(cmd *cobra.Command) {
+	if cmd.Annotations == nil {
+		cmd.Annotations = map[string]string{}
+	}
+	cmd.Annotations["write"] = "true"
+}
+
+// markConfirm marks commands that prompt for typed confirmation unless --force is set.
+func markConfirm(cmd *cobra.Command) {
+	if cmd.Annotations == nil {
+		cmd.Annotations = map[string]string{}
+	}
+	cmd.Annotations["confirm"] = "true"
+}
+
+// markRiskLevel sets agent risk metadata: low, medium, high, critical.
+func markRiskLevel(cmd *cobra.Command, level string) {
+	if cmd.Annotations == nil {
+		cmd.Annotations = map[string]string{}
+	}
+	cmd.Annotations["riskLevel"] = level
+}
+
+// markOutputType sets the default stdout type for agent reference (json, text, bytes).
+func markOutputType(cmd *cobra.Command, outputType string) {
+	if cmd.Annotations == nil {
+		cmd.Annotations = map[string]string{}
+	}
+	cmd.Annotations["outputType"] = outputType
+}
+
+// newClient loads config and creates an API client.
+func newClient() (*api.Client, *config.Config, error) {
+	cfg, err := config.MustLoad()
+	if err != nil {
+		code := output.ErrConfig
+		exit := ExitAuth
+		if strings.Contains(err.Error(), "not logged in") {
+			code = output.ErrAuth
+		}
+		if jsonMode {
+			output.PrintErrorJSONWithCode(err.Error(), 0, code)
+		} else {
+			output.Error(err.Error())
+		}
+		setExitCode(exit)
+		return nil, nil, ErrSilent
+	}
+	return api.NewClient(cfg), cfg, nil
+}
+
+// resolveUsername resolves "me" to the current user's username.
+// For GitLab, "me" maps to the current user's username (used by mr/issue assign etc).
+func resolveUsername(client *api.Client, name string) (string, error) {
+	if name == "me" {
+		me, err := client.Users.Me(apiCtx())
+		if err != nil {
+			return "", handleAPIError(err, jsonMode)
+		}
+		return me.Username, nil
+	}
+	return name, nil
+}
+
+// resolveUserID resolves "me" or a username string to a numeric GitLab user ID
+// using exactly one API call:
+//   - "me"  -> GET /user
+//   - other -> GET /users?username=<name>
+//
+// Returns ExitNotFound (4) wrapped as ErrSilent if the username does not exist.
+func resolveUserID(client *api.Client, name string) (int, error) {
+	if name == "me" {
+		me, err := client.Users.Me(apiCtx())
+		if err != nil {
+			return 0, handleAPIError(err, jsonMode)
+		}
+		return me.ID, nil
+	}
+	u, err := client.Users.GetByUsername(apiCtx(), name)
+	if err != nil {
+		return 0, handleAPIError(err, jsonMode)
+	}
+	if u == nil {
+		return 0, failNotFound(fmt.Sprintf("user %q not found", name))
+	}
+	return u.ID, nil
+}
+
+// getFieldsFlag returns the parsed []string for a --fields flag, or nil if absent.
+// Subcommands register the flag on their own flag set.
+func getFieldsFlag(cmd *cobra.Command) []string {
+	if cmd == nil {
+		return nil
+	}
+	raw, _ := cmd.Flags().GetString("fields")
+	if raw == "" {
+		return nil
+	}
+	out := []string{}
+	for _, part := range splitCSV(raw) {
+		if part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
+}
+
+func splitCSV(s string) []string {
+	out := []string{}
+	cur := ""
+	for _, r := range s {
+		if r == ',' {
+			out = append(out, trim(cur))
+			cur = ""
+			continue
+		}
+		cur += string(r)
+	}
+	out = append(out, trim(cur))
+	return out
+}
+
+func trim(s string) string {
+	for len(s) > 0 && (s[0] == ' ' || s[0] == '\t') {
+		s = s[1:]
+	}
+	for len(s) > 0 && (s[len(s)-1] == ' ' || s[len(s)-1] == '\t') {
+		s = s[:len(s)-1]
+	}
+	return s
+}
+
+// validateOutputPath rejects paths that contain ".." segments after cleaning.
+// Absolute paths and clean relative paths are allowed; the user is presumed to
+// know where they want output to land. The goal is to make AI-Agent-driven
+// path injection (e.g. via untrusted issue body content) harder.
+func validateOutputPath(p string) error {
+	if p == "" {
+		return errors.New("output path cannot be empty")
+	}
+	cleaned := filepath.ToSlash(filepath.Clean(p))
+	for _, seg := range strings.Split(cleaned, "/") {
+		if seg == ".." {
+			return errors.New("output path must not contain '..' segments")
+		}
+	}
+	return nil
+}

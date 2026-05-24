@@ -1,0 +1,53 @@
+{
+  "name": "@fatecannotbealtered-/gitlab-cli",
+  "version": "1.0.0",
+  "description": "Full-featured GitLab CLI scaffold for AI Agents — manage merge requests, issues, pipelines, jobs, repositories, releases, labels, milestones, variables, and more from your terminal",
+  "keywords": [
+    "gitlab",
+    "cli",
+    "ai-agent",
+    "devtools",
+    "merge-request",
+    "pipeline",
+    "issue-tracker",
+    "openclaw"
+  ],
+  "author": "guosong6886@gmail.com",
+  "homepage": "https://github.com/fatecannotbealtered/gitlab-cli#readme",
+  "bugs": {
+    "url": "https://github.com/fatecannotbealtered/gitlab-cli/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fatecannotbealtered/gitlab-cli.git"
+  },
+  "license": "MIT",
+  "bin": {
+    "gitlab-cli": "scripts/run.js"
+  },
+  "scripts": {
+    "postinstall": "node scripts/install.js"
+  },
+  "files": [
+    "scripts/install.js",
+    "scripts/run.js",
+    "skills/",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "SECURITY.md"
+  ],
+  "os": [
+    "darwin",
+    "linux",
+    "win32"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ],
+  "engines": {
+    "node": ">=16"
+  }
+}

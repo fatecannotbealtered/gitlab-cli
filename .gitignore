@@ -1,0 +1,58 @@
+# Build output
+bin/
+dist/
+
+# npm pack output
+*.tgz
+
+# Node.js
+node_modules/
+
+# Windows executables
+*.exe
+
+# Go test cache
+*.test
+*.out
+coverage.txt
+
+# goreleaser
+.goreleaser-dist/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+Thumbs.db
+
+# Environment
+.env
+.env.local
+
+# Local E2E secrets (never commit)
+scripts/e2e.local.ps1
+scripts/e2e.local.env
+scripts/gitlab-runner-e2e.config.toml
+.e2e-auth-home/
+
+# E2E test report (generated locally; docs/E2E-ACCEPTANCE-REPORT.* are committed snapshots)
+scripts/e2e-report.csv
+scripts/e2e-report.log
+scripts/e2e-report-verbose.log
+scripts/unit-report.log
+
+# GoReleaser release notes (generated during CI)
+release-notes.md
+
+# Claude Code worktrees
+.claude/
+
+# coverage
+cov.out
+cov
+coverage
+coverage.html
+cov_output

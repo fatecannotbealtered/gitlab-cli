@@ -1,0 +1,31 @@
+name: Integration
+
+on:
+  workflow_dispatch:
+  schedule:
+  - cron: '0 3 * * 0'
+
+jobs:
+  reference-json:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.24'
+
+      - name: Reference JSON smoke
+        run: |
+          go test -run TestReference_JSON_HasAgentMetadata ./cmd/...
+          go build -o gitlab-cli ./cmd/gitlab-cli
+          ./gitlab-cli reference --json --compact | head -c 2000
+
+  # Full GitLab CE E2E requires Docker + long bootstrap; run locally via docs/E2E.md
+  # and scripts/e2e-test.ps1. Uncomment when a hosted runner with Docker is available.
+  # integration:
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v6
+  #     - run: docker compose -f docker-compose.e2e.yml up -d --wait
