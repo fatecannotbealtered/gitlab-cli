@@ -91,7 +91,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   publish-npm:
-    needs: release
+    needs: ci
     runs-on: ubuntu-latest
     permissions:
       contents: read
