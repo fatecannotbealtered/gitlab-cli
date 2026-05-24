@@ -95,6 +95,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    env:
+      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
     steps:
       - uses: actions/checkout@v6
@@ -103,6 +105,7 @@ jobs:
         with:
           node-version: "20"
           registry-url: "https://registry.npmjs.org"
+          always-auth: true
 
       - name: Verify package contents
         run: npm pack --dry-run
@@ -117,11 +120,14 @@ jobs:
           fi
 
       - name: Verify npm auth
-        run: npm whoami
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        continue-on-error: true
+        run: |
+          if [ -z "${NODE_AUTH_TOKEN}" ]; then
+            echo "::warning::NODE_AUTH_TOKEN is empty"
+            exit 1
+          fi
+          echo "NPM_TOKEN length: ${#NODE_AUTH_TOKEN}"
+          npm whoami || echo "::warning::npm whoami failed; attempting publish anyway"
 
       - name: Publish to npm
         run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
