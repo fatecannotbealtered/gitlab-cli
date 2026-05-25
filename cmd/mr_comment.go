@@ -169,12 +169,12 @@ var mrCommentDeleteCmd = &cobra.Command{
 			return failArg("--note-id is required")
 		}
 
-		if err := requireConfirm(cmd, fmt.Sprintf("Type %d to confirm deletion", noteID), strconv.Itoa(noteID)); err != nil {
-			return err
-		}
-
 		if dryRunOutput("delete mr comment", map[string]any{"project": project, "iid": iid, "noteId": noteID}) {
 			return nil
+		}
+
+		if err := requireConfirm(cmd, fmt.Sprintf("Type %d to confirm deletion", noteID), strconv.Itoa(noteID)); err != nil {
+			return err
 		}
 
 		client, _, err := newClient()

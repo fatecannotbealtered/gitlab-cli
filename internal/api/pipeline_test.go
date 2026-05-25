@@ -154,3 +154,98 @@ func TestPipeline_Jobs(t *testing.T) {
 		t.Errorf("unexpected: %+v", jobs)
 	}
 }
+
+func TestPipeline_List_ParseError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`bad`))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	_, err := c.Pipelines.List(testCtx, "42", nil)
+	if err == nil || !strings.Contains(err.Error(), "parsing pipelines") {
+		t.Fatalf("expected parse error, got %v", err)
+	}
+}
+
+func TestPipeline_Get_ParseError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`bad`))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	_, err := c.Pipelines.Get(testCtx, "42", 1)
+	if err == nil || !strings.Contains(err.Error(), "parsing pipeline") {
+		t.Fatalf("expected parse error, got %v", err)
+	}
+}
+
+func TestPipeline_Create_ParseError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`bad`))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	_, err := c.Pipelines.Create(testCtx, "42", PipelineCreateBody{Ref: "main"})
+	if err == nil || !strings.Contains(err.Error(), "parsing pipeline") {
+		t.Fatalf("expected parse error, got %v", err)
+	}
+}
+
+func TestPipeline_Retry_ParseError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`bad`))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	_, err := c.Pipelines.Retry(testCtx, "42", 1)
+	if err == nil || !strings.Contains(err.Error(), "parsing pipeline") {
+		t.Fatalf("expected parse error, got %v", err)
+	}
+}
+
+func TestPipeline_Cancel_ParseError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`bad`))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	_, err := c.Pipelines.Cancel(testCtx, "42", 1)
+	if err == nil || !strings.Contains(err.Error(), "parsing pipeline") {
+		t.Fatalf("expected parse error, got %v", err)
+	}
+}
+
+func TestPipeline_Jobs_ParseError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`bad`))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	_, err := c.Pipelines.Jobs(testCtx, "42", 1, nil)
+	if err == nil || !strings.Contains(err.Error(), "parsing jobs") {
+		t.Fatalf("expected parse error, got %v", err)
+	}
+}
+
+func TestPipelineListOpts_EncodeUsername(t *testing.T) {
+	opts := &PipelineListOpts{Username: "alice", Ref: "main"}
+	q := opts.encode()
+	if !strings.Contains(q, "username=alice") || !strings.Contains(q, "ref=main") {
+		t.Errorf("encode() = %q", q)
+	}
+	if (*PipelineListOpts)(nil).encode() != "" {
+		t.Error("nil encode should be empty")
+	}
+}

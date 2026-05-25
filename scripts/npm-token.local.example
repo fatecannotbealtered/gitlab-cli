@@ -1,0 +1,3 @@
+# Copy to npm-token.local (gitignored), paste ONE line: your npm_... token only.
+# Create at: https://www.npmjs.com/settings/fatelshardtodisobey/tokens
+# Type: Granular → Packages: Read and write (all) → enable "Bypass 2FA for automation"

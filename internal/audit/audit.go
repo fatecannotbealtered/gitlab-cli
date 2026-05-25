@@ -12,6 +12,9 @@ import (
 	"github.com/fatecannotbealtered/gitlab-cli/internal/config"
 )
 
+// marshalEntry serializes audit entries; overridden in tests. // test hook
+var marshalEntry = json.Marshal
+
 // entry is a single audit log record written as one JSON line.
 type entry struct {
 	Ts   string   `json:"ts"`
@@ -58,7 +61,7 @@ func Log(cmdPath string, args []string, exitCode int, durationMs int64) {
 		Ms:   durationMs,
 	}
 
-	data, err := json.Marshal(e)
+	data, err := marshalEntry(e)
 	if err != nil {
 		return
 	}

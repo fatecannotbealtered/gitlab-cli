@@ -179,7 +179,6 @@ func cmdHasFieldsFlag(cmd *cobra.Command) bool {
 
 func collectRefFlags(cmd *cobra.Command) []refFlag {
 	local := cmd.LocalFlags()
-	persistent := cmd.PersistentFlags()
 	var flags []refFlag
 
 	local.VisitAll(func(f *pflag.Flag) {
@@ -188,14 +187,6 @@ func collectRefFlags(cmd *cobra.Command) []refFlag {
 		}
 		flags = append(flags, refFlagFromPflag(f))
 	})
-	if cmd.Parent() != nil {
-		persistent.VisitAll(func(f *pflag.Flag) {
-			if f.Hidden || local.Lookup(f.Name) != nil {
-				return
-			}
-			flags = append(flags, refFlagFromPflag(f))
-		})
-	}
 	return flags
 }
 

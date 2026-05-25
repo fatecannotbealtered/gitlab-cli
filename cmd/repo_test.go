@@ -7,6 +7,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 )
 
 func TestRepoCmd_Help(t *testing.T) {
@@ -120,7 +122,7 @@ func TestRepoBranchDelete_DryRun_JSON(t *testing.T) {
 	t.Setenv("GITLAB_CLI_TOKEN", "test-token")
 
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"repo", "branch", "delete", "--project", "1", "--name", "feature", "--dry-run", "--json", "--force"})
+		rootCmd.SetArgs([]string{"repo", "branch", "delete", "--project", "1", "--name", "feature", "--dry-run", "--json"})
 		_ = rootCmd.Execute()
 	})
 	for _, want := range []string{`"dryRun": true`, `"action": "repo branch delete"`} {
@@ -199,7 +201,7 @@ func TestRepoFileDelete_DryRun_JSON(t *testing.T) {
 			"repo", "file", "delete",
 			"--project", "1", "--path", "README.md",
 			"--branch", "main", "--commit-message", "delete readme",
-			"--dry-run", "--json", "--force",
+			"--dry-run", "--json",
 		})
 		_ = rootCmd.Execute()
 	})
@@ -384,7 +386,7 @@ func TestRepo_File_Delete_DryRun_JSON(t *testing.T) {
 			"repo", "file", "delete",
 			"--project", "group/proj", "--path", "README.md",
 			"--branch", "main", "--commit-message", "delete readme",
-			"--dry-run", "--json", "--force",
+			"--dry-run", "--json",
 		})
 		_ = rootCmd.Execute()
 	})
@@ -446,7 +448,7 @@ func TestRepo_Branch_Delete_DryRun_JSON(t *testing.T) {
 		rootCmd.SetArgs([]string{
 			"repo", "branch", "delete",
 			"--project", "group/proj", "--name", "feat/x",
-			"--dry-run", "--json", "--force",
+			"--dry-run", "--json",
 		})
 		_ = rootCmd.Execute()
 	})
@@ -699,6 +701,79 @@ func TestTruncate(t *testing.T) {
 	got := truncate("hello world", 6)
 	if len([]rune(got)) > 6 {
 		t.Errorf("truncate did not shorten: %q", got)
+	}
+	// byte length exceeds n but rune count does not — return unchanged
+	multi := "ééé"
+	if truncate(multi, 5) != multi {
+		t.Errorf("truncate multi-byte = %q, want %q", truncate(multi, 5), multi)
+	}
+}
+
+func TestResolveContent_InlineEncoding(t *testing.T) {
+	content, encoding, err := resolveContent("data", "", "base64")
+	if err != nil {
+		t.Fatalf("resolveContent: %v", err)
+	}
+	if content != "data" || encoding != "base64" {
+		t.Fatalf("got (%q, %q), want (data, base64)", content, encoding)
+	}
+}
+
+func TestResolveContent_FromFileText(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + string(os.PathSeparator) + "hello.txt"
+	if err := os.WriteFile(path, []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	content, encoding, err := resolveContent("", path, "")
+	if err != nil {
+		t.Fatalf("resolveContent: %v", err)
+	}
+	if content != "hello" || encoding != "text" {
+		t.Fatalf("got (%q, %q), want (hello, text)", content, encoding)
+	}
+}
+
+func TestResolveContent_FromFileBinary(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + string(os.PathSeparator) + "bin.dat"
+	if err := os.WriteFile(path, []byte{0x00, 0xff, 0xfe}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	content, encoding, err := resolveContent("", path, "")
+	if err != nil {
+		t.Fatalf("resolveContent: %v", err)
+	}
+	if encoding != "base64" {
+		t.Fatalf("encoding = %q, want base64", encoding)
+	}
+	if content == "" {
+		t.Fatal("expected base64 content")
+	}
+}
+
+func TestResolveContent_FromFileExplicitBase64(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + string(os.PathSeparator) + "plain.txt"
+	if err := os.WriteFile(path, []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	content, encoding, err := resolveContent("", path, "base64")
+	if err != nil {
+		t.Fatalf("resolveContent: %v", err)
+	}
+	if encoding != "base64" {
+		t.Fatalf("encoding = %q, want base64", encoding)
+	}
+	if content == "" {
+		t.Fatal("expected base64-encoded content")
+	}
+}
+
+func TestResolveContent_FileReadError(t *testing.T) {
+	_, _, err := resolveContent("", t.TempDir()+string(os.PathSeparator)+"missing.txt", "")
+	if err == nil {
+		t.Fatal("expected error for missing content file")
 	}
 }
 
@@ -990,5 +1065,691 @@ func TestRepo_Tree_APIError(t *testing.T) {
 	_ = rootCmd.Execute()
 	if lastExit == ExitOK {
 		t.Errorf("expected non-zero exit for API error, got %d", lastExit)
+	}
+}
+
+func repoNoAuth(t *testing.T) {
+	t.Helper()
+	resetRepoCmdFlags(t)
+	isolateConfigHome(t)
+	t.Setenv("GITLAB_CLI_HOST", "")
+	t.Setenv("GITLAB_CLI_TOKEN", "")
+	t.Setenv("GITLAB_HOST", "")
+	t.Setenv("GITLAB_TOKEN", "")
+}
+
+func resetRepoCmdFlags(t *testing.T) {
+	t.Helper()
+	resetRootPersistentFlags(t)
+	for _, kv := range []struct {
+		cmd   *cobra.Command
+		name  string
+		value string
+	}{
+		{repoFileGetCmd, "project", ""},
+		{repoFileGetCmd, "path", ""},
+		{repoFileGetCmd, "output", ""},
+		{repoFileCreateCmd, "project", ""},
+		{repoFileCreateCmd, "path", ""},
+		{repoFileCreateCmd, "branch", ""},
+		{repoFileCreateCmd, "content", ""},
+		{repoFileCreateCmd, "content-file", ""},
+		{repoFileCreateCmd, "commit-message", ""},
+		{repoFileUpdateCmd, "project", ""},
+		{repoFileUpdateCmd, "path", ""},
+		{repoFileUpdateCmd, "branch", ""},
+		{repoFileUpdateCmd, "content", ""},
+		{repoFileUpdateCmd, "commit-message", ""},
+		{repoFileDeleteCmd, "project", ""},
+		{repoFileDeleteCmd, "path", ""},
+		{repoFileDeleteCmd, "branch", ""},
+		{repoFileDeleteCmd, "commit-message", ""},
+		{repoBranchListCmd, "project", ""},
+		{repoBranchListCmd, "limit", "20"},
+		{repoBranchCreateCmd, "project", ""},
+		{repoBranchCreateCmd, "name", ""},
+		{repoBranchCreateCmd, "ref", ""},
+		{repoBranchDeleteCmd, "project", ""},
+		{repoBranchDeleteCmd, "name", ""},
+		{repoCommitListCmd, "project", ""},
+		{repoCommitListCmd, "limit", "20"},
+		{repoCommitGetCmd, "project", ""},
+		{repoTreeCmd, "project", ""},
+		{repoTreeCmd, "limit", "20"},
+	} {
+		if err := kv.cmd.Flags().Set(kv.name, kv.value); err != nil {
+			t.Fatalf("reset repo flag %s.%s: %v", kv.cmd.Name(), kv.name, err)
+		}
+	}
+}
+
+func TestRepo_File_Get_NewClientError(t *testing.T) {
+	repoNoAuth(t)
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"repo", "file", "get", "--project", "g/p", "--path", "README.md"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitAuth {
+		t.Errorf("exit = %d, want %d", lastExit, ExitAuth)
+	}
+}
+
+func TestRepo_File_Get_InvalidOutputPath(t *testing.T) {
+	resetRepoCmdFlags(t)
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"repo", "file", "get", "--project", "g/p", "--path", "README.md", "--output", "../escape"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitBadArgs {
+		t.Errorf("exit = %d, want %d", lastExit, ExitBadArgs)
+	}
+}
+
+func TestRepo_File_Get_SaveToFile_PlainText(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("hello"))
+	}))
+	defer srv.Close()
+	resetRepoCmdFlags(t)
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	outPath := t.TempDir() + string(os.PathSeparator) + "out.txt"
+	out := captureCombinedOutput(t, func() {
+		rootCmd.SetArgs([]string{"repo", "file", "get", "--project", "g/p", "--path", "README.md", "--output", outPath})
+		_ = rootCmd.Execute()
+	})
+	if !strings.Contains(out, "Saved to") {
+		t.Errorf("expected Saved message, got:\n%s", out)
+	}
+	data, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "hello" {
+		t.Fatalf("file content = %q, want hello", data)
+	}
+}
+
+func TestRepo_File_Get_APIError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"message":"404 Not Found"}`))
+	}))
+	defer srv.Close()
+	resetRepoCmdFlags(t)
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"repo", "file", "get", "--project", "g/p", "--path", "missing.md"})
+	_ = rootCmd.Execute()
+	if lastExit == ExitOK {
+		t.Errorf("expected non-zero exit, got %d", lastExit)
+	}
+}
+
+func TestRepo_File_Create_MissingContent(t *testing.T) {
+	resetRepoCmdFlags(t)
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"repo", "file", "create", "--project", "g/p", "--path", "a.md", "--branch", "main", "--commit-message", "add"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitBadArgs {
+		t.Errorf("exit = %d, want %d", lastExit, ExitBadArgs)
+	}
+}
+
+func TestRepo_File_Create_NewClientError(t *testing.T) {
+	repoNoAuth(t)
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"repo", "file", "create", "--project", "g/p", "--path", "a.md", "--branch", "main", "--content", "x", "--commit-message", "add"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitAuth {
+		t.Errorf("exit = %d, want %d", lastExit, ExitAuth)
+	}
+}
+
+func TestRepo_File_Create_APIError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"message":"400 Bad Request"}`))
+	}))
+	defer srv.Close()
+	resetRepoCmdFlags(t)
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"repo", "file", "create", "--project", "g/p", "--path", "a.md", "--branch", "main", "--content", "x", "--commit-message", "add"})
+	_ = rootCmd.Execute()
+	if lastExit == ExitOK {
+		t.Errorf("expected non-zero exit, got %d", lastExit)
+	}
+}
+
+func TestRepo_File_Update_NewClientError(t *testing.T) {
+	repoNoAuth(t)
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"repo", "file", "update", "--project", "g/p", "--path", "a.md", "--branch", "main", "--content", "x", "--commit-message", "upd"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitAuth {
+		t.Errorf("exit = %d, want %d", lastExit, ExitAuth)
+	}
+}
+
+func TestRepo_File_Update_APIError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"message":"400 Bad Request"}`))
+	}))
+	defer srv.Close()
+	resetRepoCmdFlags(t)
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"repo", "file", "update", "--project", "g/p", "--path", "a.md", "--branch", "main", "--content", "x", "--commit-message", "upd"})
+	_ = rootCmd.Execute()
+	if lastExit == ExitOK {
+		t.Errorf("expected non-zero exit, got %d", lastExit)
+	}
+}
+
+func TestRepo_File_Delete_PlainText(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+	resetRepoCmdFlags(t)
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	out := captureCombinedOutput(t, func() {
+		rootCmd.SetArgs([]string{"repo", "file", "delete", "--project", "g/p", "--path", "README.md", "--branch", "main", "--commit-message", "del", "--force"})
+		_ = rootCmd.Execute()
+	})
+	if !strings.Contains(out, "Deleted") {
+		t.Errorf("expected Deleted in output, got:\n%s", out)
+	}
+}
+
+func TestRepo_File_Delete_ConfirmRejected(t *testing.T) {
+	withNonInteractiveStdin(t)
+	resetRepoCmdFlags(t)
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"repo", "file", "delete", "--project", "g/p", "--path", "README.md", "--branch", "main", "--commit-message", "del", "--confirm", "wrong"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitCancelled {
+		t.Errorf("exit = %d, want %d", lastExit, ExitCancelled)
+	}
+}
+
+func TestRepo_File_Delete_APIError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"message":"404 Not Found"}`))
+	}))
+	defer srv.Close()
+	resetRepoCmdFlags(t)
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"repo", "file", "delete", "--project", "g/p", "--path", "README.md", "--branch", "main", "--commit-message", "del", "--force"})
+	_ = rootCmd.Execute()
+	if lastExit == ExitOK {
+		t.Errorf("expected non-zero exit, got %d", lastExit)
+	}
+}
+
+func TestRepo_Branch_Create_MissingArgs(t *testing.T) {
+	resetRepoCmdFlags(t)
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"repo", "branch", "create", "--project", "g/p", "--name", "feat"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitBadArgs {
+		t.Errorf("exit = %d, want %d", lastExit, ExitBadArgs)
+	}
+}
+
+func TestRepo_Branch_Create_NewClientError(t *testing.T) {
+	repoNoAuth(t)
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"repo", "branch", "create", "--project", "g/p", "--name", "feat", "--ref", "main"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitAuth {
+		t.Errorf("exit = %d, want %d", lastExit, ExitAuth)
+	}
+}
+
+func TestRepo_Branch_Create_APIError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"message":"400 Bad Request"}`))
+	}))
+	defer srv.Close()
+	resetRepoCmdFlags(t)
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"repo", "branch", "create", "--project", "g/p", "--name", "feat", "--ref", "main"})
+	_ = rootCmd.Execute()
+	if lastExit == ExitOK {
+		t.Errorf("expected non-zero exit, got %d", lastExit)
+	}
+}
+
+func TestRepo_Branch_Delete_PlainText(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+	resetRepoCmdFlags(t)
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	out := captureCombinedOutput(t, func() {
+		rootCmd.SetArgs([]string{"repo", "branch", "delete", "--project", "g/p", "--name", "feat", "--force"})
+		_ = rootCmd.Execute()
+	})
+	if !strings.Contains(out, "Deleted branch") {
+		t.Errorf("expected Deleted branch in output, got:\n%s", out)
+	}
+}
+
+func TestRepo_Branch_Delete_ConfirmRejected(t *testing.T) {
+	withNonInteractiveStdin(t)
+	resetRepoCmdFlags(t)
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"repo", "branch", "delete", "--project", "g/p", "--name", "feat", "--confirm", "wrong"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitCancelled {
+		t.Errorf("exit = %d, want %d", lastExit, ExitCancelled)
+	}
+}
+
+func TestRepo_Commit_Get_NewClientError(t *testing.T) {
+	repoNoAuth(t)
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"repo", "commit", "get", "abc", "--project", "g/p"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitAuth {
+		t.Errorf("exit = %d, want %d", lastExit, ExitAuth)
+	}
+}
+
+func TestRepo_Commit_Get_APIError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"message":"404 Not Found"}`))
+	}))
+	defer srv.Close()
+	resetRepoCmdFlags(t)
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"repo", "commit", "get", "abc", "--project", "g/p"})
+	_ = rootCmd.Execute()
+	if lastExit == ExitOK {
+		t.Errorf("expected non-zero exit, got %d", lastExit)
+	}
+}
+
+func TestRepo_Tree_NewClientError(t *testing.T) {
+	repoNoAuth(t)
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"repo", "tree", "--project", "g/p"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitAuth {
+		t.Errorf("exit = %d, want %d", lastExit, ExitAuth)
+	}
+}
+
+func TestRepo_Tree_InvalidLimit(t *testing.T) {
+	resetRepoCmdFlags(t)
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"repo", "tree", "--project", "g/p", "--limit", "0"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitBadArgs {
+		t.Errorf("exit = %d, want %d", lastExit, ExitBadArgs)
+	}
+}
+
+func TestRepo_File_Get_StdoutDash(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("hello"))
+	}))
+	defer srv.Close()
+	resetRepoCmdFlags(t)
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	out := captureStdout(t, func() {
+		rootCmd.SetArgs([]string{"repo", "file", "get", "--project", "g/p", "--path", "README.md", "--output", "-"})
+		_ = rootCmd.Execute()
+	})
+	if !strings.Contains(out, "hello") {
+		t.Errorf("expected file content, got:\n%s", out)
+	}
+}
+
+func TestRepo_File_Create_MissingRequired(t *testing.T) {
+	resetRepoCmdFlags(t)
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"repo", "file", "create", "--project", "g/p", "--path", "a.md"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitBadArgs {
+		t.Errorf("exit = %d, want %d", lastExit, ExitBadArgs)
+	}
+}
+
+func TestRepo_File_Create_ContentFileError(t *testing.T) {
+	resetRepoCmdFlags(t)
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{
+		"repo", "file", "create",
+		"--project", "g/p", "--path", "a.md", "--branch", "main",
+		"--content-file", t.TempDir() + string(os.PathSeparator) + "missing.txt",
+		"--commit-message", "add",
+	})
+	_ = rootCmd.Execute()
+	if lastExit != ExitBadArgs {
+		t.Errorf("exit = %d, want %d", lastExit, ExitBadArgs)
+	}
+}
+
+func TestRepo_File_Update_MissingRequired(t *testing.T) {
+	resetRepoCmdFlags(t)
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"repo", "file", "update", "--project", "g/p", "--path", "a.md", "--content", "x"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitBadArgs {
+		t.Errorf("exit = %d, want %d", lastExit, ExitBadArgs)
+	}
+}
+
+func TestRepo_File_Update_ContentFileError(t *testing.T) {
+	resetRepoCmdFlags(t)
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{
+		"repo", "file", "update",
+		"--project", "g/p", "--path", "a.md", "--branch", "main",
+		"--content-file", t.TempDir() + string(os.PathSeparator) + "missing.txt",
+		"--commit-message", "upd",
+	})
+	_ = rootCmd.Execute()
+	if lastExit != ExitBadArgs {
+		t.Errorf("exit = %d, want %d", lastExit, ExitBadArgs)
+	}
+}
+
+func TestRepo_File_Delete_MissingRequired(t *testing.T) {
+	resetRepoCmdFlags(t)
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"repo", "file", "delete", "--project", "g/p", "--path", "a.md"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitBadArgs {
+		t.Errorf("exit = %d, want %d", lastExit, ExitBadArgs)
+	}
+}
+
+func TestRepo_File_Delete_NewClientError(t *testing.T) {
+	repoNoAuth(t)
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"repo", "file", "delete", "--project", "g/p", "--path", "a.md", "--branch", "main", "--commit-message", "del", "--force"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitAuth {
+		t.Errorf("exit = %d, want %d", lastExit, ExitAuth)
+	}
+}
+
+func TestRepo_Branch_List_NewClientError(t *testing.T) {
+	repoNoAuth(t)
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"repo", "branch", "list", "--project", "g/p"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitAuth {
+		t.Errorf("exit = %d, want %d", lastExit, ExitAuth)
+	}
+}
+
+func TestRepo_Branch_List_MissingProject(t *testing.T) {
+	resetRepoCmdFlags(t)
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"repo", "branch", "list"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitBadArgs {
+		t.Errorf("exit = %d, want %d", lastExit, ExitBadArgs)
+	}
+}
+
+func TestRepo_Branch_List_InvalidLimit(t *testing.T) {
+	resetRepoCmdFlags(t)
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"repo", "branch", "list", "--project", "g/p", "--limit", "0"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitBadArgs {
+		t.Errorf("exit = %d, want %d", lastExit, ExitBadArgs)
+	}
+}
+
+func TestRepo_Branch_Delete_MissingName(t *testing.T) {
+	resetRepoCmdFlags(t)
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"repo", "branch", "delete", "--project", "g/p"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitBadArgs {
+		t.Errorf("exit = %d, want %d", lastExit, ExitBadArgs)
+	}
+}
+
+func TestRepo_Branch_Delete_NewClientError(t *testing.T) {
+	repoNoAuth(t)
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"repo", "branch", "delete", "--project", "g/p", "--name", "feat", "--force"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitAuth {
+		t.Errorf("exit = %d, want %d", lastExit, ExitAuth)
+	}
+}
+
+func TestRepo_Commit_List_NewClientError(t *testing.T) {
+	repoNoAuth(t)
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"repo", "commit", "list", "--project", "g/p"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitAuth {
+		t.Errorf("exit = %d, want %d", lastExit, ExitAuth)
+	}
+}
+
+func TestRepo_Commit_List_MissingProject(t *testing.T) {
+	resetRepoCmdFlags(t)
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"repo", "commit", "list"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitBadArgs {
+		t.Errorf("exit = %d, want %d", lastExit, ExitBadArgs)
+	}
+}
+
+func TestRepo_Commit_List_InvalidLimit(t *testing.T) {
+	resetRepoCmdFlags(t)
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"repo", "commit", "list", "--project", "g/p", "--limit", "0"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitBadArgs {
+		t.Errorf("exit = %d, want %d", lastExit, ExitBadArgs)
+	}
+}
+
+func TestRepo_Commit_Get_MissingProject(t *testing.T) {
+	resetRepoCmdFlags(t)
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"repo", "commit", "get", "abc"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitBadArgs {
+		t.Errorf("exit = %d, want %d", lastExit, ExitBadArgs)
+	}
+}
+
+func TestRepo_File_Update_MissingContentOnly(t *testing.T) {
+	resetRepoCmdFlags(t)
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	_ = repoFileUpdateCmd.Flags().Set("content", "")
+	_ = repoFileUpdateCmd.Flags().Set("content-file", "")
+	rootCmd.SetArgs([]string{
+		"repo", "file", "update",
+		"--project", "g/p", "--path", "a.md", "--branch", "main", "--commit-message", "upd", "--content", "",
+	})
+	_ = rootCmd.Execute()
+	if lastExit != ExitBadArgs {
+		t.Errorf("exit = %d, want %d", lastExit, ExitBadArgs)
+	}
+}
+
+func TestRepo_File_Get_WriteError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("hello"))
+	}))
+	defer srv.Close()
+	resetRepoCmdFlags(t)
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	outPath := t.TempDir()
+	rootCmd.SetArgs([]string{"repo", "file", "get", "--project", "g/p", "--path", "README.md", "--output", outPath})
+	_ = rootCmd.Execute()
+	if lastExit != ExitNetwork {
+		t.Errorf("exit = %d, want %d", lastExit, ExitNetwork)
+	}
+}
+
+func TestRepo_Branch_Delete_APIError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"message":"404 Not Found"}`))
+	}))
+	defer srv.Close()
+	resetRepoCmdFlags(t)
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"repo", "branch", "delete", "--project", "g/p", "--name", "feat", "--confirm", "feat"})
+	_ = rootCmd.Execute()
+	if lastExit == ExitOK {
+		t.Errorf("expected non-zero exit, got %d", lastExit)
+	}
+}
+
+func TestRepo_Tree_MissingProject(t *testing.T) {
+	resetRepoCmdFlags(t)
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"repo", "tree"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitBadArgs {
+		t.Errorf("exit = %d, want %d", lastExit, ExitBadArgs)
 	}
 }

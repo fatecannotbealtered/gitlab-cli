@@ -9,6 +9,9 @@ import (
 	"strings"
 )
 
+// jsonMarshalIndent marshals config JSON; overridden in tests. // test hook
+var jsonMarshalIndent = json.MarshalIndent
+
 // Config stores GitLab authentication information.
 type Config struct {
 	Host  string `json:"host"`
@@ -98,14 +101,14 @@ func Load() (*Config, error) {
 	return cfg, nil
 }
 
-// Save writes the configuration to file. Directory mode is 0700, file mode is 0600.
-func Save(cfg *Config) error {
+// saveLegacyFile writes cfg to ~/.gitlab-cli/config.json only.
+func saveLegacyFile(cfg *Config) error {
 	dir := Dir()
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return fmt.Errorf("creating config dir: %w", err)
 	}
 
-	data, err := json.MarshalIndent(cfg, "", "  ")
+	data, err := jsonMarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encoding config: %w", err)
 	}
@@ -113,9 +116,15 @@ func Save(cfg *Config) error {
 	if err := os.WriteFile(FilePath(), data, 0600); err != nil {
 		return fmt.Errorf("writing config: %w", err)
 	}
-	// Also persist as the active profile.
-	_ = SetProfile("default", cfg)
 	return nil
+}
+
+// Save writes config.json and updates the default profile (legacy save path).
+func Save(cfg *Config) error {
+	if err := saveLegacyFile(cfg); err != nil {
+		return err
+	}
+	return SetProfile("default", cfg)
 }
 
 // MustLoad reads the configuration and validates required fields.
@@ -155,11 +164,23 @@ func MustLoad() (*Config, error) {
 	return cfg, nil
 }
 
-// Delete removes the configuration file (used for logout).
+// Delete removes the configuration file.
 func Delete() error {
 	err := os.Remove(FilePath())
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("deleting config: %w", err)
+	}
+	return nil
+}
+
+// ClearStoredCredentials removes config.json and profiles.json (logout).
+func ClearStoredCredentials() error {
+	if err := Delete(); err != nil {
+		return err
+	}
+	err := os.Remove(profilesPath())
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("deleting profiles: %w", err)
 	}
 	return nil
 }

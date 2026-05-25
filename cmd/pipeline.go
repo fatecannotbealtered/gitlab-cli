@@ -112,12 +112,7 @@ var pipelineCurrentCmd = &cobra.Command{
 	Use:   "current",
 	Short: "Get the latest pipeline for the current branch",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		ctx, err := gitctx.Detect("")
-		if err != nil {
-			output.Error("failed to detect git context: " + err.Error())
-			setExitCode(ExitNotFound)
-			return ErrSilent
-		}
+		ctx, _ := gitctx.Detect("")
 		if ctx.Remote == nil || ctx.CurrentBranch == "" {
 			return failNotFound("not in a GitLab git repository or no current branch")
 		}
@@ -162,7 +157,10 @@ var pipelineCreateCmd = &cobra.Command{
 			return failArg("--ref is required")
 		}
 		varFlags, _ := cmd.Flags().GetStringArray("variable")
-		vars := parseVariables(varFlags)
+		vars, err := parseVariables(varFlags)
+		if err != nil {
+			return err
+		}
 
 		if dryRunOutput("create pipeline", map[string]any{"project": project, "ref": ref}) {
 			return nil
@@ -344,7 +342,7 @@ var pipelineWaitCmd = &cobra.Command{
 			}
 			elapsed := time.Since(start)
 			switch p.Status {
-			case "success", "failed", "canceled", "skipped":
+			case "success", "failed", "canceled", "skipped", "manual":
 				if jsonMode {
 					output.PrintJSON(output.PipelineToMap(toFlatPipeline(p)))
 				} else {
@@ -482,13 +480,14 @@ func printPipelineDetail(p *api.Pipeline) {
 }
 
 // parseVariables parses KEY=VAL strings into PipelineVariable slice.
-func parseVariables(vars []string) []api.PipelineVariable {
+func parseVariables(vars []string) ([]api.PipelineVariable, error) {
 	out := make([]api.PipelineVariable, 0, len(vars))
 	for _, v := range vars {
 		parts := strings.SplitN(v, "=", 2)
-		if len(parts) == 2 {
-			out = append(out, api.PipelineVariable{Key: parts[0], Value: parts[1]})
+		if len(parts) != 2 {
+			return nil, failArg(fmt.Sprintf("invalid --variable %q: expected KEY=VALUE", v))
 		}
+		out = append(out, api.PipelineVariable{Key: parts[0], Value: parts[1]})
 	}
-	return out
+	return out, nil
 }

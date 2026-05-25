@@ -13,9 +13,12 @@ import (
 // ansiEscapeRe matches ANSI escape sequences.
 var ansiEscapeRe = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
 
+// stdoutGetSize resolves terminal width (overridable in tests).
+var stdoutGetSize = term.GetSize
+
 // termWidth returns the terminal width, defaulting to 120 if unavailable.
 func termWidth() int {
-	if w, _, err := term.GetSize(int(os.Stdout.Fd())); err == nil && w > 0 {
+	if w, _, err := stdoutGetSize(int(os.Stdout.Fd())); err == nil && w > 0 {
 		return w
 	}
 	return 120
@@ -81,6 +84,15 @@ func truncate(s string, maxWidth int) string {
 	}
 	buf.WriteRune('\u2026')
 	return buf.String()
+}
+
+// cellPadding returns non-negative space padding for a table cell.
+func cellPadding(colWidth, displayWidth int) int {
+	padding := colWidth - displayWidth
+	if padding < 0 {
+		padding = 0
+	}
+	return padding
 }
 
 // Table prints a bordered, colored table.
@@ -164,10 +176,7 @@ func Table(headers []string, rows [][]string) {
 			}
 
 			displayWidth := runeWidth(stripAnsi(cell))
-			padding := colWidths[i] - displayWidth
-			if padding < 0 {
-				padding = 0
-			}
+			padding := cellPadding(colWidths[i], displayWidth)
 
 			sb.WriteString(" ")
 			sb.WriteString(cell)

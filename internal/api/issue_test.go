@@ -166,3 +166,116 @@ func TestIssueListOpts_AllState_OmitsStateParam(t *testing.T) {
 		t.Errorf("state=all should not be sent, got: %s", q)
 	}
 }
+
+func TestIssueListOpts_EncodeAllFields(t *testing.T) {
+	opts := &IssueListOpts{
+		State:            "closed",
+		AssigneeUsername: "alice",
+		AuthorUsername:   "bob",
+		Labels:           "bug",
+		Search:           "crash",
+		Milestone:        "v1",
+		Limit:            8,
+	}
+	q := opts.encode()
+	for _, part := range []string{
+		"state=closed",
+		"assignee_username=alice",
+		"author_username=bob",
+		"labels=bug",
+		"search=crash",
+		"milestone=v1",
+		"per_page=8",
+	} {
+		if !strings.Contains(q, part) {
+			t.Errorf("encode() missing %q in %q", part, q)
+		}
+	}
+	if (*IssueListOpts)(nil).encode() != "" {
+		t.Error("nil encode should be empty")
+	}
+}
+
+func TestIssue_List_ParseError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`bad`))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	_, err := c.Issues.List(testCtx, "42", nil)
+	if err == nil || !strings.Contains(err.Error(), "parsing issues") {
+		t.Fatalf("expected parse error, got %v", err)
+	}
+}
+
+func TestIssue_Get_ErrorPaths(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`bad`))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	_, err := c.Issues.Get(testCtx, "42", 1)
+	if err == nil || !strings.Contains(err.Error(), "parsing issue") {
+		t.Fatalf("expected parse error, got %v", err)
+	}
+}
+
+func TestIssue_Create_ParseError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`bad`))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	_, err := c.Issues.Create(testCtx, "42", IssueCreateOpts{Title: "x"})
+	if err == nil || !strings.Contains(err.Error(), "parsing created issue") {
+		t.Fatalf("expected parse error, got %v", err)
+	}
+}
+
+func TestIssue_Update_ParseError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`bad`))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	_, err := c.Issues.Update(testCtx, "42", 1, IssueUpdateOpts{Title: "x"})
+	if err == nil || !strings.Contains(err.Error(), "parsing updated issue") {
+		t.Fatalf("expected parse error, got %v", err)
+	}
+}
+
+func TestIssue_ListNotes_ParseError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`bad`))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	_, err := c.Issues.ListNotes(testCtx, "42", 1, 20)
+	if err == nil || !strings.Contains(err.Error(), "parsing notes") {
+		t.Fatalf("expected parse error, got %v", err)
+	}
+}
+
+func TestIssue_AddNote_ParseError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`bad`))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	_, err := c.Issues.AddNote(testCtx, "42", 1, "hi")
+	if err == nil || !strings.Contains(err.Error(), "parsing note") {
+		t.Fatalf("expected parse error, got %v", err)
+	}
+}

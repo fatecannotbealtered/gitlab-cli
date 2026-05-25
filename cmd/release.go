@@ -218,12 +218,12 @@ var releaseDeleteCmd = &cobra.Command{
 			return failArg("--project and --tag are required")
 		}
 
-		if err := requireConfirm(cmd, fmt.Sprintf("Type the tag name to confirm deletion of release %q", tag), tag); err != nil {
-			return err
-		}
-
 		if dryRunOutput("release delete", map[string]any{"project": project, "tag": tag}) {
 			return nil
+		}
+
+		if err := requireConfirm(cmd, fmt.Sprintf("Type the tag name to confirm deletion of release %q", tag), tag); err != nil {
+			return err
 		}
 
 		client, _, err := newClient()

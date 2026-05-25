@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"os"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/fatecannotbealtered/gitlab-cli/internal/api"
 	"github.com/fatecannotbealtered/gitlab-cli/internal/output"
+	"github.com/spf13/cobra"
 )
 
 func TestExitCodeForStatus(t *testing.T) {
@@ -295,4 +297,91 @@ func TestGitCommitSubject(t *testing.T) {
 	result := gitCommitSubject()
 	// Just verify it doesn't panic and returns a string
 	_ = result
+}
+
+func TestFailWithCode_JSON(t *testing.T) {
+	origJM := jsonMode
+	origExit := lastExit
+	defer func() {
+		jsonMode = origJM
+		lastExit = origExit
+	}()
+	jsonMode = true
+	lastExit = 0
+
+	err := failWithCode("timed out", ExitTimeout, output.ErrNetwork)
+	if !errors.Is(err, ErrSilent) {
+		t.Fatalf("failWithCode() = %v", err)
+	}
+	if lastExit != ExitTimeout {
+		t.Fatalf("exit=%d want=%d", lastExit, ExitTimeout)
+	}
+}
+
+func TestFailWithCode_PlainText(t *testing.T) {
+	origJM := jsonMode
+	origExit := lastExit
+	defer func() {
+		jsonMode = origJM
+		lastExit = origExit
+	}()
+	jsonMode = false
+	lastExit = 0
+
+	stderr := captureStderr(t, func() {
+		err := failWithCode("oops", ExitForbidden, output.ErrForbidden)
+		if !errors.Is(err, ErrSilent) {
+			t.Fatalf("failWithCode() = %v", err)
+		}
+	})
+	if !strings.Contains(stderr, "oops") {
+		t.Fatalf("stderr = %q", stderr)
+	}
+	if lastExit != ExitForbidden {
+		t.Fatalf("exit=%d want=%d", lastExit, ExitForbidden)
+	}
+}
+
+func TestRequireFlagString_MissingValue(t *testing.T) {
+	cmd := &cobra.Command{}
+	cmd.Flags().String("project", "", "project")
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+
+	_, err := requireFlagString(cmd, "project", "--project")
+	if !errors.Is(err, ErrSilent) {
+		t.Fatalf("requireFlagString() = %v", err)
+	}
+	if lastExit != ExitBadArgs {
+		t.Fatalf("exit=%d want=%d", lastExit, ExitBadArgs)
+	}
+}
+
+func TestRequireFlagString_UnknownFlag(t *testing.T) {
+	cmd := &cobra.Command{}
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+
+	_, err := requireFlagString(cmd, "missing", "--missing")
+	if !errors.Is(err, ErrSilent) {
+		t.Fatalf("requireFlagString() = %v", err)
+	}
+	if lastExit != ExitBadArgs {
+		t.Fatalf("exit=%d want=%d", lastExit, ExitBadArgs)
+	}
+}
+
+func TestRequireFlagString_OK(t *testing.T) {
+	cmd := &cobra.Command{}
+	cmd.Flags().String("project", "group/proj", "project")
+
+	got, err := requireFlagString(cmd, "project", "--project")
+	if err != nil {
+		t.Fatalf("requireFlagString() = %v", err)
+	}
+	if got != "group/proj" {
+		t.Fatalf("got=%q", got)
+	}
 }

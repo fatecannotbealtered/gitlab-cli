@@ -345,3 +345,347 @@ func TestLabel_List_Empty(t *testing.T) {
 		t.Errorf("expected 'No labels' in output, got: %s", out)
 	}
 }
+
+func TestLabel_List_MissingAuth(t *testing.T) {
+	isolateConfigHome(t)
+	t.Setenv("GITLAB_CLI_HOST", "")
+	t.Setenv("GITLAB_CLI_TOKEN", "")
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"label", "list", "--project", "foo/bar"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitAuth {
+		t.Errorf("exit code = %d, want %d", lastExit, ExitAuth)
+	}
+}
+
+func TestLabel_List_InvalidLimit(t *testing.T) {
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	defer func() { lastExit = origExit; _ = labelListCmd.Flags().Set("limit", "20") }()
+	lastExit = 0
+	_ = labelListCmd.Flags().Set("limit", "0")
+	rootCmd.SetArgs([]string{"label", "list", "--project", "foo/bar"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitBadArgs {
+		t.Errorf("exit code = %d, want %d", lastExit, ExitBadArgs)
+	}
+}
+
+func TestLabel_Create_MissingProject(t *testing.T) {
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	origDR := dryRun
+	defer func() { lastExit = origExit; dryRun = origDR; _ = labelCreateCmd.Flags().Set("project", "") }()
+	lastExit = 0
+	dryRun = false
+	_ = labelCreateCmd.Flags().Set("project", "")
+	rootCmd.SetArgs([]string{"label", "create", "--name", "bug", "--color", "#e11"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitBadArgs {
+		t.Errorf("exit code = %d, want %d", lastExit, ExitBadArgs)
+	}
+}
+
+func TestLabel_Create_MissingName(t *testing.T) {
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	origDR := dryRun
+	defer func() { lastExit = origExit; dryRun = origDR; _ = labelCreateCmd.Flags().Set("name", "") }()
+	lastExit = 0
+	dryRun = false
+	_ = labelCreateCmd.Flags().Set("name", "")
+	rootCmd.SetArgs([]string{"label", "create", "--project", "foo/bar", "--color", "#e11"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitBadArgs {
+		t.Errorf("exit code = %d, want %d", lastExit, ExitBadArgs)
+	}
+}
+
+func TestLabel_Create_MissingColor(t *testing.T) {
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	origDR := dryRun
+	defer func() { lastExit = origExit; dryRun = origDR; _ = labelCreateCmd.Flags().Set("color", "") }()
+	lastExit = 0
+	dryRun = false
+	_ = labelCreateCmd.Flags().Set("color", "")
+	rootCmd.SetArgs([]string{"label", "create", "--project", "foo/bar", "--name", "bug"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitBadArgs {
+		t.Errorf("exit code = %d, want %d", lastExit, ExitBadArgs)
+	}
+}
+
+func TestLabel_Create_MissingAuth(t *testing.T) {
+	isolateConfigHome(t)
+	t.Setenv("GITLAB_CLI_HOST", "")
+	t.Setenv("GITLAB_CLI_TOKEN", "")
+	origExit := lastExit
+	origDR := dryRun
+	defer func() { lastExit = origExit; dryRun = origDR }()
+	lastExit = 0
+	dryRun = false
+	rootCmd.SetArgs([]string{"label", "create", "--project", "foo/bar", "--name", "bug", "--color", "#e11"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitAuth {
+		t.Errorf("exit code = %d, want %d", lastExit, ExitAuth)
+	}
+}
+
+func TestLabel_Create_WithPriority(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		fmt.Fprint(w, `{"id":1,"name":"bug","color":"#e11","description":"","priority":5,"text_color":"#fff"}`)
+	}))
+	defer srv.Close()
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origDR := dryRun
+	origJM := jsonMode
+	defer func() { dryRun = origDR; jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
+	dryRun = false
+	jsonMode = false
+	out := captureStdout(t, func() {
+		rootCmd.SetArgs([]string{"label", "create", "--project", "foo/bar", "--name", "bug", "--color", "#e11", "--priority", "5"})
+		_ = rootCmd.Execute()
+	})
+	if !strings.Contains(out, "bug") {
+		t.Errorf("expected label name in output, got: %s", out)
+	}
+}
+
+func TestLabel_Create_APIError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"message":"500"}`))
+	}))
+	defer srv.Close()
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origDR := dryRun
+	origExit := lastExit
+	defer func() { dryRun = origDR; lastExit = origExit }()
+	dryRun = false
+	lastExit = 0
+	rootCmd.SetArgs([]string{"label", "create", "--project", "foo/bar", "--name", "bug", "--color", "#e11"})
+	_ = rootCmd.Execute()
+	if lastExit == ExitOK {
+		t.Errorf("expected non-zero exit for API error, got %d", lastExit)
+	}
+}
+
+func TestLabel_Update_MissingProject(t *testing.T) {
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	origDR := dryRun
+	defer func() { lastExit = origExit; dryRun = origDR; _ = labelUpdateCmd.Flags().Set("project", "") }()
+	lastExit = 0
+	dryRun = false
+	_ = labelUpdateCmd.Flags().Set("project", "")
+	rootCmd.SetArgs([]string{"label", "update", "--label-id", "1"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitBadArgs {
+		t.Errorf("exit code = %d, want %d", lastExit, ExitBadArgs)
+	}
+}
+
+func TestLabel_Update_MissingLabelID(t *testing.T) {
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	origDR := dryRun
+	defer func() { lastExit = origExit; dryRun = origDR; _ = labelUpdateCmd.Flags().Set("label-id", "0") }()
+	lastExit = 0
+	dryRun = false
+	_ = labelUpdateCmd.Flags().Set("label-id", "0")
+	rootCmd.SetArgs([]string{"label", "update", "--project", "foo/bar"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitBadArgs {
+		t.Errorf("exit code = %d, want %d", lastExit, ExitBadArgs)
+	}
+}
+
+func TestLabel_Update_MissingAuth(t *testing.T) {
+	isolateConfigHome(t)
+	t.Setenv("GITLAB_CLI_HOST", "")
+	t.Setenv("GITLAB_CLI_TOKEN", "")
+	origExit := lastExit
+	origDR := dryRun
+	defer func() { lastExit = origExit; dryRun = origDR }()
+	lastExit = 0
+	dryRun = false
+	rootCmd.SetArgs([]string{"label", "update", "--project", "foo/bar", "--label-id", "1", "--name", "x"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitAuth {
+		t.Errorf("exit code = %d, want %d", lastExit, ExitAuth)
+	}
+}
+
+func TestLabel_Update_WithPriority(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"id":1,"name":"bug2","color":"#e11","description":"","priority":3,"text_color":"#fff"}`)
+	}))
+	defer srv.Close()
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origDR := dryRun
+	origJM := jsonMode
+	defer func() { dryRun = origDR; jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
+	dryRun = false
+	jsonMode = false
+	out := captureStdout(t, func() {
+		rootCmd.SetArgs([]string{"label", "update", "--project", "foo/bar", "--label-id", "1", "--priority", "3"})
+		_ = rootCmd.Execute()
+	})
+	if !strings.Contains(out, "Updated") {
+		t.Errorf("expected Updated in output, got: %s", out)
+	}
+}
+
+func TestLabel_Update_APIError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"message":"500"}`))
+	}))
+	defer srv.Close()
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origDR := dryRun
+	origExit := lastExit
+	defer func() { dryRun = origDR; lastExit = origExit }()
+	dryRun = false
+	lastExit = 0
+	rootCmd.SetArgs([]string{"label", "update", "--project", "foo/bar", "--label-id", "1", "--name", "x"})
+	_ = rootCmd.Execute()
+	if lastExit == ExitOK {
+		t.Errorf("expected non-zero exit for API error, got %d", lastExit)
+	}
+}
+
+func TestLabel_Delete_MissingProject(t *testing.T) {
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	origDR := dryRun
+	defer func() { lastExit = origExit; dryRun = origDR; _ = labelDeleteCmd.Flags().Set("project", "") }()
+	lastExit = 0
+	dryRun = false
+	_ = labelDeleteCmd.Flags().Set("project", "")
+	rootCmd.SetArgs([]string{"label", "delete", "--label-id", "1"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitBadArgs {
+		t.Errorf("exit code = %d, want %d", lastExit, ExitBadArgs)
+	}
+}
+
+func TestLabel_Delete_MissingLabelID(t *testing.T) {
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	origDR := dryRun
+	defer func() { lastExit = origExit; dryRun = origDR; _ = labelDeleteCmd.Flags().Set("label-id", "0") }()
+	lastExit = 0
+	dryRun = false
+	_ = labelDeleteCmd.Flags().Set("label-id", "0")
+	rootCmd.SetArgs([]string{"label", "delete", "--project", "foo/bar"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitBadArgs {
+		t.Errorf("exit code = %d, want %d", lastExit, ExitBadArgs)
+	}
+}
+
+func TestLabel_Delete_MissingAuth(t *testing.T) {
+	isolateConfigHome(t)
+	t.Setenv("GITLAB_CLI_HOST", "")
+	t.Setenv("GITLAB_CLI_TOKEN", "")
+	origExit := lastExit
+	origDR := dryRun
+	defer func() { lastExit = origExit; dryRun = origDR }()
+	lastExit = 0
+	dryRun = false
+	rootCmd.SetArgs([]string{"label", "delete", "--project", "foo/bar", "--label-id", "1", "--force"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitAuth {
+		t.Errorf("exit code = %d, want %d", lastExit, ExitAuth)
+	}
+}
+
+func TestLabel_Delete_ConfirmCancelled(t *testing.T) {
+	t.Setenv("GITLAB_CLI_AGENT_SAFE", "0")
+	withNonInteractiveStdin(t)
+	resetRootPersistentFlags(t)
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	origDR := dryRun
+	defer func() { lastExit = origExit; dryRun = origDR; resetRootPersistentFlags(t) }()
+	lastExit = 0
+	dryRun = false
+	rootCmd.SetArgs([]string{"label", "delete", "--project", "foo/bar", "--label-id", "1"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitCancelled {
+		t.Errorf("exit code = %d, want %d", lastExit, ExitCancelled)
+	}
+}
+
+func TestLabel_Delete_APIError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"message":"500"}`))
+	}))
+	defer srv.Close()
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origDR := dryRun
+	origExit := lastExit
+	defer func() { dryRun = origDR; lastExit = origExit }()
+	dryRun = false
+	lastExit = 0
+	rootCmd.SetArgs([]string{"label", "delete", "--project", "foo/bar", "--label-id", "1", "--force"})
+	_ = rootCmd.Execute()
+	if lastExit == ExitOK {
+		t.Errorf("expected non-zero exit for API error, got %d", lastExit)
+	}
+}
+
+func TestLabel_Delete_PlainText(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origDR := dryRun
+	origJM := jsonMode
+	origExit := lastExit
+	defer func() {
+		dryRun = origDR
+		jsonMode = origJM
+		lastExit = origExit
+		_ = rootCmd.PersistentFlags().Set("json", "false")
+	}()
+	dryRun = false
+	jsonMode = false
+	lastExit = 0
+	_ = rootCmd.PersistentFlags().Set("json", "false")
+	out := captureStdout(t, func() {
+		rootCmd.SetArgs([]string{"label", "delete", "--project", "foo/bar", "--label-id", "1", "--force"})
+		_ = rootCmd.Execute()
+	})
+	if !strings.Contains(out, "Deleted") {
+		t.Errorf("expected Deleted in output, got: %s", out)
+	}
+}

@@ -337,3 +337,168 @@ func TestMR_Create_422(t *testing.T) {
 		t.Errorf("expected 422 APIError, got %v", err)
 	}
 }
+
+func TestMR_List_WithAllEncodeFields(t *testing.T) {
+	opts := &MergeRequestListOpts{
+		State:        "opened",
+		AssigneeUser: "alice",
+		AuthorUser:   "bob",
+		Labels:       "bug",
+		Search:       "fix",
+		SourceBranch: "feat/x",
+		TargetBranch: "main",
+		Limit:        150,
+	}
+	q := opts.encode()
+	for _, part := range []string{
+		"state=opened",
+		"assignee_username=alice",
+		"author_username=bob",
+		"labels=bug",
+		"search=fix",
+		"source_branch=feat%2Fx",
+		"target_branch=main",
+	} {
+		if !strings.Contains(q, part) {
+			t.Errorf("encode() missing %q in %q", part, q)
+		}
+	}
+	if !strings.Contains(q, "per_page=100") {
+		t.Errorf("encode() should cap per_page at 100, got %q", q)
+	}
+	if (*MergeRequestListOpts)(nil).encode() != "" {
+		t.Error("nil encode should be empty")
+	}
+}
+
+func TestMR_Reopen_StateEvent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut {
+			t.Errorf("method = %q, want PUT", r.Method)
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"iid":2,"title":"x","state":"opened","source_branch":"b","target_branch":"main"}`))
+	}))
+	defer srv.Close()
+
+	c := newMRTestClient(srv.URL)
+	mr, err := c.MergeRequests.Reopen(testCtx, "group/proj", 2)
+	if err != nil {
+		t.Fatalf("Reopen: %v", err)
+	}
+	if mr.State != "opened" {
+		t.Errorf("state = %q, want opened", mr.State)
+	}
+}
+
+func TestMR_List_ParseError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`bad`))
+	}))
+	defer srv.Close()
+
+	c := newMRTestClient(srv.URL)
+	_, err := c.MergeRequests.List(testCtx, "group/proj", nil)
+	if err == nil || !strings.Contains(err.Error(), "parsing merge requests") {
+		t.Fatalf("expected parse error, got %v", err)
+	}
+}
+
+func TestMR_Get_ParseError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`bad`))
+	}))
+	defer srv.Close()
+
+	c := newMRTestClient(srv.URL)
+	_, err := c.MergeRequests.Get(testCtx, "group/proj", 1)
+	if err == nil || !strings.Contains(err.Error(), "parsing merge request") {
+		t.Fatalf("expected parse error, got %v", err)
+	}
+}
+
+func TestMR_Create_ParseError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`bad`))
+	}))
+	defer srv.Close()
+
+	c := newMRTestClient(srv.URL)
+	_, err := c.MergeRequests.Create(testCtx, "group/proj", &MergeRequestCreateRequest{Title: "x", SourceBranch: "a", TargetBranch: "main"})
+	if err == nil || !strings.Contains(err.Error(), "parsing created merge request") {
+		t.Fatalf("expected parse error, got %v", err)
+	}
+}
+
+func TestMR_Update_ParseError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`bad`))
+	}))
+	defer srv.Close()
+
+	c := newMRTestClient(srv.URL)
+	_, err := c.MergeRequests.Update(testCtx, "group/proj", 1, &MergeRequestUpdateRequest{Title: "x"})
+	if err == nil || !strings.Contains(err.Error(), "parsing updated merge request") {
+		t.Fatalf("expected parse error, got %v", err)
+	}
+}
+
+func TestMR_Merge_ParseError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`bad`))
+	}))
+	defer srv.Close()
+
+	c := newMRTestClient(srv.URL)
+	_, err := c.MergeRequests.Merge(testCtx, "group/proj", 1, nil)
+	if err == nil || !strings.Contains(err.Error(), "parsing merged merge request") {
+		t.Fatalf("expected parse error, got %v", err)
+	}
+}
+
+func TestMR_ListNotes_ParseError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`bad`))
+	}))
+	defer srv.Close()
+
+	c := newMRTestClient(srv.URL)
+	_, err := c.MergeRequests.ListNotes(testCtx, "group/proj", 1, 20)
+	if err == nil || !strings.Contains(err.Error(), "parsing notes") {
+		t.Fatalf("expected parse error, got %v", err)
+	}
+}
+
+func TestMR_AddNote_ParseError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`bad`))
+	}))
+	defer srv.Close()
+
+	c := newMRTestClient(srv.URL)
+	_, err := c.MergeRequests.AddNote(testCtx, "group/proj", 1, "hi")
+	if err == nil || !strings.Contains(err.Error(), "parsing note") {
+		t.Fatalf("expected parse error, got %v", err)
+	}
+}
+
+func TestMR_GetRawDiff_Error(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"message":"404"}`))
+	}))
+	defer srv.Close()
+
+	c := newMRTestClient(srv.URL)
+	_, err := c.MergeRequests.GetRawDiff(testCtx, "group/proj", 1)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}

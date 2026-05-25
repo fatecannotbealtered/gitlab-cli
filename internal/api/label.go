@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/url"
 	"strconv"
 )
 
@@ -119,9 +118,6 @@ var namedColors = map[string]string{
 func normalizeColor(c string) string {
 	if len(c) > 0 && c[0] == '#' {
 		return c
-	}
-	if hex, ok := namedColors[url.QueryEscape(c)]; ok {
-		return hex
 	}
 	if hex, ok := namedColors[c]; ok {
 		return hex

@@ -1,6 +1,6 @@
 {
   "name": "@fatecannotbealtered-/gitlab-cli",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Full-featured GitLab CLI scaffold for AI Agents — manage merge requests, issues, pipelines, jobs, repositories, releases, labels, milestones, variables, and more from your terminal",
   "keywords": [
     "gitlab",

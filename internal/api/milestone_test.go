@@ -112,3 +112,65 @@ func TestMilestoneListOpts_AllState_OmitsStateParam(t *testing.T) {
 		t.Errorf("state=all should not be sent, got: %s", q)
 	}
 }
+
+func TestMilestone_List_ParseError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`bad`))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	_, err := c.Milestones.List(testCtx, "42", nil)
+	if err == nil || !strings.Contains(err.Error(), "parsing milestones") {
+		t.Fatalf("expected parse error, got %v", err)
+	}
+}
+
+func TestMilestone_GetByID_ParseError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`bad`))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	_, err := c.Milestones.GetByID(testCtx, "42", 1)
+	if err == nil || !strings.Contains(err.Error(), "parsing milestone") {
+		t.Fatalf("expected parse error, got %v", err)
+	}
+}
+
+func TestMilestone_Create_ParseError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`bad`))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	_, err := c.Milestones.Create(testCtx, "42", MilestoneCreateOpts{Title: "v1"})
+	if err == nil || !strings.Contains(err.Error(), "parsing created milestone") {
+		t.Fatalf("expected parse error, got %v", err)
+	}
+}
+
+func TestMilestone_Update_ParseError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`bad`))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	_, err := c.Milestones.Update(testCtx, "42", 1, MilestoneUpdateOpts{Title: "x"})
+	if err == nil || !strings.Contains(err.Error(), "parsing updated milestone") {
+		t.Fatalf("expected parse error, got %v", err)
+	}
+}
+
+func TestMilestoneListOpts_NilEncode(t *testing.T) {
+	if (*MilestoneListOpts)(nil).encode() != "" {
+		t.Error("nil encode should be empty")
+	}
+}

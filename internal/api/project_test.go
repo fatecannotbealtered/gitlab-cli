@@ -104,3 +104,56 @@ func TestProject_Members(t *testing.T) {
 		t.Errorf("unexpected: %+v", members)
 	}
 }
+
+func TestProject_List_ParseError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`bad`))
+	}))
+	defer srv.Close()
+
+	c := newProjectTestClient(srv.URL)
+	_, err := c.Projects.List(testCtx, nil)
+	if err == nil || !strings.Contains(err.Error(), "parsing projects") {
+		t.Fatalf("expected parse error, got %v", err)
+	}
+}
+
+func TestProject_Get_ParseError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`bad`))
+	}))
+	defer srv.Close()
+
+	c := newProjectTestClient(srv.URL)
+	_, err := c.Projects.Get(testCtx, "1")
+	if err == nil || !strings.Contains(err.Error(), "parsing project") {
+		t.Fatalf("expected parse error, got %v", err)
+	}
+}
+
+func TestProject_Members_ParseError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`bad`))
+	}))
+	defer srv.Close()
+
+	c := newProjectTestClient(srv.URL)
+	_, err := c.Projects.Members(testCtx, "1", "", 20)
+	if err == nil || !strings.Contains(err.Error(), "parsing project members") {
+		t.Fatalf("expected parse error, got %v", err)
+	}
+}
+
+func TestProjectListOpts_EncodeMembership(t *testing.T) {
+	opts := &ProjectListOpts{Membership: true, Limit: 0}
+	q := opts.encode()
+	if !strings.Contains(q, "membership=true") {
+		t.Errorf("encode() = %q", q)
+	}
+	if (*ProjectListOpts)(nil).encode() != "" {
+		t.Error("nil encode should be empty")
+	}
+}

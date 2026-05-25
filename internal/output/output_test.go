@@ -111,8 +111,12 @@ func TestTruncate(t *testing.T) {
 }
 
 func TestStatusBadge_AllStates(t *testing.T) {
-	// Sanity: badge function should not panic for arbitrary state strings.
-	for _, s := range []string{"opened", "closed", "merged", "running", "failed", "skipped", "manual", "unknown_state"} {
+	for _, s := range []string{
+		"opened", "closed", "merged", "running", "failed", "skipped", "manual",
+		"pending", "in_progress", "success", "canceled", "scheduled", "locked", "created",
+		"unknown_state",
+	} {
 		_ = StatusBadge(s)
+		_ = StatusBadge(strings.ToUpper(s))
 	}
 }

@@ -17,6 +17,9 @@ func marshalJSON(v any) ([]byte, error) {
 	return json.MarshalIndent(v, "", "  ")
 }
 
+// emitJSONMarshal is the encoder for emitErrorPayload (overridable in tests).
+var emitJSONMarshal = marshalJSON
+
 // PrintJSONErr outputs v as JSON to stdout. On marshal failure it writes
 // to stderr and returns the error (callers may map this to exit code 2).
 func PrintJSONErr(v any) error {
@@ -134,7 +137,7 @@ func emitErrorPayload(msg string, statusCode int, code ErrorCode) {
 		ErrorCode:  code,
 		Hint:       HintForErrorCode(code),
 	}
-	data, err := marshalJSON(payload)
+	data, err := emitJSONMarshal(payload)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, `{"error": %q, "statusCode": %d, "errorCode": %q}`+"\n", msg, statusCode, code)
 		return

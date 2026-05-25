@@ -12,6 +12,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// test hook for artifacts output file close
+var closeOutputFile = func(f *os.File) error { return f.Close() }
+
 var jobCmd = &cobra.Command{
 	Use:   "job",
 	Short: "Manage CI/CD jobs",
@@ -215,7 +218,7 @@ var jobArtifactsCmd = &cobra.Command{
 			_ = os.Remove(outPath)
 			return handleAPIError(err, jsonMode)
 		}
-		if err := f.Close(); err != nil {
+		if err := closeOutputFile(f); err != nil {
 			output.Error("closing output file: " + err.Error())
 			setExitCode(ExitNetwork)
 			return ErrSilent

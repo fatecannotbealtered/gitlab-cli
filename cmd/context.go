@@ -209,9 +209,5 @@ func renderContext(r *contextResult, unauthenticated bool) error {
 		}
 	}
 	fmt.Println()
-	if unauthenticated && contextStrict {
-		setExitCode(ExitAuth)
-		return ErrSilent
-	}
 	return nil
 }

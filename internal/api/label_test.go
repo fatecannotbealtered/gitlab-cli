@@ -99,3 +99,77 @@ func TestLabel_Delete(t *testing.T) {
 		t.Fatalf("Delete: %v", err)
 	}
 }
+
+func TestNormalizeColor_Branches(t *testing.T) {
+	if got := normalizeColor("#AABBCC"); got != "#AABBCC" {
+		t.Errorf("hex passthrough = %q", got)
+	}
+	if got := normalizeColor("unknown"); got != "unknown" {
+		t.Errorf("unknown = %q", got)
+	}
+	if got := normalizeColor("grey"); got != "#808080" {
+		t.Errorf("named grey = %q", got)
+	}
+	if got := normalizeColor("green"); got != "#00FF00" {
+		t.Errorf("named green = %q", got)
+	}
+}
+
+func TestLabel_List_ParseError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`bad`))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	_, err := c.Labels.List(testCtx, "42", 20)
+	if err == nil || !strings.Contains(err.Error(), "parsing labels") {
+		t.Fatalf("expected parse error, got %v", err)
+	}
+}
+
+func TestLabel_Create_ParseError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`bad`))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	_, err := c.Labels.Create(testCtx, "42", LabelCreateOpts{Name: "x", Color: "#000"})
+	if err == nil || !strings.Contains(err.Error(), "parsing created label") {
+		t.Fatalf("expected parse error, got %v", err)
+	}
+}
+
+func TestLabel_Update_WithColor(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":1,"name":"bug","color":"#00FF00"}`))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	label, err := c.Labels.Update(testCtx, "42", 1, LabelUpdateOpts{Color: "green"})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if label.Color != "#00FF00" {
+		t.Errorf("color = %q", label.Color)
+	}
+}
+
+func TestLabel_Update_ParseError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`bad`))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	_, err := c.Labels.Update(testCtx, "42", 1, LabelUpdateOpts{NewName: "x"})
+	if err == nil || !strings.Contains(err.Error(), "parsing updated label") {
+		t.Fatalf("expected parse error, got %v", err)
+	}
+}

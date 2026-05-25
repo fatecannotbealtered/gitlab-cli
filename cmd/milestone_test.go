@@ -403,3 +403,357 @@ func TestMilestone_List_Empty(t *testing.T) {
 		t.Errorf("expected 'No milestones' in output, got: %s", out)
 	}
 }
+
+func TestMilestone_List_MissingAuth(t *testing.T) {
+	isolateConfigHome(t)
+	t.Setenv("GITLAB_CLI_HOST", "")
+	t.Setenv("GITLAB_CLI_TOKEN", "")
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"milestone", "list", "--project", "foo/bar"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitAuth {
+		t.Errorf("exit code = %d, want %d", lastExit, ExitAuth)
+	}
+}
+
+func TestMilestone_List_InvalidLimit(t *testing.T) {
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	defer func() { lastExit = origExit; _ = milestoneListCmd.Flags().Set("limit", "20") }()
+	lastExit = 0
+	_ = milestoneListCmd.Flags().Set("limit", "0")
+	rootCmd.SetArgs([]string{"milestone", "list", "--project", "foo/bar"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitBadArgs {
+		t.Errorf("exit code = %d, want %d", lastExit, ExitBadArgs)
+	}
+}
+
+func TestMilestone_Get_MissingProject(t *testing.T) {
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	defer func() { lastExit = origExit; _ = milestoneGetCmd.Flags().Set("project", "") }()
+	lastExit = 0
+	_ = milestoneGetCmd.Flags().Set("project", "")
+	rootCmd.SetArgs([]string{"milestone", "get", "--milestone-id", "1"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitBadArgs {
+		t.Errorf("exit code = %d, want %d", lastExit, ExitBadArgs)
+	}
+}
+
+func TestMilestone_Get_MissingMilestoneID(t *testing.T) {
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	defer func() { lastExit = origExit; _ = milestoneGetCmd.Flags().Set("milestone-id", "0") }()
+	lastExit = 0
+	_ = milestoneGetCmd.Flags().Set("milestone-id", "0")
+	rootCmd.SetArgs([]string{"milestone", "get", "--project", "foo/bar"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitBadArgs {
+		t.Errorf("exit code = %d, want %d", lastExit, ExitBadArgs)
+	}
+}
+
+func TestMilestone_Get_MissingAuth(t *testing.T) {
+	isolateConfigHome(t)
+	t.Setenv("GITLAB_CLI_HOST", "")
+	t.Setenv("GITLAB_CLI_TOKEN", "")
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"milestone", "get", "--project", "foo/bar", "--milestone-id", "1"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitAuth {
+		t.Errorf("exit code = %d, want %d", lastExit, ExitAuth)
+	}
+}
+
+func TestMilestone_Get_APIError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"message":"404"}`))
+	}))
+	defer srv.Close()
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"milestone", "get", "--project", "foo/bar", "--milestone-id", "1"})
+	_ = rootCmd.Execute()
+	if lastExit == ExitOK {
+		t.Errorf("expected non-zero exit for API error, got %d", lastExit)
+	}
+}
+
+func TestMilestone_Get_PlainTextFull(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"id":1,"iid":1,"title":"v1","state":"active","start_date":"2024-01-01","due_date":"2024-06-01","description":"release","web_url":""}`)
+	}))
+	defer srv.Close()
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origJM := jsonMode
+	defer func() { jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
+	jsonMode = false
+	out := captureStdout(t, func() {
+		rootCmd.SetArgs([]string{"milestone", "get", "--project", "foo/bar", "--milestone-id", "1"})
+		_ = rootCmd.Execute()
+	})
+	for _, want := range []string{"v1", "2024-01-01", "2024-06-01", "release"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("expected %q in output, got:\n%s", want, out)
+		}
+	}
+}
+
+func TestMilestone_Create_MissingProject(t *testing.T) {
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	origDR := dryRun
+	defer func() { lastExit = origExit; dryRun = origDR; _ = milestoneCreateCmd.Flags().Set("project", "") }()
+	lastExit = 0
+	dryRun = false
+	_ = milestoneCreateCmd.Flags().Set("project", "")
+	rootCmd.SetArgs([]string{"milestone", "create", "--title", "v1"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitBadArgs {
+		t.Errorf("exit code = %d, want %d", lastExit, ExitBadArgs)
+	}
+}
+
+func TestMilestone_Create_MissingTitle(t *testing.T) {
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	origDR := dryRun
+	defer func() { lastExit = origExit; dryRun = origDR; _ = milestoneCreateCmd.Flags().Set("title", "") }()
+	lastExit = 0
+	dryRun = false
+	_ = milestoneCreateCmd.Flags().Set("title", "")
+	rootCmd.SetArgs([]string{"milestone", "create", "--project", "foo/bar"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitBadArgs {
+		t.Errorf("exit code = %d, want %d", lastExit, ExitBadArgs)
+	}
+}
+
+func TestMilestone_Create_MissingAuth(t *testing.T) {
+	isolateConfigHome(t)
+	t.Setenv("GITLAB_CLI_HOST", "")
+	t.Setenv("GITLAB_CLI_TOKEN", "")
+	origExit := lastExit
+	origDR := dryRun
+	defer func() { lastExit = origExit; dryRun = origDR }()
+	lastExit = 0
+	dryRun = false
+	rootCmd.SetArgs([]string{"milestone", "create", "--project", "foo/bar", "--title", "v1"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitAuth {
+		t.Errorf("exit code = %d, want %d", lastExit, ExitAuth)
+	}
+}
+
+func TestMilestone_Create_APIError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"message":"500"}`))
+	}))
+	defer srv.Close()
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origDR := dryRun
+	origExit := lastExit
+	defer func() { dryRun = origDR; lastExit = origExit }()
+	dryRun = false
+	lastExit = 0
+	rootCmd.SetArgs([]string{"milestone", "create", "--project", "foo/bar", "--title", "v1"})
+	_ = rootCmd.Execute()
+	if lastExit == ExitOK {
+		t.Errorf("expected non-zero exit for API error, got %d", lastExit)
+	}
+}
+
+func TestMilestone_Update_MissingProject(t *testing.T) {
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	origDR := dryRun
+	defer func() { lastExit = origExit; dryRun = origDR; _ = milestoneUpdateCmd.Flags().Set("project", "") }()
+	lastExit = 0
+	dryRun = false
+	_ = milestoneUpdateCmd.Flags().Set("project", "")
+	rootCmd.SetArgs([]string{"milestone", "update", "--milestone-id", "1"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitBadArgs {
+		t.Errorf("exit code = %d, want %d", lastExit, ExitBadArgs)
+	}
+}
+
+func TestMilestone_Update_MissingMilestoneID(t *testing.T) {
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	origDR := dryRun
+	defer func() { lastExit = origExit; dryRun = origDR; _ = milestoneUpdateCmd.Flags().Set("milestone-id", "0") }()
+	lastExit = 0
+	dryRun = false
+	_ = milestoneUpdateCmd.Flags().Set("milestone-id", "0")
+	rootCmd.SetArgs([]string{"milestone", "update", "--project", "foo/bar"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitBadArgs {
+		t.Errorf("exit code = %d, want %d", lastExit, ExitBadArgs)
+	}
+}
+
+func TestMilestone_Update_MissingAuth(t *testing.T) {
+	isolateConfigHome(t)
+	t.Setenv("GITLAB_CLI_HOST", "")
+	t.Setenv("GITLAB_CLI_TOKEN", "")
+	origExit := lastExit
+	origDR := dryRun
+	defer func() { lastExit = origExit; dryRun = origDR }()
+	lastExit = 0
+	dryRun = false
+	rootCmd.SetArgs([]string{"milestone", "update", "--project", "foo/bar", "--milestone-id", "1", "--title", "v2"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitAuth {
+		t.Errorf("exit code = %d, want %d", lastExit, ExitAuth)
+	}
+}
+
+func TestMilestone_Update_APIError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"message":"500"}`))
+	}))
+	defer srv.Close()
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origDR := dryRun
+	origExit := lastExit
+	defer func() { dryRun = origDR; lastExit = origExit }()
+	dryRun = false
+	lastExit = 0
+	rootCmd.SetArgs([]string{"milestone", "update", "--project", "foo/bar", "--milestone-id", "1", "--title", "v2"})
+	_ = rootCmd.Execute()
+	if lastExit == ExitOK {
+		t.Errorf("expected non-zero exit for API error, got %d", lastExit)
+	}
+}
+
+func TestMilestone_Close_MissingProject(t *testing.T) {
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	origDR := dryRun
+	defer func() { lastExit = origExit; dryRun = origDR; _ = milestoneCloseCmd.Flags().Set("project", "") }()
+	lastExit = 0
+	dryRun = false
+	_ = milestoneCloseCmd.Flags().Set("project", "")
+	rootCmd.SetArgs([]string{"milestone", "close", "--milestone-id", "1"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitBadArgs {
+		t.Errorf("exit code = %d, want %d", lastExit, ExitBadArgs)
+	}
+}
+
+func TestMilestone_Close_MissingMilestoneID(t *testing.T) {
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	origDR := dryRun
+	defer func() { lastExit = origExit; dryRun = origDR; _ = milestoneCloseCmd.Flags().Set("milestone-id", "0") }()
+	lastExit = 0
+	dryRun = false
+	_ = milestoneCloseCmd.Flags().Set("milestone-id", "0")
+	rootCmd.SetArgs([]string{"milestone", "close", "--project", "foo/bar"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitBadArgs {
+		t.Errorf("exit code = %d, want %d", lastExit, ExitBadArgs)
+	}
+}
+
+func TestMilestone_Close_MissingAuth(t *testing.T) {
+	isolateConfigHome(t)
+	t.Setenv("GITLAB_CLI_HOST", "")
+	t.Setenv("GITLAB_CLI_TOKEN", "")
+	origExit := lastExit
+	origDR := dryRun
+	defer func() { lastExit = origExit; dryRun = origDR }()
+	lastExit = 0
+	dryRun = false
+	rootCmd.SetArgs([]string{"milestone", "close", "--project", "foo/bar", "--milestone-id", "1", "--force"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitAuth {
+		t.Errorf("exit code = %d, want %d", lastExit, ExitAuth)
+	}
+}
+
+func TestMilestone_Close_ConfirmCancelled(t *testing.T) {
+	t.Setenv("GITLAB_CLI_AGENT_SAFE", "0")
+	withNonInteractiveStdin(t)
+	resetRootPersistentFlags(t)
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	origDR := dryRun
+	defer func() { lastExit = origExit; dryRun = origDR; resetRootPersistentFlags(t) }()
+	lastExit = 0
+	dryRun = false
+	rootCmd.SetArgs([]string{"milestone", "close", "--project", "foo/bar", "--milestone-id", "1"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitCancelled {
+		t.Errorf("exit code = %d, want %d", lastExit, ExitCancelled)
+	}
+}
+
+func TestMilestone_Close_APIError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"message":"500"}`))
+	}))
+	defer srv.Close()
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origDR := dryRun
+	origExit := lastExit
+	defer func() { dryRun = origDR; lastExit = origExit }()
+	dryRun = false
+	lastExit = 0
+	rootCmd.SetArgs([]string{"milestone", "close", "--project", "foo/bar", "--milestone-id", "1", "--force"})
+	_ = rootCmd.Execute()
+	if lastExit == ExitOK {
+		t.Errorf("expected non-zero exit for API error, got %d", lastExit)
+	}
+}
+
+func TestMilestone_Close_PlainText(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"id":1,"iid":1,"title":"v1","state":"closed","created_at":"2024-01-01","updated_at":"2024-01-01"}`)
+	}))
+	defer srv.Close()
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origDR := dryRun
+	origJM := jsonMode
+	defer func() { dryRun = origDR; jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
+	dryRun = false
+	jsonMode = false
+	out := captureStdout(t, func() {
+		rootCmd.SetArgs([]string{"milestone", "close", "--project", "foo/bar", "--milestone-id", "1", "--force"})
+		_ = rootCmd.Execute()
+	})
+	if !strings.Contains(out, "Closed") {
+		t.Errorf("expected Closed in output, got: %s", out)
+	}
+}

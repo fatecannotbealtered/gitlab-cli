@@ -10,6 +10,16 @@ import (
 
 var confirmFlag string
 
+// test hooks
+var (
+	stdinIsTerminalFunc  = isTerminal
+	readConfirmInputFunc = func() (string, error) {
+		var input string
+		_, err := fmt.Fscanln(os.Stdin, &input)
+		return input, err
+	}
+)
+
 func initConfirmFlag() {
 	rootCmd.PersistentFlags().StringVar(&confirmFlag, "confirm", "", "Non-interactive confirmation: value must match the expected token for this action")
 }
@@ -26,10 +36,10 @@ func requireConfirm(cmd *cobra.Command, action, expected string) error {
 		}
 		return nil
 	}
-	if isTerminal(os.Stdin) {
+	if stdinIsTerminalFunc(os.Stdin) {
 		fmt.Printf("%s (type %q to confirm): ", action, expected)
-		var input string
-		if _, err := fmt.Fscanln(os.Stdin, &input); err != nil {
+		input, err := readConfirmInputFunc()
+		if err != nil {
 			return failCancelled("confirmation failed: " + err.Error())
 		}
 		if subtle.ConstantTimeCompare([]byte(input), []byte(expected)) == 1 {

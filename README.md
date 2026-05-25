@@ -16,9 +16,9 @@ Built with Go. Single static binary. Compatible with **GitLab.com, GitLab Self-M
 GitLab already ships an excellent CLI called [glab](https://gitlab.com/gitlab-org/cli) — for humans. `gitlab-cli` is **purpose-built for AI Agents** and shares the design DNA of [`jira-cli`](https://github.com/fatecannotbealtered/jira-cli):
 
 - **Strict JSON contract** — global `--json` output in flat, token-efficient form on every command.
-- **`--fields key,name,state` field projection** for further token reduction.
+- **`--fields key,name,state` field projection** on supported commands (opt-in per command, not global) for further token reduction.
 - **`--dry-run`** previews every write command before executing.
-- **`--force`** to skip confirmation prompts in non-interactive environments.
+- **`--confirm <token>`** for non-interactive write confirmation (preferred for Agents); **`--force`** skips prompts but is restricted in agent-safe mode (see [Agent-safe mode](#agent-safe-mode-default-on)).
 - **Machine-readable error envelope** with `errorCode`, `statusCode`, and actionable `hint`.
 - **Semantic exit codes** (`0`/`2`/`3`/`4`/`5`/`6`/`7`/`8`/`9`/`10`).
 - **JSONL audit log** of every write command at `~/.gitlab-cli/audit/`.
@@ -95,7 +95,7 @@ gitlab-cli auth login --host https://gitlab.example.com --token <PAT>
 | `GITLAB_NO_AUDIT` | Set to `1` to disable audit logging |
 | `GITLAB_AUDIT_RETENTION_MONTHS` | Auto-delete audit files older than N months (default `3`, `0` = keep forever) |
 
-Precedence: `GITLAB_CLI_*` > `GITLAB_*` > `~/.gitlab-cli/config.json`.
+Precedence: `GITLAB_CLI_*` > `GITLAB_*` > active profile > `~/.gitlab-cli/config.json`.
 
 ### Generating a PAT
 
@@ -109,9 +109,12 @@ Precedence: `GITLAB_CLI_*` > `GITLAB_*` > `~/.gitlab-cli/config.json`.
 ### Authentication & diagnostics
 
 ```bash
-gitlab-cli auth login [--host URL] [--token PAT]
+gitlab-cli auth login [--host URL] [--token PAT] [--profile NAME]
 gitlab-cli auth logout
 gitlab-cli auth status
+gitlab-cli auth profile list [--json]
+gitlab-cli auth profile use <name>
+gitlab-cli auth profile remove <name> [--json]
 gitlab-cli doctor
 ```
 
@@ -158,10 +161,10 @@ gitlab-cli mr close     --project <id> <iid> [--json]
 gitlab-cli mr reopen    --project <id> <iid> [--json]
 gitlab-cli mr approve   --project <id> <iid> [--json]
 gitlab-cli mr unapprove --project <id> <iid> [--json]
-gitlab-cli mr diff      --project <id> <iid>             # unified diff text
+gitlab-cli mr diff      --project <id> <iid> [--json]     # default: unified diff text; --json → {"diff":"..."}
 gitlab-cli mr comment add    --project <id> <iid> --body <text> [--json]
 gitlab-cli mr comment list   --project <id> <iid> [--json]
-gitlab-cli mr comment delete --project <id> <iid> --note-id <id> [--force]
+gitlab-cli mr comment delete --project <id> <iid> --note-id <id> --confirm <note-id> [--json]
 ```
 
 ### Issues
@@ -177,7 +180,7 @@ gitlab-cli issue assign    <iid> <username|me> --project <id> [--json]
 gitlab-cli issue label     <iid> --project <id> --add l1,l2 --remove l3,l4 [--json]
 gitlab-cli issue comment add    <iid> --project <id> --body <t> [--json]
 gitlab-cli issue comment list   <iid> --project <id> [--json]
-gitlab-cli issue comment delete <iid> --project <id> --note-id <id> [--force]
+gitlab-cli issue comment delete <iid> --project <id> --note-id <id> --confirm <note-id> [--json]
 ```
 
 ### Labels & Milestones
@@ -186,13 +189,13 @@ gitlab-cli issue comment delete <iid> --project <id> --note-id <id> [--force]
 gitlab-cli label list   --project <id> [--json]
 gitlab-cli label create --project <id> --name <n> --color <#hex|named> [--priority N] [--json]
 gitlab-cli label update --project <id> --label-id N [--name ...] [--color ...] [--json]
-gitlab-cli label delete --project <id> --label-id N [--force]
+gitlab-cli label delete --project <id> --label-id N --confirm N [--json]
 
 gitlab-cli milestone list   --project <id> [--state active|closed|all] [--json]
 gitlab-cli milestone get    --project <id> --milestone-id N [--json]
 gitlab-cli milestone create --project <id> --title <t> [--due-date YYYY-MM-DD] [--json]
 gitlab-cli milestone update --project <id> --milestone-id N [--title ...] [--state-event close|activate] [--json]
-gitlab-cli milestone close  --project <id> --milestone-id N [--force]
+gitlab-cli milestone close  --project <id> --milestone-id N --confirm N [--json]
 ```
 
 ### Pipelines & Jobs
@@ -222,11 +225,11 @@ gitlab-cli job wait      --project <id> <job_id> [--timeout 300] [--interval 5] 
 gitlab-cli repo file get    --project <id> --path <p> [--ref <b>] [--output <path>]
 gitlab-cli repo file create --project <id> --path <p> --branch <b> --content ... --commit-message <m> [--json]
 gitlab-cli repo file update --project <id> --path <p> --branch <b> --content ... --commit-message <m> [--json]
-gitlab-cli repo file delete --project <id> --path <p> --branch <b> --commit-message <m> [--force]
+gitlab-cli repo file delete --project <id> --path <p> --branch <b> --commit-message <m> --confirm <path> [--json]
 
 gitlab-cli repo branch list   --project <id> [--search <q>] [--json]
 gitlab-cli repo branch create --project <id> --name <n> --ref <source> [--json]
-gitlab-cli repo branch delete --project <id> --name <n> [--force]
+gitlab-cli repo branch delete --project <id> --name <n> --confirm <n> [--json]
 
 gitlab-cli repo commit list --project <id> [--ref-name <b>] [--since ...] [--until ...] [--path <p>] [--json]
 gitlab-cli repo commit get  --project <id> <sha> [--json]
@@ -237,7 +240,7 @@ gitlab-cli release list   --project <id> [--json]
 gitlab-cli release get    --project <id> --tag <tag> [--json]
 gitlab-cli release create --project <id> --tag <tag> --name <n> [--description <d>] [--ref <b>] [--milestone m1,m2] [--json]
 gitlab-cli release update --project <id> --tag <tag> [--name ...] [--description ...] [--json]
-gitlab-cli release delete --project <id> --tag <tag> [--force]
+gitlab-cli release delete --project <id> --tag <tag> --confirm <tag> [--json]
 ```
 
 ### CI/CD Variables
@@ -247,22 +250,22 @@ gitlab-cli variable list   --project <id> [--json]                              
 gitlab-cli variable get    --project <id> --key <k> [--filter env_scope=<scope>] [--json]
 gitlab-cli variable create --project <id> --key <k> --value <v> [--type env_var|file] [--protected] [--masked] [--env-scope <s>] [--json]
 gitlab-cli variable update --project <id> --key <k> [--value <v>] [--protected] [--masked] [--json]
-gitlab-cli variable delete --project <id> --key <k> [--filter env_scope=<scope>] [--force]
+gitlab-cli variable delete --project <id> --key <k> [--filter env_scope=<scope>] --confirm <k> [--json]
 ```
 
 Pass `--show-values` on any `variable` subcommand to include secret values in `--json` output (default: redacted).
 
 ## JSON Output
 
-All commands support `--json` for machine-readable output:
+All commands support `--json` for machine-readable output. Some commands also support **`--fields`** (comma-separated projection from flat JSON); it is **opt-in per command** — run `gitlab-cli reference --json` and look for `supports --fields` (e.g. `mr get`, `issue list`, `project get`).
 
 ```bash
 # Flat JSON (default) — minimal fields, low token cost
 gitlab-cli auth status --json
 gitlab-cli doctor --json
 
-# Select only the fields you need
-gitlab-cli doctor --json --fields host,authValid,latencyMs
+# Select only the fields you need (supported commands only)
+gitlab-cli mr get --project group/proj 42 --json --fields iid,title,state,webUrl
 
 # Clean output for scripts (suppress all non-JSON noise)
 gitlab-cli doctor --json --quiet
@@ -288,9 +291,12 @@ Error responses include machine-readable error codes and actionable hints:
 |---|---|
 | `--json` | Output result as JSON |
 | `--compact` | Compact JSON without indentation (use with `--json`) |
-| `--force` | Skip interactive confirmation prompts |
 | `--quiet` | Suppress non-JSON stdout output |
 | `--dry-run` | Show what would be done without executing (write commands only) |
+| `--confirm <token>` | Non-interactive confirmation for write commands (preferred; token is shown in `--dry-run` or error output) |
+| `--force` | Skip interactive confirmation prompts (disabled by default in [agent-safe mode](#agent-safe-mode-default-on); requires `GITLAB_CLI_ALLOW_FORCE=1`) |
+
+> **`--fields`** is registered on individual commands that expose a flat JSON schema, not as a root persistent flag. See [JSON Output](#json-output).
 
 ## Exit Codes
 
@@ -306,6 +312,39 @@ Error responses include machine-readable error codes and actionable hints:
 | 8 | Timeout (`pipeline wait` / `job wait`) |
 | 9 | CI/CD failure (`pipeline wait` / `job wait` finished failed/canceled/skipped) |
 | 10 | User cancelled or confirmation not provided (use `--confirm <token>` for non-interactive writes) |
+
+## Agent-safe mode (default ON)
+
+`gitlab-cli` targets AI Agents and automation. Restrictions apply unless you opt out:
+
+| Rule | Detail |
+|---|---|
+| Default | Agent-safe mode is **on** when `GITLAB_CLI_AGENT_SAFE` is unset |
+| Disable | Set `GITLAB_CLI_AGENT_SAFE=0` to turn off all restrictions |
+| Writes | Prefer `--dry-run --json` first, then `--confirm <token>` (token is usually the resource id/path/tag shown in dry-run or error output) |
+| `--force` | Blocked unless `GITLAB_CLI_ALLOW_FORCE=1` (only when the user explicitly authorizes skipping confirmation) |
+| `--show-values` | Blocked on `variable` commands unless `GITLAB_CLI_ALLOW_SHOW_VALUES=1` |
+
+Example (merge MR after dry-run):
+
+```bash
+gitlab-cli mr merge --project group/proj 42 --dry-run --json
+gitlab-cli mr merge --project group/proj 42 --confirm 42 --json
+```
+
+## Multiple profiles
+
+Store credentials for multiple GitLab hosts under named profiles:
+
+```bash
+gitlab-cli auth login --host https://gitlab.com --profile personal
+gitlab-cli auth login --host https://gitlab.corp.example --profile work
+gitlab-cli auth profile list --json
+gitlab-cli auth profile use work
+gitlab-cli auth profile remove old --json
+```
+
+Environment variables (`GITLAB_CLI_*` / `GITLAB_*`) still override the active profile when set.
 
 ## Security
 

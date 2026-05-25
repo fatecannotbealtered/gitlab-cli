@@ -223,12 +223,7 @@ var mrCurrentCmd = &cobra.Command{
 	Use:   "current",
 	Short: "Show the open MR for the current git branch",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		ctx, err := gitctx.Detect("")
-		if err != nil {
-			output.Error("failed to detect git context: " + err.Error())
-			setExitCode(ExitNotFound)
-			return ErrSilent
-		}
+		ctx, _ := gitctx.Detect("")
 		if ctx.Remote == nil || ctx.CurrentBranch == "" {
 			return failNotFound("not inside a git repo with a GitLab remote; run this command from a cloned GitLab project")
 		}
@@ -361,13 +356,11 @@ var mrCreateCmd = &cobra.Command{
 		}
 
 		if assignee != "" {
-			u, err := client.Users.GetByUsername(apiCtx(), assignee)
+			uid, err := resolveUserID(client, assignee)
 			if err != nil {
-				return handleAPIError(err, jsonMode)
+				return err
 			}
-			if u != nil {
-				req.AssigneeID = u.ID
-			}
+			req.AssigneeID = uid
 		}
 
 		mr, err := client.MergeRequests.Create(apiCtx(), project, req)

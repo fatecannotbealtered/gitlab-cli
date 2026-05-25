@@ -2,13 +2,59 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/fatecannotbealtered/gitlab-cli/internal/api"
+	"github.com/spf13/cobra"
 )
+
+func resetPipelineFlags(t *testing.T) {
+	t.Helper()
+	resetRootPersistentFlags(t)
+	for _, kv := range []struct {
+		cmd   *cobra.Command
+		name  string
+		value string
+	}{
+		{pipelineListCmd, "project", ""},
+		{pipelineListCmd, "ref", ""},
+		{pipelineListCmd, "status", ""},
+		{pipelineListCmd, "username", ""},
+		{pipelineListCmd, "limit", "20"},
+		{pipelineListCmd, "fields", ""},
+		{pipelineGetCmd, "project", ""},
+		{pipelineGetCmd, "fields", ""},
+		{pipelineCreateCmd, "project", ""},
+		{pipelineCreateCmd, "ref", ""},
+		{pipelineRetryCmd, "project", ""},
+		{pipelineCancelCmd, "project", ""},
+		{pipelineJobsCmd, "project", ""},
+		{pipelineJobsCmd, "scope", ""},
+		{pipelineJobsCmd, "fields", ""},
+		{pipelineWaitCmd, "project", ""},
+		{pipelineWaitCmd, "timeout", "0"},
+		{pipelineWaitCmd, "interval", "10"},
+	} {
+		if err := kv.cmd.Flags().Set(kv.name, kv.value); err != nil {
+			t.Fatalf("reset pipeline flag %q: %v", kv.name, err)
+		}
+	}
+	if f := pipelineCreateCmd.Flags().Lookup("variable"); f != nil {
+		if v, ok := f.Value.(interface{ Replace([]string) error }); ok {
+			if err := v.Replace([]string{}); err != nil {
+				t.Fatalf("reset pipeline variable flag: %v", err)
+			}
+		}
+	}
+}
 
 func TestPipelineHelp_ListsSubcommands(t *testing.T) {
 	buf := new(bytes.Buffer)
@@ -326,6 +372,53 @@ func TestPipeline_Wait_Success(t *testing.T) {
 	}
 }
 
+func TestParseVariables_Valid(t *testing.T) {
+	vars, err := parseVariables([]string{"FOO=bar", "BAZ=qux"})
+	if err != nil {
+		t.Fatalf("parseVariables: %v", err)
+	}
+	if len(vars) != 2 || vars[0].Key != "FOO" || vars[0].Value != "bar" || vars[1].Key != "BAZ" || vars[1].Value != "qux" {
+		t.Errorf("unexpected vars: %+v", vars)
+	}
+}
+
+func TestParseVariables_InvalidFormat(t *testing.T) {
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+
+	_, err := parseVariables([]string{"INVALID"})
+	if err == nil {
+		t.Fatal("expected error for invalid --variable format")
+	}
+	if lastExit != ExitBadArgs {
+		t.Errorf("exit code = %d, want %d", lastExit, ExitBadArgs)
+	}
+}
+
+func TestPipeline_Wait_Manual(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":1,"iid":1,"ref":"main","status":"manual","project_id":1}`))
+	}))
+	defer srv.Close()
+
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "tok")
+
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+
+	captureStdout(t, func() {
+		rootCmd.SetArgs([]string{"pipeline", "wait", "--project", "42", "1", "--interval", "0"})
+		_ = rootCmd.Execute()
+	})
+	if LastExitCode() != ExitCIFailed {
+		t.Errorf("expected exit %d for manual pipeline, got %d", ExitCIFailed, LastExitCode())
+	}
+}
+
 func TestPipeline_Wait_Failure(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -390,7 +483,7 @@ func TestPipeline_Create_JSON(t *testing.T) {
 	defer func() { dryRun = origDR; jsonMode = origJM }()
 	dryRun = false
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"pipeline", "create", "--project", "foo/bar", "--ref", "main", "--json"})
+		rootCmd.SetArgs([]string{"pipeline", "create", "--project", "foo/bar", "--ref", "main", "--json", "--confirm", "main"})
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, `"created"`) {
@@ -440,7 +533,7 @@ func TestPipeline_Cancel_JSON(t *testing.T) {
 	defer func() { dryRun = origDR; jsonMode = origJM }()
 	dryRun = false
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"pipeline", "cancel", "--project", "foo/bar", "1", "--json"})
+		rootCmd.SetArgs([]string{"pipeline", "cancel", "--project", "foo/bar", "1", "--json", "--confirm", "1"})
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, `"canceled"`) {
@@ -509,7 +602,7 @@ func TestPipeline_Create_PlainText(t *testing.T) {
 	jsonMode = false
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"pipeline", "create", "--project", "foo/bar", "--ref", "main"})
+		rootCmd.SetArgs([]string{"pipeline", "create", "--project", "foo/bar", "--ref", "main", "--confirm", "main"})
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, "Pipeline") {
@@ -555,7 +648,7 @@ func TestPipeline_Cancel_PlainText(t *testing.T) {
 	jsonMode = false
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"pipeline", "cancel", "--project", "foo/bar", "1"})
+		rootCmd.SetArgs([]string{"pipeline", "cancel", "--project", "foo/bar", "1", "--confirm", "1"})
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, "canceled") {
@@ -759,7 +852,7 @@ func TestPipeline_Cancel_APIError(t *testing.T) {
 	dryRun = false
 	jsonMode = false
 	_ = rootCmd.PersistentFlags().Set("json", "false")
-	rootCmd.SetArgs([]string{"pipeline", "cancel", "--project", "foo/bar", "999"})
+	rootCmd.SetArgs([]string{"pipeline", "cancel", "--project", "foo/bar", "999", "--confirm", "999"})
 	_ = rootCmd.Execute()
 	if lastExit == ExitOK {
 		t.Errorf("expected non-zero exit for API error, got %d", lastExit)
@@ -837,5 +930,691 @@ func TestPipeline_Cancel_MissingProject(t *testing.T) {
 	_ = rootCmd.Execute()
 	if lastExit != ExitBadArgs {
 		t.Errorf("exit code = %d, want %d", lastExit, ExitBadArgs)
+	}
+}
+
+func TestToFlatPipeline(t *testing.T) {
+	p := &api.Pipeline{
+		ID:     1,
+		IID:    2,
+		Ref:    "main",
+		Status: "success",
+		User:   &api.User{Username: "runner"},
+	}
+	flat := toFlatPipeline(p)
+	if flat.Username != "runner" {
+		t.Fatalf("Username = %q, want runner", flat.Username)
+	}
+	if flat.Ref != "main" {
+		t.Fatalf("Ref = %q, want main", flat.Ref)
+	}
+
+	bare := toFlatPipeline(&api.Pipeline{ID: 9, Ref: "dev"})
+	if bare.Username != "" {
+		t.Fatalf("expected empty username, got %q", bare.Username)
+	}
+}
+
+func TestToFlatJob(t *testing.T) {
+	j := &api.Job{
+		ID:     10,
+		Name:   "build",
+		Status: "success",
+		User:   &api.User{Username: "dev"},
+		Pipeline: &api.Pipeline{
+			ID: 99,
+		},
+	}
+	flat := toFlatJob(j)
+	if flat.Username != "dev" || flat.PipelineID != 99 {
+		t.Fatalf("toFlatJob = %+v", flat)
+	}
+
+	bare := toFlatJob(&api.Job{ID: 1, Name: "test"})
+	if bare.Username != "" || bare.PipelineID != 0 {
+		t.Fatalf("expected empty optional fields, got %+v", bare)
+	}
+}
+
+func TestPrintPipelineDetail(t *testing.T) {
+	p := &api.Pipeline{
+		ID:     1,
+		IID:    2,
+		Ref:    "main",
+		Status: "running",
+		Source: "push",
+		WebURL: "http://pipeline/1",
+	}
+	out := captureStdout(t, func() {
+		printPipelineDetail(p)
+	})
+	for _, want := range []string{"Pipeline #1", "main", "push", "http://pipeline/1"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("printPipelineDetail missing %q in:\n%s", want, out)
+		}
+	}
+}
+
+func setupGitLabRepo(t *testing.T, srvURL, projectPath string) func() {
+	t.Helper()
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	repoDir := t.TempDir()
+	runGit(t, repoDir, "init", "-b", "main")
+	runGit(t, repoDir, "config", "user.email", "test@example.com")
+	runGit(t, repoDir, "config", "user.name", "Test User")
+	runGit(t, repoDir, "remote", "add", "origin", srvURL+"/"+projectPath+".git")
+	readme := filepath.Join(repoDir, "README.md")
+	if err := os.WriteFile(readme, []byte("init\n"), 0o644); err != nil {
+		t.Fatalf("write README: %v", err)
+	}
+	runGit(t, repoDir, "add", "README.md")
+	runGit(t, repoDir, "commit", "-m", "init")
+	if err := os.Chdir(repoDir); err != nil {
+		t.Fatalf("Chdir: %v", err)
+	}
+	return func() { _ = os.Chdir(origDir) }
+}
+
+func TestPipeline_List_NewClientError(t *testing.T) {
+	isolateConfigHome(t)
+	t.Setenv("GITLAB_CLI_HOST", "")
+	t.Setenv("GITLAB_CLI_TOKEN", "")
+	resetPipelineFlags(t)
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"pipeline", "list", "--project", "42"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitAuth {
+		t.Errorf("exit = %d, want %d", lastExit, ExitAuth)
+	}
+}
+
+func TestPipeline_List_InvalidLimit(t *testing.T) {
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "tok")
+	resetPipelineFlags(t)
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"pipeline", "list", "--project", "42", "--limit", "0"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitBadArgs {
+		t.Errorf("exit = %d, want %d", lastExit, ExitBadArgs)
+	}
+}
+
+func TestPipeline_Get_MissingProject(t *testing.T) {
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "tok")
+	resetPipelineFlags(t)
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	_ = pipelineGetCmd.Flags().Set("project", "")
+	rootCmd.SetArgs([]string{"pipeline", "get", "1"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitBadArgs {
+		t.Errorf("exit = %d, want %d", lastExit, ExitBadArgs)
+	}
+}
+
+func TestPipeline_Get_InvalidID(t *testing.T) {
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "tok")
+	resetPipelineFlags(t)
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"pipeline", "get", "--project", "42", "not-a-number"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitBadArgs {
+		t.Errorf("exit = %d, want %d", lastExit, ExitBadArgs)
+	}
+}
+
+func TestPipeline_Get_NewClientError(t *testing.T) {
+	isolateConfigHome(t)
+	t.Setenv("GITLAB_CLI_HOST", "")
+	t.Setenv("GITLAB_CLI_TOKEN", "")
+	resetPipelineFlags(t)
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"pipeline", "get", "--project", "42", "1"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitAuth {
+		t.Errorf("exit = %d, want %d", lastExit, ExitAuth)
+	}
+}
+
+func TestPipeline_Current_PlainText(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[{"id":5,"iid":2,"ref":"main","status":"success","source":"push","web_url":"http://pipe/5"}]`))
+	}))
+	defer srv.Close()
+
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "tok")
+	resetPipelineFlags(t)
+	defer setupGitLabRepo(t, srv.URL, "group/project")()
+
+	out := captureStdout(t, func() {
+		rootCmd.SetArgs([]string{"pipeline", "current"})
+		_ = rootCmd.Execute()
+	})
+	if !strings.Contains(out, "Pipeline #5") {
+		t.Errorf("expected pipeline detail, got:\n%s", out)
+	}
+}
+
+func TestPipeline_Current_JSON(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[{"id":5,"iid":2,"ref":"main","status":"success","source":"push","web_url":"http://pipe/5"}]`))
+	}))
+	defer srv.Close()
+
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "tok")
+	resetPipelineFlags(t)
+	defer setupGitLabRepo(t, srv.URL, "group/project")()
+
+	out := captureStdout(t, func() {
+		rootCmd.SetArgs([]string{"pipeline", "current", "--json"})
+		_ = rootCmd.Execute()
+	})
+	if !strings.Contains(out, `"success"`) {
+		t.Errorf("expected JSON success status, got:\n%s", out)
+	}
+}
+
+func TestPipeline_Current_NoPipelines(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	defer srv.Close()
+
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "tok")
+	resetPipelineFlags(t)
+	defer setupGitLabRepo(t, srv.URL, "group/project")()
+
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+
+	out := captureStdout(t, func() {
+		rootCmd.SetArgs([]string{"pipeline", "current"})
+		_ = rootCmd.Execute()
+	})
+	if LastExitCode() != ExitNotFound {
+		t.Errorf("exit = %d, want %d", LastExitCode(), ExitNotFound)
+	}
+	if !strings.Contains(out, "No pipelines found") {
+		t.Errorf("expected empty message, got:\n%s", out)
+	}
+}
+
+func TestPipeline_Current_NoGitLabRemote(t *testing.T) {
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "tok")
+	resetPipelineFlags(t)
+
+	origDir, _ := os.Getwd()
+	repoDir := t.TempDir()
+	runGit(t, repoDir, "init", "-b", "main")
+	runGit(t, repoDir, "remote", "add", "origin", "https://github.com/acme/repo.git")
+	_ = os.Chdir(repoDir)
+	defer func() { _ = os.Chdir(origDir) }()
+
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+
+	rootCmd.SetArgs([]string{"pipeline", "current"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitNotFound {
+		t.Errorf("exit = %d, want %d", lastExit, ExitNotFound)
+	}
+}
+
+func TestPipeline_Current_NewClientError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	defer srv.Close()
+
+	isolateConfigHome(t)
+	t.Setenv("GITLAB_CLI_HOST", "")
+	t.Setenv("GITLAB_CLI_TOKEN", "")
+	resetPipelineFlags(t)
+	defer setupGitLabRepo(t, srv.URL, "group/project")()
+
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+
+	rootCmd.SetArgs([]string{"pipeline", "current"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitAuth {
+		t.Errorf("exit = %d, want %d", lastExit, ExitAuth)
+	}
+}
+
+func TestPipeline_Create_MissingProject(t *testing.T) {
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "tok")
+	resetPipelineFlags(t)
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	_ = pipelineCreateCmd.Flags().Set("project", "")
+	rootCmd.SetArgs([]string{"pipeline", "create", "--ref", "main"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitBadArgs {
+		t.Errorf("exit = %d, want %d", lastExit, ExitBadArgs)
+	}
+}
+
+func TestPipeline_Create_InvalidVariable(t *testing.T) {
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "tok")
+	resetPipelineFlags(t)
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"pipeline", "create", "--project", "42", "--ref", "main", "--variable", "BAD"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitBadArgs {
+		t.Errorf("exit = %d, want %d", lastExit, ExitBadArgs)
+	}
+}
+
+func TestPipeline_Create_RequireConfirmRejected(t *testing.T) {
+	withNonInteractiveStdin(t)
+	resetPipelineFlags(t)
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "tok")
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"pipeline", "create", "--project", "42", "--ref", "main"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitCancelled {
+		t.Errorf("exit = %d, want %d", lastExit, ExitCancelled)
+	}
+}
+
+func TestPipeline_Create_NewClientError(t *testing.T) {
+	isolateConfigHome(t)
+	t.Setenv("GITLAB_CLI_HOST", "")
+	t.Setenv("GITLAB_CLI_TOKEN", "")
+	resetPipelineFlags(t)
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"pipeline", "create", "--project", "42", "--ref", "main", "--confirm", "main"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitAuth {
+		t.Errorf("exit = %d, want %d", lastExit, ExitAuth)
+	}
+}
+
+func TestPipeline_Create_APIError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"message":"boom"}`))
+	}))
+	defer srv.Close()
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "tok")
+	resetPipelineFlags(t)
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"pipeline", "create", "--project", "42", "--ref", "main", "--confirm", "main"})
+	_ = rootCmd.Execute()
+	if lastExit == ExitOK {
+		t.Errorf("expected non-zero exit for API error, got %d", lastExit)
+	}
+}
+
+func TestPipeline_Retry_InvalidID(t *testing.T) {
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "tok")
+	resetPipelineFlags(t)
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"pipeline", "retry", "--project", "42", "bad"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitBadArgs {
+		t.Errorf("exit = %d, want %d", lastExit, ExitBadArgs)
+	}
+}
+
+func TestPipeline_Retry_NewClientError(t *testing.T) {
+	isolateConfigHome(t)
+	t.Setenv("GITLAB_CLI_HOST", "")
+	t.Setenv("GITLAB_CLI_TOKEN", "")
+	resetPipelineFlags(t)
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"pipeline", "retry", "--project", "42", "1"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitAuth {
+		t.Errorf("exit = %d, want %d", lastExit, ExitAuth)
+	}
+}
+
+func TestPipeline_Cancel_InvalidID(t *testing.T) {
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "tok")
+	resetPipelineFlags(t)
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"pipeline", "cancel", "--project", "42", "bad"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitBadArgs {
+		t.Errorf("exit = %d, want %d", lastExit, ExitBadArgs)
+	}
+}
+
+func TestPipeline_Cancel_RequireConfirmRejected(t *testing.T) {
+	withNonInteractiveStdin(t)
+	resetPipelineFlags(t)
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "tok")
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"pipeline", "cancel", "--project", "42", "1"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitCancelled {
+		t.Errorf("exit = %d, want %d", lastExit, ExitCancelled)
+	}
+}
+
+func TestPipeline_Cancel_NewClientError(t *testing.T) {
+	isolateConfigHome(t)
+	t.Setenv("GITLAB_CLI_HOST", "")
+	t.Setenv("GITLAB_CLI_TOKEN", "")
+	resetPipelineFlags(t)
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"pipeline", "cancel", "--project", "42", "1", "--confirm", "1"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitAuth {
+		t.Errorf("exit = %d, want %d", lastExit, ExitAuth)
+	}
+}
+
+func TestPipeline_Jobs_NewClientError(t *testing.T) {
+	isolateConfigHome(t)
+	t.Setenv("GITLAB_CLI_HOST", "")
+	t.Setenv("GITLAB_CLI_TOKEN", "")
+	resetPipelineFlags(t)
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"pipeline", "jobs", "--project", "42", "1"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitAuth {
+		t.Errorf("exit = %d, want %d", lastExit, ExitAuth)
+	}
+}
+
+func TestPipeline_Jobs_InvalidID(t *testing.T) {
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "tok")
+	resetPipelineFlags(t)
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"pipeline", "jobs", "--project", "42", "bad"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitBadArgs {
+		t.Errorf("exit = %d, want %d", lastExit, ExitBadArgs)
+	}
+}
+
+func TestPipeline_Jobs_WithScope(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if scope := r.URL.Query().Get("scope[]"); scope == "" && r.URL.RawQuery != "" {
+			// GitLab client may encode scope differently; accept any jobs list request.
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[{"id":1,"name":"build","status":"success","stage":"build","duration":1.0}]`))
+	}))
+	defer srv.Close()
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "tok")
+	resetPipelineFlags(t)
+	out := captureStdout(t, func() {
+		rootCmd.SetArgs([]string{"pipeline", "jobs", "--project", "42", "1", "--scope", "running,success"})
+		_ = rootCmd.Execute()
+	})
+	if !strings.Contains(out, "build") {
+		t.Errorf("expected job name in output, got: %s", out)
+	}
+}
+
+func TestPipeline_Wait_MissingProject(t *testing.T) {
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "tok")
+	resetPipelineFlags(t)
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	_ = pipelineWaitCmd.Flags().Set("project", "")
+	rootCmd.SetArgs([]string{"pipeline", "wait", "1"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitBadArgs {
+		t.Errorf("exit = %d, want %d", lastExit, ExitBadArgs)
+	}
+}
+
+func TestPipeline_Wait_InvalidID(t *testing.T) {
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "tok")
+	resetPipelineFlags(t)
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"pipeline", "wait", "--project", "42", "bad"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitBadArgs {
+		t.Errorf("exit = %d, want %d", lastExit, ExitBadArgs)
+	}
+}
+
+func TestPipeline_Wait_NewClientError(t *testing.T) {
+	isolateConfigHome(t)
+	t.Setenv("GITLAB_CLI_HOST", "")
+	t.Setenv("GITLAB_CLI_TOKEN", "")
+	resetPipelineFlags(t)
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"pipeline", "wait", "--project", "42", "1"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitAuth {
+		t.Errorf("exit = %d, want %d", lastExit, ExitAuth)
+	}
+}
+
+func TestPipeline_Wait_GetAPIError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"message":"404"}`))
+	}))
+	defer srv.Close()
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "tok")
+	resetPipelineFlags(t)
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"pipeline", "wait", "--project", "42", "1", "--interval", "0"})
+	_ = rootCmd.Execute()
+	if lastExit == ExitOK {
+		t.Errorf("expected non-zero exit for API error, got %d", lastExit)
+	}
+}
+
+func TestPipeline_Wait_PlainTextSuccess(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":1,"iid":1,"ref":"main","status":"success","project_id":1}`))
+	}))
+	defer srv.Close()
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "tok")
+	resetPipelineFlags(t)
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	out := captureStdout(t, func() {
+		rootCmd.SetArgs([]string{"pipeline", "wait", "--project", "42", "1", "--interval", "0"})
+		_ = rootCmd.Execute()
+	})
+	if LastExitCode() != ExitOK {
+		t.Errorf("exit = %d, want %d", LastExitCode(), ExitOK)
+	}
+	if !strings.Contains(out, "finished") {
+		t.Errorf("expected finished message, got:\n%s", out)
+	}
+}
+
+func TestPipeline_Wait_PlainTextWaitingStderr(t *testing.T) {
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		status := "running"
+		if calls >= 2 {
+			status = "success"
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"id":1,"iid":1,"ref":"main","status":%q,"project_id":1}`, status)
+	}))
+	defer srv.Close()
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "tok")
+	resetPipelineFlags(t)
+	stderr := captureStderr(t, func() {
+		rootCmd.SetArgs([]string{"pipeline", "wait", "--project", "42", "1", "--interval", "0"})
+		_ = rootCmd.Execute()
+	})
+	if !strings.Contains(stderr, "Waiting...") {
+		t.Errorf("expected Waiting... on stderr, got:\n%s", stderr)
+	}
+}
+
+func TestPipeline_Wait_TimeoutPlainTextStderr(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":1,"iid":1,"ref":"main","status":"running","project_id":1}`))
+	}))
+	defer srv.Close()
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "tok")
+	resetPipelineFlags(t)
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	stderr := captureStderr(t, func() {
+		rootCmd.SetArgs([]string{"pipeline", "wait", "--project", "42", "1", "--timeout", "1", "--interval", "1"})
+		_ = rootCmd.Execute()
+	})
+	if LastExitCode() != ExitTimeout {
+		t.Errorf("exit = %d, want %d", LastExitCode(), ExitTimeout)
+	}
+	if !strings.Contains(stderr, "timed out waiting for pipeline") {
+		t.Errorf("expected timeout error on stderr, got:\n%s", stderr)
+	}
+}
+
+func TestPipeline_Wait_ContextCancelledDuringSleep(t *testing.T) {
+	resetPipelineFlags(t)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":1,"iid":1,"ref":"main","status":"running","project_id":1}`))
+	}))
+	defer srv.Close()
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "tok")
+
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+
+	origRunE := pipelineWaitCmd.RunE
+	pipelineWaitCmd.RunE = func(cmd *cobra.Command, args []string) error {
+		ctx, cancel := context.WithCancel(cmd.Context())
+		cmd.SetContext(ctx)
+		go func() {
+			time.Sleep(50 * time.Millisecond)
+			cancel()
+		}()
+		return origRunE(cmd, args)
+	}
+	t.Cleanup(func() { pipelineWaitCmd.RunE = origRunE })
+
+	stderr := captureStderr(t, func() {
+		rootCmd.SetArgs([]string{"pipeline", "wait", "--project", "42", "1", "--interval", "1"})
+		_ = rootCmd.Execute()
+	})
+	if LastExitCode() != ExitNetwork {
+		t.Errorf("exit = %d, want %d", LastExitCode(), ExitNetwork)
+	}
+	if !strings.Contains(stderr, "context canceled") {
+		t.Errorf("expected context canceled on stderr, got:\n%s", stderr)
+	}
+}
+
+func TestPipeline_Current_APIError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"message":"401 Unauthorized"}`))
+	}))
+	defer srv.Close()
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "bad")
+	resetPipelineFlags(t)
+	defer setupGitLabRepo(t, srv.URL, "group/project")()
+
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"pipeline", "current"})
+	_ = rootCmd.Execute()
+	if lastExit == ExitOK {
+		t.Errorf("expected non-zero exit for API error, got %d", lastExit)
+	}
+}
+
+func TestPipeline_Jobs_MissingProject(t *testing.T) {
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "tok")
+	resetPipelineFlags(t)
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	_ = pipelineJobsCmd.Flags().Set("project", "")
+	rootCmd.SetArgs([]string{"pipeline", "jobs", "1"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitBadArgs {
+		t.Errorf("exit = %d, want %d", lastExit, ExitBadArgs)
 	}
 }

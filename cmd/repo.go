@@ -213,14 +213,14 @@ var repoFileDeleteCmd = &cobra.Command{
 			return failArg("--project, --path, --branch, and --commit-message are required")
 		}
 
-		if err := requireConfirm(cmd, fmt.Sprintf("Type the file path to confirm deletion of %q", path), path); err != nil {
-			return err
-		}
-
 		if dryRunOutput("repo file delete", map[string]any{
 			"project": project, "path": path, "branch": branch,
 		}) {
 			return nil
+		}
+
+		if err := requireConfirm(cmd, fmt.Sprintf("Type the file path to confirm deletion of %q", path), path); err != nil {
+			return err
 		}
 
 		client, _, err := newClient()
@@ -345,12 +345,12 @@ var repoBranchDeleteCmd = &cobra.Command{
 			return failArg("--project and --name are required")
 		}
 
-		if err := requireConfirm(cmd, fmt.Sprintf("Type the branch name to confirm deletion of %q", name), name); err != nil {
-			return err
-		}
-
 		if dryRunOutput("repo branch delete", map[string]any{"project": project, "name": name}) {
 			return nil
+		}
+
+		if err := requireConfirm(cmd, fmt.Sprintf("Type the branch name to confirm deletion of %q", name), name); err != nil {
+			return err
 		}
 
 		client, _, err := newClient()

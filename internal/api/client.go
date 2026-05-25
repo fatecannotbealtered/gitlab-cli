@@ -290,9 +290,6 @@ func (c *Client) doWithRetry(ctx context.Context, method, path string, body any)
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
 			if isRetryableNetworkErr(err) && attempt < maxRetries() {
-				if waitErr := waitForRetry(ctx, attempt, 0, nil); waitErr != nil {
-					return nil, 0, nil, waitErr
-				}
 				continue
 			}
 			return nil, 0, nil, fmt.Errorf("executing request: %w", err)
@@ -485,6 +482,17 @@ func (c *Client) DownloadTo(ctx context.Context, path string, w io.Writer) error
 
 // Upload uploads a file using multipart/form-data.
 // fieldName is the form field name; "file" works for most GitLab upload endpoints.
+
+// uploadCreateFormFile builds a multipart file field; overridden in tests. // test hook
+var uploadCreateFormFile = func(w *multipart.Writer, fieldName, fileName string) (io.Writer, error) {
+	return w.CreateFormFile(fieldName, fileName)
+}
+
+// uploadCopyFile copies upload content into the multipart body; overridden in tests. // test hook
+var uploadCopyFile = func(dst io.Writer, src io.Reader) (int64, error) {
+	return io.Copy(dst, src)
+}
+
 func (c *Client) Upload(ctx context.Context, path, fieldName, filePath string) ([]byte, error) {
 	for attempt := 0; ; attempt++ {
 		if err := ctx.Err(); err != nil {
@@ -498,12 +506,12 @@ func (c *Client) Upload(ctx context.Context, path, fieldName, filePath string) (
 
 		var buf bytes.Buffer
 		w := multipart.NewWriter(&buf)
-		part, err := w.CreateFormFile(fieldName, filepath.Base(filePath))
+		part, err := uploadCreateFormFile(w, fieldName, filepath.Base(filePath))
 		if err != nil {
 			_ = f.Close()
 			return nil, fmt.Errorf("creating form file: %w", err)
 		}
-		if _, err := io.Copy(part, f); err != nil {
+		if _, err := uploadCopyFile(part, f); err != nil {
 			_ = f.Close()
 			return nil, fmt.Errorf("copying file content: %w", err)
 		}

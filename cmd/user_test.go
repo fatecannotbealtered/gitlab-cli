@@ -7,6 +7,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/fatecannotbealtered/gitlab-cli/internal/api"
 )
 
 func TestUserHelp_ListsSubcommands(t *testing.T) {
@@ -273,5 +275,172 @@ func TestUser_Search_Empty(t *testing.T) {
 	})
 	if !strings.Contains(out, "No users") {
 		t.Errorf("expected 'No users' in output, got: %s", out)
+	}
+}
+
+func TestFilterUsers(t *testing.T) {
+	users := []api.User{
+		{Username: "alice", State: "active"},
+		{Username: "bob", State: "blocked"},
+		{Username: "carol", State: "active"},
+	}
+
+	all := filterUsers(users, false, 0)
+	if len(all) != 3 {
+		t.Fatalf("filterUsers(all) len = %d, want 3", len(all))
+	}
+
+	active := filterUsers(users, true, 0)
+	if len(active) != 2 {
+		t.Fatalf("filterUsers(active) len = %d, want 2", len(active))
+	}
+
+	limited := filterUsers(users, false, 2)
+	if len(limited) != 2 {
+		t.Fatalf("filterUsers(limit=2) len = %d, want 2", len(limited))
+	}
+
+	activeLimited := filterUsers(users, true, 1)
+	if len(activeLimited) != 1 || activeLimited[0].Username != "alice" {
+		t.Fatalf("filterUsers(active,1) = %+v, want [alice]", activeLimited)
+	}
+}
+
+func TestUser_Me_MissingAuth(t *testing.T) {
+	isolateConfigHome(t)
+	t.Setenv("GITLAB_CLI_HOST", "")
+	t.Setenv("GITLAB_CLI_TOKEN", "")
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"user", "me"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitAuth {
+		t.Errorf("exit code = %d, want %d", lastExit, ExitAuth)
+	}
+}
+
+func TestUser_Search_MissingAuth(t *testing.T) {
+	isolateConfigHome(t)
+	t.Setenv("GITLAB_CLI_HOST", "")
+	t.Setenv("GITLAB_CLI_TOKEN", "")
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"user", "search", "--query", "alice"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitAuth {
+		t.Errorf("exit code = %d, want %d", lastExit, ExitAuth)
+	}
+}
+
+func TestUser_Search_InvalidLimit(t *testing.T) {
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	defer func() { lastExit = origExit; _ = userSearchCmd.Flags().Set("limit", "20") }()
+	lastExit = 0
+	_ = userSearchCmd.Flags().Set("limit", "0")
+	rootCmd.SetArgs([]string{"user", "search", "--query", "alice"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitBadArgs {
+		t.Errorf("exit code = %d, want %d", lastExit, ExitBadArgs)
+	}
+}
+
+func TestUser_Search_APIError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"message":"500"}`))
+	}))
+	defer srv.Close()
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"user", "search", "--query", "alice"})
+	_ = rootCmd.Execute()
+	if lastExit == ExitOK {
+		t.Errorf("expected non-zero exit for API error, got %d", lastExit)
+	}
+}
+
+func TestUser_Get_MissingAuth(t *testing.T) {
+	isolateConfigHome(t)
+	t.Setenv("GITLAB_CLI_HOST", "")
+	t.Setenv("GITLAB_CLI_TOKEN", "")
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"user", "get", "alice"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitAuth {
+		t.Errorf("exit code = %d, want %d", lastExit, ExitAuth)
+	}
+}
+
+func TestUser_Get_NotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	defer srv.Close()
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"user", "get", "ghost"})
+	_ = rootCmd.Execute()
+	if lastExit == ExitOK {
+		t.Errorf("expected non-zero exit for user not found, got %d", lastExit)
+	}
+}
+
+func TestUser_Get_APIError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"message":"500"}`))
+	}))
+	defer srv.Close()
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"user", "get", "alice"})
+	_ = rootCmd.Execute()
+	if lastExit == ExitOK {
+		t.Errorf("expected non-zero exit for API error, got %d", lastExit)
+	}
+}
+
+func TestUser_Get_PlainText(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[{"id":1,"username":"alice","name":"Alice","email":"a@b.com","state":"active","web_url":"http://x"}]`))
+	}))
+	defer srv.Close()
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origJM := jsonMode
+	defer func() { jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
+	jsonMode = false
+	out := captureStdout(t, func() {
+		rootCmd.SetArgs([]string{"user", "get", "alice"})
+		_ = rootCmd.Execute()
+	})
+	for _, want := range []string{"alice", "Alice", "a@b.com", "active"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("expected %q in output, got:\n%s", want, out)
+		}
+	}
+}
+
+func TestToFlatUser(t *testing.T) {
+	flat := toFlatUser(&api.User{ID: 1, Username: "alice", Name: "Alice", Email: "a@b.com", State: "active", WebURL: "http://x"})
+	if flat.Username != "alice" || flat.Email != "a@b.com" {
+		t.Fatalf("toFlatUser = %+v", flat)
 	}
 }

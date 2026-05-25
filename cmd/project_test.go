@@ -7,6 +7,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 )
 
 func TestProjectHelp_ListsSubcommands(t *testing.T) {
@@ -294,5 +296,122 @@ func TestProject_Members_Empty(t *testing.T) {
 	})
 	if !strings.Contains(out, "No members") {
 		t.Errorf("expected 'No members' in output, got: %s", out)
+	}
+}
+
+func projectNoAuth(t *testing.T) {
+	t.Helper()
+	resetProjectCmdFlags(t)
+	isolateConfigHome(t)
+	t.Setenv("GITLAB_CLI_HOST", "")
+	t.Setenv("GITLAB_CLI_TOKEN", "")
+	t.Setenv("GITLAB_HOST", "")
+	t.Setenv("GITLAB_TOKEN", "")
+}
+
+func resetProjectCmdFlags(t *testing.T) {
+	t.Helper()
+	resetRootPersistentFlags(t)
+	for _, kv := range []struct {
+		cmd   *cobra.Command
+		name  string
+		value string
+	}{
+		{projectListCmd, "limit", "20"},
+		{projectMembersCmd, "limit", "20"},
+	} {
+		if err := kv.cmd.Flags().Set(kv.name, kv.value); err != nil {
+			t.Fatalf("reset project flag %s.%s: %v", kv.cmd.Name(), kv.name, err)
+		}
+	}
+}
+
+func TestProject_List_InvalidLimit(t *testing.T) {
+	resetProjectCmdFlags(t)
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"project", "list", "--limit", "0"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitBadArgs {
+		t.Errorf("exit = %d, want %d", lastExit, ExitBadArgs)
+	}
+}
+
+func TestProject_Get_NewClientError(t *testing.T) {
+	projectNoAuth(t)
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"project", "get", "g/p"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitAuth {
+		t.Errorf("exit = %d, want %d", lastExit, ExitAuth)
+	}
+}
+
+func TestProject_Get_APIError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"message":"404 Not Found"}`))
+	}))
+	defer srv.Close()
+	resetProjectCmdFlags(t)
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"project", "get", "g/missing"})
+	_ = rootCmd.Execute()
+	if lastExit == ExitOK {
+		t.Errorf("expected non-zero exit, got %d", lastExit)
+	}
+}
+
+func TestProject_Members_NewClientError(t *testing.T) {
+	projectNoAuth(t)
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"project", "members", "1"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitAuth {
+		t.Errorf("exit = %d, want %d", lastExit, ExitAuth)
+	}
+}
+
+func TestProject_Members_InvalidLimit(t *testing.T) {
+	resetProjectCmdFlags(t)
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"project", "members", "1", "--limit", "0"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitBadArgs {
+		t.Errorf("exit = %d, want %d", lastExit, ExitBadArgs)
+	}
+}
+
+func TestProject_Members_APIError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"message":"404 Not Found"}`))
+	}))
+	defer srv.Close()
+	resetProjectCmdFlags(t)
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"project", "members", "999"})
+	_ = rootCmd.Execute()
+	if lastExit == ExitOK {
+		t.Errorf("expected non-zero exit, got %d", lastExit)
 	}
 }

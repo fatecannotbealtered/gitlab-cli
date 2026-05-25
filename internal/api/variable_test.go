@@ -135,3 +135,72 @@ func TestVariable_Delete(t *testing.T) {
 		t.Fatalf("Delete: %v", err)
 	}
 }
+
+func TestVariable_List_ParseError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`bad`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(&config.Config{Host: srv.URL, Token: "tok"})
+	_, err := c.Variables.List(testCtx, "group/proj", 0)
+	if err == nil || !strings.Contains(err.Error(), "parsing variables") {
+		t.Fatalf("expected parse error, got %v", err)
+	}
+}
+
+func TestVariable_Get_ParseError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`bad`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(&config.Config{Host: srv.URL, Token: "tok"})
+	_, err := c.Variables.Get(testCtx, "group/proj", "FOO", "")
+	if err == nil || !strings.Contains(err.Error(), "parsing variable") {
+		t.Fatalf("expected parse error, got %v", err)
+	}
+}
+
+func TestVariable_Create_ParseError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`bad`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(&config.Config{Host: srv.URL, Token: "tok"})
+	_, err := c.Variables.Create(testCtx, "group/proj", &VariableCreateOpts{Key: "X", Value: "y"})
+	if err == nil || !strings.Contains(err.Error(), "parsing created variable") {
+		t.Fatalf("expected parse error, got %v", err)
+	}
+}
+
+func TestVariable_Update_ParseError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`bad`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(&config.Config{Host: srv.URL, Token: "tok"})
+	_, err := c.Variables.Update(testCtx, "group/proj", "FOO", "", &VariableUpdateOpts{Value: "x"})
+	if err == nil || !strings.Contains(err.Error(), "parsing updated variable") {
+		t.Fatalf("expected parse error, got %v", err)
+	}
+}
+
+func TestVariable_Delete_Error(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"message":"404"}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(&config.Config{Host: srv.URL, Token: "tok"})
+	if err := c.Variables.Delete(testCtx, "group/proj", "FOO", ""); err == nil {
+		t.Fatal("expected error")
+	}
+}

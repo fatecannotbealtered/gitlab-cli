@@ -132,3 +132,59 @@ func TestRelease_TagName_URLEncoded(t *testing.T) {
 		t.Errorf("path %q should contain encoded tag", gotPath)
 	}
 }
+
+func TestRelease_List_ParseError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`bad`))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	_, err := c.Releases.List(testCtx, "1", 10)
+	if err == nil || !strings.Contains(err.Error(), "parsing releases") {
+		t.Fatalf("expected parse error, got %v", err)
+	}
+}
+
+func TestRelease_Get_ParseError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`bad`))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	_, err := c.Releases.Get(testCtx, "1", "v1.0")
+	if err == nil || !strings.Contains(err.Error(), "parsing release") {
+		t.Fatalf("expected parse error, got %v", err)
+	}
+}
+
+func TestRelease_Create_ParseError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`bad`))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	_, err := c.Releases.Create(testCtx, "1", ReleaseCreateBody{TagName: "v1", Ref: "main"})
+	if err == nil || !strings.Contains(err.Error(), "parsing release") {
+		t.Fatalf("expected parse error, got %v", err)
+	}
+}
+
+func TestRelease_Update_ParseError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`bad`))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	_, err := c.Releases.Update(testCtx, "1", "v1.0", ReleaseUpdateBody{Name: "x"})
+	if err == nil || !strings.Contains(err.Error(), "parsing release") {
+		t.Fatalf("expected parse error, got %v", err)
+	}
+}

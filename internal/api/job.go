@@ -151,7 +151,7 @@ func (a *JobAPI) LogStream(ctx context.Context, projectID string, jobID int, w i
 			return fmt.Errorf("parsing job status: %w", err)
 		}
 		switch j.Status {
-		case "success", "failed", "canceled", "skipped":
+		case "success", "failed", "canceled", "skipped", "manual":
 			return nil
 		}
 

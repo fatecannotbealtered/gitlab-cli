@@ -43,7 +43,7 @@ func SaveProfiles(pf *ProfilesFile) error {
 	if err := os.MkdirAll(Dir(), 0700); err != nil {
 		return fmt.Errorf("creating config dir: %w", err)
 	}
-	data, err := json.MarshalIndent(pf, "", "  ")
+	data, err := jsonMarshalIndent(pf, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encoding profiles: %w", err)
 	}
@@ -98,7 +98,7 @@ func UseProfile(name string) error {
 		return err
 	}
 	// Keep legacy config.json in sync for tools that only read it.
-	return Save(pf.Profiles[name])
+	return saveLegacyFile(pf.Profiles[name])
 }
 
 // DeleteProfile removes a named profile.

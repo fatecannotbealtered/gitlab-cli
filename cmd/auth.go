@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -14,6 +15,13 @@ import (
 	"golang.org/x/term"
 )
 
+// test hooks for interactive login
+var (
+	stdinIsTerminalForAuth = func() bool { return term.IsTerminal(int(syscall.Stdin)) }
+	readPasswordForAuth    = func() ([]byte, error) { return term.ReadPassword(int(syscall.Stdin)) }
+	authStatusSourceHook   = authStatusSource
+)
+
 var authCmd = &cobra.Command{
 	Use:   "auth",
 	Short: "Configure GitLab authentication",
@@ -22,13 +30,17 @@ var authCmd = &cobra.Command{
 Authentication precedence (highest first):
   1. GITLAB_CLI_HOST / GITLAB_CLI_TOKEN  (isolates this CLI from glab)
   2. GITLAB_HOST     / GITLAB_TOKEN      (compatible with glab and other tooling)
-  3. ~/.gitlab-cli/config.json           (saved by 'gitlab-cli auth login')`,
+  3. Active profile in ~/.gitlab-cli/profiles.json  (saved by 'gitlab-cli auth login')
+  4. ~/.gitlab-cli/config.json           (legacy fallback)`,
 }
 
 var authLoginCmd = &cobra.Command{
 	Use:   "login",
 	Short: "Save GitLab credentials to ~/.gitlab-cli/config.json",
 	Long: `Save credentials interactively, or pass --host and --token for non-interactive use.
+
+Credentials are resolved with this precedence (highest first):
+  GITLAB_CLI_* > GITLAB_* > active profile > ~/.gitlab-cli/config.json
 
 Examples:
   gitlab-cli auth login
@@ -219,8 +231,8 @@ func runAuthLogin(_ *cobra.Command, _ []string) error {
 		fmt.Print("  Personal Access Token (PAT) [scope: api]: ")
 		var tokenBytes []byte
 		var err error
-		if term.IsTerminal(int(syscall.Stdin)) {
-			tokenBytes, err = term.ReadPassword(int(syscall.Stdin))
+		if stdinIsTerminalForAuth() {
+			tokenBytes, err = readPasswordForAuth()
 			fmt.Println()
 			if err != nil {
 				output.Error("failed to read token: " + err.Error())
@@ -265,8 +277,8 @@ func runAuthLogout(_ *cobra.Command, _ []string) error {
 	if dryRunOutput("delete credentials", map[string]any{"path": config.FilePath()}) {
 		return nil
 	}
-	if err := config.Delete(); err != nil {
-		output.Error("failed to remove config: " + err.Error())
+	if err := config.ClearStoredCredentials(); err != nil {
+		output.Error("failed to remove credentials: " + err.Error())
 		setExitCode(ExitNetwork)
 		return ErrSilent
 	}
@@ -276,6 +288,40 @@ func runAuthLogout(_ *cobra.Command, _ []string) error {
 	}
 	output.Success("Logged out. Config removed.")
 	return nil
+}
+
+// authStatusSource reports the highest-precedence credential source, matching config.Load().
+func authStatusSource() (string, error) {
+	if os.Getenv("GITLAB_CLI_HOST") != "" || os.Getenv("GITLAB_CLI_TOKEN") != "" {
+		return "env-cli", nil
+	}
+	if os.Getenv("GITLAB_HOST") != "" || os.Getenv("GITLAB_TOKEN") != "" {
+		return "env", nil
+	}
+	pf, err := config.LoadProfiles()
+	if err != nil {
+		return "", err
+	}
+	if pf.Active != "" {
+		if c, ok := pf.Profiles[pf.Active]; ok && c != nil && c.Host != "" && strings.TrimSpace(c.Token) != "" {
+			return "profile", nil
+		}
+	}
+	data, err := os.ReadFile(config.FilePath())
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "none", nil
+		}
+		return "", err
+	}
+	var fileCfg config.Config
+	if err := json.Unmarshal(data, &fileCfg); err != nil {
+		return "", fmt.Errorf("parsing config %s: %w", config.FilePath(), err)
+	}
+	if fileCfg.Host != "" && strings.TrimSpace(fileCfg.Token) != "" {
+		return "file", nil
+	}
+	return "none", nil
 }
 
 func runAuthStatus(_ *cobra.Command, _ []string) error {
@@ -290,16 +336,14 @@ func runAuthStatus(_ *cobra.Command, _ []string) error {
 		Configured bool   `json:"configured"`
 		Host       string `json:"host,omitempty"`
 		TokenSet   bool   `json:"tokenSet"`
-		Source     string `json:"source"` // "env" / "file" / "none"
+		Source     string `json:"source"` // "env-cli" / "env" / "profile" / "file" / "none"
 	}
 
-	source := "none"
-	if os.Getenv("GITLAB_CLI_HOST") != "" || os.Getenv("GITLAB_CLI_TOKEN") != "" {
-		source = "env-cli"
-	} else if os.Getenv("GITLAB_HOST") != "" || os.Getenv("GITLAB_TOKEN") != "" {
-		source = "env"
-	} else if _, err := os.Stat(config.FilePath()); err == nil {
-		source = "file"
+	source, err := authStatusSourceHook()
+	if err != nil {
+		output.Error("reading config: " + err.Error())
+		setExitCode(ExitNetwork)
+		return ErrSilent
 	}
 
 	result := statusResult{

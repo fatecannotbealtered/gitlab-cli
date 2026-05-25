@@ -5,6 +5,32 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-05-26
+
+### Fixed
+
+- **Auth / profiles** — `auth profile use` no longer resets active profile to `default`; `auth logout` clears both `config.json` and `profiles.json`.
+- **Agent-safe dry-run** — delete commands (`repo file/branch delete`, `release delete`, `mr comment delete`) run `--dry-run` before `--confirm`, matching the SKILL workflow.
+- **CI waits** — `job log --follow` and `pipeline wait` treat `manual` as a terminal state (no infinite polling).
+- **MR create** — `--assignee` with unknown user returns exit 4 (`NOT_FOUND`) instead of silently skipping.
+- **Pipeline create** — invalid `--variable` format (missing `=`) returns validation error instead of being silently dropped.
+- **auth status** — `source` field reports `profile` / `file` / env correctly via `authStatusSource()`.
+
+### Changed
+
+- **README / README_zh** — align `--force` vs `--confirm` with agent-safe defaults; fix `doctor --fields` example; document profile precedence and multi-profile auth.
+- **reference** — simplify `collectRefFlags` (cobra local flags already include inherited persistent flags).
+- **main** — extract `run()` for testability; remove unreachable git-context error branches in `mr current` / `pipeline current`.
+
+### Added
+
+- **100% statement test coverage** across all packages (`cmd`, `internal/*`, `cmd/gitlab-cli`).
+- New tests: agent-safe / confirm flows, auth profile & interactive login, plain-text command paths, HTTP client edge cases.
+- **npm local publish helpers** — `scripts/npm-publish-local.ps1`, `scripts/npm-token.local.example`.
+- Expanded `.gitignore` for coverage artifacts from local `go test -coverprofile` runs.
+
+[1.1.0]: https://github.com/fatecannotbealtered/gitlab-cli/releases/tag/v1.1.0
+
 ## [1.0.0] - 2026-05-24
 
 First public release of **gitlab-cli** — an AI-Agent-friendly CLI for GitLab.com, Self-Managed, Dedicated, and Data Center.

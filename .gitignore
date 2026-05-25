@@ -35,6 +35,7 @@ Thumbs.db
 # Local E2E secrets (never commit)
 scripts/e2e.local.ps1
 scripts/e2e.local.env
+scripts/npm-token.local
 scripts/gitlab-runner-e2e.config.toml
 .e2e-auth-home/
 
@@ -50,9 +51,18 @@ release-notes.md
 # Claude Code worktrees
 .claude/
 
-# coverage
+# coverage (go test -coverprofile / parallel agent runs)
+*.out
 cov.out
 cov
 coverage
+coverage.out
 coverage.html
-cov_output
+*_cov
+*_cov.*
+*cov.html
+cover_report/
+out_cov/
+cover_*.txt
+cmd/authcov3
+internal/output/out

@@ -72,6 +72,26 @@ func TestRepo_GetFileRaw(t *testing.T) {
 	}
 }
 
+func TestRepo_GetFileRaw_DefaultRef(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("ref") != "HEAD" {
+			t.Errorf("ref = %q, want HEAD", r.URL.Query().Get("ref"))
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("raw-bytes"))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	data, err := c.Repos.GetFileRaw(testCtx, "1", "f.txt", "")
+	if err != nil {
+		t.Fatalf("GetFileRaw: %v", err)
+	}
+	if string(data) != "raw-bytes" {
+		t.Errorf("data = %q", string(data))
+	}
+}
+
 func TestRepo_CreateFile(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -290,5 +310,149 @@ func TestRepo_FilePath_URLEncoded(t *testing.T) {
 	// The slash in the file path must be encoded as %2F in the raw URI
 	if !strings.Contains(gotURI, "foo%2Fbar.txt") {
 		t.Errorf("RequestURI %q should contain foo%%2Fbar.txt (URL-encoded slash)", gotURI)
+	}
+}
+
+func TestRepo_GetFile_ParseError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`bad`))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	_, err := c.Repos.GetFile(testCtx, "1", "f.txt", "main")
+	if err == nil || !strings.Contains(err.Error(), "parsing repo file") {
+		t.Fatalf("expected parse error, got %v", err)
+	}
+}
+
+func TestRepo_GetFileRaw_Error(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"message":"404"}`))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	_, err := c.Repos.GetFileRaw(testCtx, "1", "missing.txt", "main")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestRepo_ListBranches_ParseError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`bad`))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	_, err := c.Repos.ListBranches(testCtx, "1", nil)
+	if err == nil || !strings.Contains(err.Error(), "parsing branches") {
+		t.Fatalf("expected parse error, got %v", err)
+	}
+}
+
+func TestRepo_CreateBranch_ParseError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`bad`))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	_, err := c.Repos.CreateBranch(testCtx, "1", "feat/x", "main")
+	if err == nil || !strings.Contains(err.Error(), "parsing branch") {
+		t.Fatalf("expected parse error, got %v", err)
+	}
+}
+
+func TestRepo_ListCommits_ParseError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`bad`))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	_, err := c.Repos.ListCommits(testCtx, "1", &CommitListOpts{RefName: "main"})
+	if err == nil || !strings.Contains(err.Error(), "parsing commits") {
+		t.Fatalf("expected parse error, got %v", err)
+	}
+}
+
+func TestRepo_GetCommit_ParseError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`bad`))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	_, err := c.Repos.GetCommit(testCtx, "1", "abc")
+	if err == nil || !strings.Contains(err.Error(), "parsing commit") {
+		t.Fatalf("expected parse error, got %v", err)
+	}
+}
+
+func TestRepo_ListTree_ParseError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`bad`))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	_, err := c.Repos.ListTree(testCtx, "1", nil)
+	if err == nil || !strings.Contains(err.Error(), "parsing tree") {
+		t.Fatalf("expected parse error, got %v", err)
+	}
+}
+
+func TestRepo_ListCommits_WithAllOpts(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		for key, want := range map[string]string{
+			"ref_name": "main",
+			"since":    "2024-01-01",
+			"until":    "2024-02-01",
+			"path":     "src/",
+		} {
+			if q.Get(key) != want {
+				t.Errorf("%s = %q, want %q", key, q.Get(key), want)
+			}
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	if _, err := c.Repos.ListCommits(testCtx, "1", &CommitListOpts{
+		RefName: "main",
+		Since:   "2024-01-01",
+		Until:   "2024-02-01",
+		Path:    "src/",
+		Limit:   10,
+	}); err != nil {
+		t.Fatalf("ListCommits: %v", err)
+	}
+}
+
+func TestRepo_ListTree_Recursive(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("recursive") != "true" {
+			t.Errorf("recursive = %q", r.URL.Query().Get("recursive"))
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	if _, err := c.Repos.ListTree(testCtx, "1", &TreeOpts{Recursive: true, Path: "src"}); err != nil {
+		t.Fatalf("ListTree: %v", err)
 	}
 }

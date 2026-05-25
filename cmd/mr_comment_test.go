@@ -4,8 +4,11 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 )
 
 func TestMRComment_Add_JSON(t *testing.T) {
@@ -91,6 +94,36 @@ func TestMRComment_List_PlainText(t *testing.T) {
 	})
 	if !strings.Contains(out, "hello") {
 		t.Errorf("expected comment body in plain text output, got: %s", out)
+	}
+}
+
+func TestMRComment_Delete_DryRun_JSON(t *testing.T) {
+	origDR := dryRun
+	origJM := jsonMode
+	origExit := lastExit
+	defer func() { dryRun = origDR; jsonMode = origJM; lastExit = origExit }()
+	dryRun = true
+	jsonMode = true
+	lastExit = 0
+
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "test-token")
+
+	out := captureStdout(t, func() {
+		rootCmd.SetArgs([]string{
+			"mr", "comment", "delete",
+			"--project", "foo/bar", "1", "--note-id", "10",
+			"--dry-run", "--json",
+		})
+		_ = rootCmd.Execute()
+	})
+	if lastExit != ExitOK {
+		t.Errorf("expected exit 0 for dry-run, got %d", lastExit)
+	}
+	for _, want := range []string{`"dryRun": true`, `"action": "delete mr comment"`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in dry-run output, got:\n%s", want, out)
+		}
 	}
 }
 
@@ -282,5 +315,262 @@ func TestMRComment_Delete_APIError(t *testing.T) {
 	_ = rootCmd.Execute()
 	if lastExit == ExitOK {
 		t.Errorf("expected non-zero exit for API error, got %d", lastExit)
+	}
+}
+
+func resetMRCommentCmdFlags(t *testing.T) {
+	t.Helper()
+	resetRootPersistentFlags(t)
+	for _, kv := range []struct {
+		cmd   *cobra.Command
+		name  string
+		value string
+	}{
+		{mrCommentAddCmd, "project", ""},
+		{mrCommentAddCmd, "body", ""},
+		{mrCommentAddCmd, "body-file", ""},
+		{mrCommentListCmd, "project", ""},
+		{mrCommentListCmd, "limit", "20"},
+		{mrCommentDeleteCmd, "project", ""},
+		{mrCommentDeleteCmd, "note-id", "0"},
+	} {
+		if err := kv.cmd.Flags().Set(kv.name, kv.value); err != nil {
+			t.Fatalf("reset mr comment flag %s.%s: %v", kv.cmd.Name(), kv.name, err)
+		}
+	}
+}
+
+func TestMRComment_Add_InvalidIID(t *testing.T) {
+	resetMRCommentCmdFlags(t)
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"mr", "comment", "add", "--project", "g/p", "abc", "--body", "hi"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitBadArgs {
+		t.Errorf("exit = %d, want %d", lastExit, ExitBadArgs)
+	}
+}
+
+func TestMRComment_Add_BodyFile(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		fmt.Fprint(w, `{"id":10,"body":"from file","author":{"username":"alice"},"created_at":"2024-01-01"}`)
+	}))
+	defer srv.Close()
+	resetMRCommentCmdFlags(t)
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	bodyFile := t.TempDir() + string(os.PathSeparator) + "body.txt"
+	if err := os.WriteFile(bodyFile, []byte("from file"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := captureCombinedOutput(t, func() {
+		rootCmd.SetArgs([]string{"mr", "comment", "add", "--project", "g/p", "1", "--body-file", bodyFile})
+		_ = rootCmd.Execute()
+	})
+	if !strings.Contains(out, "Added") {
+		t.Errorf("expected Added in output, got: %s", out)
+	}
+}
+
+func TestMRComment_Add_BodyFileError(t *testing.T) {
+	resetMRCommentCmdFlags(t)
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"mr", "comment", "add", "--project", "g/p", "1", "--body-file", t.TempDir() + string(os.PathSeparator) + "missing.txt"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitBadArgs {
+		t.Errorf("exit = %d, want %d", lastExit, ExitBadArgs)
+	}
+}
+
+func TestMRComment_Add_NewClientError(t *testing.T) {
+	resetMRCommentCmdFlags(t)
+	isolateConfigHome(t)
+	t.Setenv("GITLAB_CLI_HOST", "")
+	t.Setenv("GITLAB_CLI_TOKEN", "")
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"mr", "comment", "add", "--project", "g/p", "1", "--body", "hi"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitAuth {
+		t.Errorf("exit = %d, want %d", lastExit, ExitAuth)
+	}
+}
+
+func TestMRComment_Add_APIError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"message":"400 Bad Request"}`))
+	}))
+	defer srv.Close()
+	resetMRCommentCmdFlags(t)
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"mr", "comment", "add", "--project", "g/p", "1", "--body", "hi"})
+	_ = rootCmd.Execute()
+	if lastExit == ExitOK {
+		t.Errorf("expected non-zero exit, got %d", lastExit)
+	}
+}
+
+func TestMRComment_List_MissingProject(t *testing.T) {
+	resetMRCommentCmdFlags(t)
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	_ = mrCommentListCmd.Flags().Set("project", "")
+	rootCmd.SetArgs([]string{"mr", "comment", "list", "1"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitBadArgs {
+		t.Errorf("exit = %d, want %d", lastExit, ExitBadArgs)
+	}
+}
+
+func TestMRComment_List_InvalidIID(t *testing.T) {
+	resetMRCommentCmdFlags(t)
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"mr", "comment", "list", "--project", "g/p", "abc"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitBadArgs {
+		t.Errorf("exit = %d, want %d", lastExit, ExitBadArgs)
+	}
+}
+
+func TestMRComment_List_InvalidLimit(t *testing.T) {
+	resetMRCommentCmdFlags(t)
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"mr", "comment", "list", "--project", "g/p", "1", "--limit", "0"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitBadArgs {
+		t.Errorf("exit = %d, want %d", lastExit, ExitBadArgs)
+	}
+}
+
+func TestMRComment_List_NewClientError(t *testing.T) {
+	resetMRCommentCmdFlags(t)
+	isolateConfigHome(t)
+	t.Setenv("GITLAB_CLI_HOST", "")
+	t.Setenv("GITLAB_CLI_TOKEN", "")
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"mr", "comment", "list", "--project", "g/p", "1"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitAuth {
+		t.Errorf("exit = %d, want %d", lastExit, ExitAuth)
+	}
+}
+
+func TestMRComment_List_SkipsSystemNotes_PlainText(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `[{"id":1,"body":"hello","system":false,"author":{"username":"alice"},"created_at":"2024-01-01"},{"id":2,"body":"system","system":true,"author":{"username":"gitlab"},"created_at":"2024-01-01"}]`)
+	}))
+	defer srv.Close()
+	resetMRCommentCmdFlags(t)
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	out := captureCombinedOutput(t, func() {
+		rootCmd.SetArgs([]string{"mr", "comment", "list", "--project", "g/p", "1"})
+		_ = rootCmd.Execute()
+	})
+	if !strings.Contains(out, "hello") || strings.Contains(out, "system") {
+		t.Errorf("expected user comment only, got:\n%s", out)
+	}
+}
+
+func TestMRComment_Delete_MissingProject(t *testing.T) {
+	resetMRCommentCmdFlags(t)
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	_ = mrCommentDeleteCmd.Flags().Set("project", "")
+	rootCmd.SetArgs([]string{"mr", "comment", "delete", "1", "--note-id", "10"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitBadArgs {
+		t.Errorf("exit = %d, want %d", lastExit, ExitBadArgs)
+	}
+}
+
+func TestMRComment_Delete_InvalidIID(t *testing.T) {
+	resetMRCommentCmdFlags(t)
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"mr", "comment", "delete", "--project", "g/p", "abc", "--note-id", "10"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitBadArgs {
+		t.Errorf("exit = %d, want %d", lastExit, ExitBadArgs)
+	}
+}
+
+func TestMRComment_Delete_MissingNoteID(t *testing.T) {
+	resetMRCommentCmdFlags(t)
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	_ = mrCommentDeleteCmd.Flags().Set("note-id", "0")
+	rootCmd.SetArgs([]string{"mr", "comment", "delete", "--project", "g/p", "1"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitBadArgs {
+		t.Errorf("exit = %d, want %d", lastExit, ExitBadArgs)
+	}
+}
+
+func TestMRComment_Delete_ConfirmRejected(t *testing.T) {
+	withNonInteractiveStdin(t)
+	resetMRCommentCmdFlags(t)
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"mr", "comment", "delete", "--project", "g/p", "1", "--note-id", "10", "--confirm", "wrong"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitCancelled {
+		t.Errorf("exit = %d, want %d", lastExit, ExitCancelled)
+	}
+}
+
+func TestMRComment_Delete_NewClientError(t *testing.T) {
+	resetMRCommentCmdFlags(t)
+	isolateConfigHome(t)
+	t.Setenv("GITLAB_CLI_HOST", "")
+	t.Setenv("GITLAB_CLI_TOKEN", "")
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"mr", "comment", "delete", "--project", "g/p", "1", "--note-id", "10", "--force"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitAuth {
+		t.Errorf("exit = %d, want %d", lastExit, ExitAuth)
 	}
 }

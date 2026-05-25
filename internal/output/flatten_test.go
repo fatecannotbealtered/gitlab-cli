@@ -3,6 +3,8 @@ package output
 import (
 	"strings"
 	"testing"
+
+	"github.com/fatecannotbealtered/gitlab-cli/internal/api"
 )
 
 // assertKeys checks that every expected key is present in m and that no key contains "_".
@@ -170,5 +172,198 @@ func TestFilterMap_CaseInsensitive(t *testing.T) {
 	}
 	if got["id"] != 1 {
 		t.Error("id missing")
+	}
+}
+
+func TestToFlatMR(t *testing.T) {
+	mr := &api.MergeRequest{
+		IID: 1, Title: "t", State: "opened",
+		SourceBranch: "feat", TargetBranch: "main",
+		WebURL: "http://x", Draft: true,
+		Author: &api.User{Username: "alice"},
+	}
+	got := ToFlatMR(mr)
+	if got.Author != "alice" || !got.Draft {
+		t.Fatalf("ToFlatMR with author = %+v", got)
+	}
+	nilAuthor := ToFlatMR(&api.MergeRequest{IID: 2})
+	if nilAuthor.Author != "" {
+		t.Errorf("nil author = %q", nilAuthor.Author)
+	}
+}
+
+func TestToFlatMRNote(t *testing.T) {
+	n := &api.MergeRequestNote{
+		ID: 1, Body: "hi", CreatedAt: "2024-01-01",
+		Author: &api.User{Username: "bob"},
+	}
+	got := ToFlatMRNote(n)
+	if got.Author != "bob" {
+		t.Fatalf("ToFlatMRNote = %+v", got)
+	}
+	nilAuthor := ToFlatMRNote(&api.MergeRequestNote{ID: 2})
+	if nilAuthor.Author != "" {
+		t.Errorf("nil author = %q", nilAuthor.Author)
+	}
+	_ = MRNoteToMap(got)
+}
+
+func TestToFlatProject(t *testing.T) {
+	p := &api.Project{
+		ID: 1, Name: "n", PathWithNamespace: "g/n",
+		Visibility: "private", WebURL: "http://x", DefaultBranch: "main",
+	}
+	got := ToFlatProject(p)
+	if got.Name != "n" {
+		t.Fatalf("ToFlatProject = %+v", got)
+	}
+}
+
+func TestToFlatProjectMember(t *testing.T) {
+	m := &api.ProjectMember{ID: 1, Username: "u", Name: "U", State: "active", AccessLevel: 30}
+	got := ToFlatProjectMember(m)
+	if got.AccessLevel != 30 {
+		t.Fatalf("ToFlatProjectMember = %+v", got)
+	}
+}
+
+func TestToFlatRelease(t *testing.T) {
+	r := &api.Release{
+		TagName: "v1", Name: "Release", Description: "d",
+		CreatedAt: "2024-01-01", ReleasedAt: "2024-01-02",
+		Author: &api.User{Username: "alice"},
+		Commit: &api.Commit{ShortID: "abc123"},
+		Assets: &api.ReleaseAssets{Count: 3},
+	}
+	got := ToFlatRelease(r)
+	if got.Author != "alice" || got.CommitID != "abc123" || got.AssetCount != 3 {
+		t.Fatalf("ToFlatRelease full = %+v", got)
+	}
+	bare := ToFlatRelease(&api.Release{TagName: "v0"})
+	if bare.Author != "" || bare.CommitID != "" || bare.AssetCount != 0 {
+		t.Fatalf("ToFlatRelease bare = %+v", bare)
+	}
+}
+
+func TestToFlatBranch(t *testing.T) {
+	b := &api.Branch{
+		Name: "main", Default: true, Protected: true, Merged: false,
+		WebURL: "http://x", Commit: &api.Commit{ShortID: "deadbeef"},
+	}
+	got := ToFlatBranch(b)
+	if got.CommitID != "deadbeef" {
+		t.Fatalf("ToFlatBranch = %+v", got)
+	}
+	bare := ToFlatBranch(&api.Branch{Name: "dev"})
+	if bare.CommitID != "" {
+		t.Fatalf("ToFlatBranch bare = %+v", bare)
+	}
+}
+
+func TestToFlatCommit(t *testing.T) {
+	c := &api.Commit{
+		ID: "full", ShortID: "short", Title: "t", AuthorName: "Alice",
+		AuthoredDate: "2024-01-01", CommittedDate: "2024-01-02", WebURL: "http://x",
+	}
+	got := ToFlatCommit(c)
+	if got.ShortID != "short" {
+		t.Fatalf("ToFlatCommit = %+v", got)
+	}
+}
+
+func TestToFlatTreeEntry(t *testing.T) {
+	e := &api.TreeEntry{ID: "1", Name: "main.go", Type: "blob", Path: "main.go", Mode: "100644"}
+	got := ToFlatTreeEntry(e)
+	if got.Name != "main.go" {
+		t.Fatalf("ToFlatTreeEntry = %+v", got)
+	}
+}
+
+func TestToFlatSearch(t *testing.T) {
+	sp := ToFlatSearchProject(&api.SearchProject{ID: 1, Name: "p", PathWithNamespace: "g/p", WebURL: "http://x", Visibility: "public"})
+	if sp.ID != 1 {
+		t.Fatalf("ToFlatSearchProject = %+v", sp)
+	}
+	si := ToFlatSearchIssue(&api.SearchIssue{ID: 1, IID: 2, Title: "t", State: "opened", ProjectID: 5, WebURL: "http://x"})
+	if si.ProjectID != 5 {
+		t.Fatalf("ToFlatSearchIssue = %+v", si)
+	}
+	sm := ToFlatSearchMR(&api.SearchMR{ID: 1, IID: 2, Title: "t", State: "opened", ProjectID: 5, WebURL: "http://x"})
+	if sm.IID != 2 {
+		t.Fatalf("ToFlatSearchMR = %+v", sm)
+	}
+	sb := ToFlatSearchBlob(&api.SearchBlob{Filename: "f.go", Path: "f.go", Ref: "main", StartLine: 1, Data: "x", ProjectID: 5})
+	if sb.Data != "x" {
+		t.Fatalf("ToFlatSearchBlob = %+v", sb)
+	}
+	sc := ToFlatSearchCommit(&api.SearchCommit{ID: "a", ShortID: "b", Title: "t", AuthorName: "Alice", CreatedAt: "2024-01-01", WebURL: "http://x"})
+	if sc.ShortID != "b" {
+		t.Fatalf("ToFlatSearchCommit = %+v", sc)
+	}
+}
+
+func TestToFlatVariable(t *testing.T) {
+	v := &api.Variable{
+		Key: "K", Value: "secret", VariableType: "env_var",
+		Protected: true, Masked: true, Raw: true,
+		EnvironmentScope: "*", Description: "desc",
+	}
+	flat := ToFlatVariable(v)
+	if flat.Key != "K" {
+		t.Fatalf("ToFlatVariable = %+v", flat)
+	}
+	withValue := ToFlatVariableWithValue(v)
+	if withValue.Value != "secret" {
+		t.Fatalf("ToFlatVariableWithValue = %+v", withValue)
+	}
+	_ = VariableWithValueToMap(withValue)
+}
+
+func TestIssueToMap_OptionalFields(t *testing.T) {
+	f := FlatIssue{IID: 1, Title: "t", State: "opened", Author: "a", Assignee: "b", Labels: "l", Milestone: "m", WebURL: "http://x"}
+	m := IssueToMap(f)
+	for _, k := range []string{"author", "assignee", "labels", "milestone", "webUrl"} {
+		if _, ok := m[k]; !ok {
+			t.Errorf("missing %q", k)
+		}
+	}
+}
+
+func TestLabelToMap_WithPriority(t *testing.T) {
+	p := 1
+	m := LabelToMap(FlatLabel{ID: 1, Name: "bug", Color: "#f00", Description: "d", Priority: &p})
+	if m["priority"] != 1 {
+		t.Fatalf("LabelToMap = %v", m)
+	}
+}
+
+func TestPipelineToMap_OptionalFields(t *testing.T) {
+	m := PipelineToMap(FlatPipeline{
+		ID: 1, IID: 2, ProjectID: 3, Ref: "main", SHA: "sha", Status: "success",
+		Source: "push", WebURL: "http://x", CreatedAt: "c", UpdatedAt: "u", Username: "alice",
+	})
+	for _, k := range []string{"projectId", "sha", "source", "webUrl", "createdAt", "updatedAt", "username"} {
+		if _, ok := m[k]; !ok {
+			t.Errorf("missing %q", k)
+		}
+	}
+}
+
+func TestJobToMap_OptionalFields(t *testing.T) {
+	m := JobToMap(FlatJob{
+		ID: 1, Name: "build", Status: "success", Stage: "build", Ref: "main",
+		WebURL: "http://x", CreatedAt: "c", StartedAt: "s", FinishedAt: "f",
+		Duration: 1.5, Username: "alice", PipelineID: 9,
+	})
+	for _, k := range []string{"stage", "ref", "webUrl", "createdAt", "startedAt", "finishedAt", "duration", "username", "pipelineId"} {
+		if _, ok := m[k]; !ok {
+			t.Errorf("missing %q", k)
+		}
+	}
+}
+
+func TestHintForErrorCode_Cancelled(t *testing.T) {
+	if HintForErrorCode(ErrCancelled) == "" {
+		t.Error("ErrCancelled should have hint")
 	}
 }
