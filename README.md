@@ -34,21 +34,20 @@ This project is shared for **personal learning, research, and AI tooling experim
 
 ### Quick start
 
-Recommended flow: install the CLI from npm, then install the AI Agent Skill with `npx skills add`.
+Copy the block below to your agent (or run it yourself):
 
 ```bash
+# Please install gitlab-cli and use it for all GitLab operations going forward (always pass --json).
 # Install CLI
 npm install -g @fatecannotbealtered-/gitlab-cli
 
-# Install CLI Skill
+# Install CLI Skill (required) — copies into your agent-supported skills directory
 npx skills add fatecannotbealtered/gitlab-cli -y -g
 
 # Login and verify
 gitlab-cli auth login
-gitlab-cli doctor
+gitlab-cli doctor --json
 ```
-
-The CLI package provides the `gitlab-cli` binary; the Skill package teaches compatible AI coding assistants how to use it safely. If you are an AI Agent helping a user set this up, run the same steps and ask the user to complete any interactive browser or terminal prompts.
 
 ### Alternative: Go install
 
