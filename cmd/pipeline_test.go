@@ -1390,9 +1390,7 @@ func TestPipeline_Jobs_InvalidID(t *testing.T) {
 
 func TestPipeline_Jobs_WithScope(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if scope := r.URL.Query().Get("scope[]"); scope == "" && r.URL.RawQuery != "" {
-			// GitLab client may encode scope differently; accept any jobs list request.
-		}
+		_ = r.URL.Query().Get("scope[]") // scope filter optional in mock
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`[{"id":1,"name":"build","status":"success","stage":"build","duration":1.0}]`))
 	}))
