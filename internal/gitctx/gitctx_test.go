@@ -10,6 +10,21 @@ import (
 	"testing"
 )
 
+// pathEqual compares filesystem paths, resolving symlinks and Windows 8.3 short names.
+func pathEqual(a, b string) bool {
+	norm := func(p string) string {
+		p = filepath.Clean(p)
+		if abs, err := filepath.Abs(p); err == nil {
+			p = abs
+		}
+		if r, err := filepath.EvalSymlinks(p); err == nil {
+			p = r
+		}
+		return filepath.Clean(p)
+	}
+	return strings.EqualFold(norm(a), norm(b))
+}
+
 func TestParseGitLabRemote_SSH(t *testing.T) {
 	r, err := ParseGitLabRemote("git@gitlab.example.com:group/subgroup/project.git")
 	if err != nil {
@@ -315,7 +330,7 @@ func TestRepoRoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Abs: %v", err)
 	}
-	if root != want {
+	if !pathEqual(root, want) {
 		t.Errorf("RepoRoot = %q, want %q", root, want)
 	}
 }
