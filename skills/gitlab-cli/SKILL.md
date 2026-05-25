@@ -8,9 +8,18 @@ metadata: {"openclaw":{"emoji":"🦊","requires":{"bins":["gitlab-cli"]}}}
 
 Terminal control of GitLab (MR, Issue, CI, repo, release, variables). **GitLab.com / self-managed / Dedicated**.
 
-> CLI: `npm install -g @fatecannotbealtered-/gitlab-cli`
->
-> Skill: `npx skills add fatecannotbealtered/gitlab-cli -y -g`
+```bash
+# Please install gitlab-cli and use it for all GitLab operations going forward (always pass --json).
+# Install CLI
+npm install -g @fatecannotbealtered-/gitlab-cli
+
+# Install CLI Skill (required) — copies into your agent-supported skills directory
+npx skills add fatecannotbealtered/gitlab-cli -y -g
+
+# Login and verify
+gitlab-cli auth login
+gitlab-cli doctor --json
+```
 
 ## How to use this skill (progressive disclosure)
 
