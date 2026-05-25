@@ -32,21 +32,20 @@ GitLab 官方有非常优秀的 CLI [glab](https://gitlab.com/gitlab-org/cli)—
 
 ### 推荐方式
 
-推荐流程：先用 npm 安装 CLI，再用 `npx skills add` 安装 AI Agent Skill。
+将下面整段复制发给您的 Agent（或自行执行）：
 
 ```bash
+# 请帮我安装 gitlab-cli，并记住以后操作 GitLab 都使用 gitlab-cli（查询时加 --json）。
 # 安装 CLI
 npm install -g @fatecannotbealtered-/gitlab-cli
 
-# 安装 CLI Skill
+# 安装 CLI Skill（必需）— 复制到你支持的 skills 目录下
 npx skills add fatecannotbealtered/gitlab-cli -y -g
 
-# 登录并自检
+# 登录并验证
 gitlab-cli auth login
-gitlab-cli doctor
+gitlab-cli doctor --json
 ```
-
-npm 包提供 `gitlab-cli` 二进制；Skill 包教兼容的 AI 编程助手如何安全使用 CLI。若你是 AI Agent 在帮用户配置，执行相同步骤，并请用户完成任何交互式浏览器或终端提示。
 
 ### 备选：go install
 
