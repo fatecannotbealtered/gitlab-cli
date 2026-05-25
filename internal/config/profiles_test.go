@@ -212,10 +212,10 @@ func TestUseProfile_SaveProfilesError(t *testing.T) {
 		if err := os.Chmod(Dir(), 0555); err != nil {
 			t.Fatalf("Chmod dir: %v", err)
 		}
-		t.Cleanup(func() {
-			_ = os.Chmod(Dir(), 0755)
-			_ = os.Chmod(profilesPath(), 0644)
-		})
+		defer func() {
+			_ = os.Chmod(Dir(), 0700)
+			_ = os.Chmod(profilesPath(), 0600)
+		}()
 
 		err := UseProfile("a")
 		if err == nil {
@@ -337,10 +337,10 @@ func TestDeleteProfile_SaveProfilesError(t *testing.T) {
 		if err := os.Chmod(Dir(), 0555); err != nil {
 			t.Fatalf("Chmod dir: %v", err)
 		}
-		t.Cleanup(func() {
-			_ = os.Chmod(Dir(), 0755)
-			_ = os.Chmod(profilesPath(), 0644)
-		})
+		defer func() {
+			_ = os.Chmod(Dir(), 0700)
+			_ = os.Chmod(profilesPath(), 0600)
+		}()
 
 		err := DeleteProfile("only")
 		if err == nil {
