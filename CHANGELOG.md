@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-06-05
+
 ### Added
 
 - Built-in `update` command to check GitHub Releases, verify `checksums.txt`, and self-update the current binary with `--dry-run` / `--confirm` agent workflow support.
@@ -40,7 +42,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **npm local publish helpers** — `scripts/npm-publish-local.ps1`, `scripts/npm-token.local.example`.
 - Expanded `.gitignore` for coverage artifacts from local `go test -coverprofile` runs.
 
-[Unreleased]: https://github.com/fatecannotbealtered/gitlab-cli/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/fatecannotbealtered/gitlab-cli/compare/v1.1.1...HEAD
+[1.1.1]: https://github.com/fatecannotbealtered/gitlab-cli/releases/tag/v1.1.1
 [1.1.0]: https://github.com/fatecannotbealtered/gitlab-cli/releases/tag/v1.1.0
 
 ## [1.0.0] - 2026-05-24
