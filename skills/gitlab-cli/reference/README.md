@@ -15,4 +15,4 @@ Module guides for AI Agents. Loaded **on demand** from [SKILL.md](../SKILL.md).
 | [discovery.md](discovery.md) | project, user, search |
 | [contracts.md](contracts.md) | flags, exit codes, JSON schemas, audit |
 
-Machine-readable command tree: `gitlab-cli reference --json --compact`
+Machine-readable command tree: `gitlab-cli reference --compact`

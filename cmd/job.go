@@ -82,6 +82,10 @@ var jobLogCmd = &cobra.Command{
 			if err != nil {
 				return handleAPIError(err, jsonMode)
 			}
+			if jsonMode {
+				output.PrintJSON(map[string]any{"jobId": jobID, "log": string(data)})
+				return nil
+			}
 			_, _ = os.Stdout.Write(data)
 			return nil
 		}
@@ -309,7 +313,8 @@ func init() {
 	jobLogCmd.Flags().BoolP("follow", "f", false, "Stream log in real time until job completes")
 	jobLogCmd.Flags().Int("timeout", 0, "Timeout in seconds for --follow (0 = unlimited)")
 	jobCmd.AddCommand(jobLogCmd)
-	markOutputType(jobLogCmd, "text")
+	markOutputType(jobLogCmd, "json")
+	markOutputFormats(jobLogCmd, formatJSON, formatText, formatRaw)
 
 	// retry
 	jobRetryCmd.Flags().String("project", "", "Project ID or path (required)")

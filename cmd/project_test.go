@@ -183,7 +183,7 @@ func TestProject_List_PlainText(t *testing.T) {
 	t.Setenv("GITLAB_CLI_TOKEN", "test")
 	origJM := jsonMode
 	defer func() { jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"project", "list"})
@@ -204,7 +204,7 @@ func TestProject_Get_PlainText(t *testing.T) {
 	t.Setenv("GITLAB_CLI_TOKEN", "test")
 	origJM := jsonMode
 	defer func() { jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"project", "get", "g/myproj"})
@@ -225,7 +225,7 @@ func TestProject_Members_PlainText(t *testing.T) {
 	t.Setenv("GITLAB_CLI_TOKEN", "test")
 	origJM := jsonMode
 	defer func() { jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"project", "members", "1"})
@@ -248,7 +248,7 @@ func TestProject_List_APIError(t *testing.T) {
 	origJM := jsonMode
 	defer func() { lastExit = origExit; jsonMode = origJM }()
 	lastExit = 0
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	rootCmd.SetArgs([]string{"project", "list"})
 	_ = rootCmd.Execute()
@@ -267,7 +267,7 @@ func TestProject_List_Empty(t *testing.T) {
 	t.Setenv("GITLAB_CLI_TOKEN", "test")
 	origJM := jsonMode
 	defer func() { jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"project", "list"})
@@ -288,7 +288,7 @@ func TestProject_Members_Empty(t *testing.T) {
 	t.Setenv("GITLAB_CLI_TOKEN", "test")
 	origJM := jsonMode
 	defer func() { jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"project", "members", "1"})

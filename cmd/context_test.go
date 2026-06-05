@@ -170,7 +170,7 @@ func TestContext_PlainText_NotAuthenticated(t *testing.T) {
 
 	origJM := jsonMode
 	defer func() { jsonMode = origJM }()
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 
 	out := captureStdout(t, func() {
@@ -198,7 +198,7 @@ func TestContext_PlainText_Authenticated(t *testing.T) {
 
 	origJM := jsonMode
 	defer func() { jsonMode = origJM }()
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 
 	out := captureStdout(t, func() {
@@ -268,7 +268,7 @@ func TestRenderContext_Direct_PlainText_NoGit(t *testing.T) {
 		jsonMode = origJM
 		contextStrict = origStrict
 	}()
-	jsonMode = false
+	setTextFormatForTest(t)
 	contextStrict = false
 
 	out := captureCombinedOutput(t, func() {
@@ -288,7 +288,7 @@ func TestRenderContext_Direct_PlainText_GitNoRemote(t *testing.T) {
 		jsonMode = origJM
 		contextStrict = origStrict
 	}()
-	jsonMode = false
+	setTextFormatForTest(t)
 	contextStrict = false
 
 	out := captureCombinedOutput(t, func() {
@@ -310,7 +310,7 @@ func TestRenderContext_Direct_PlainText_GitWithRemote(t *testing.T) {
 		jsonMode = origJM
 		contextStrict = origStrict
 	}()
-	jsonMode = false
+	setTextFormatForTest(t)
 	contextStrict = false
 
 	out := captureCombinedOutput(t, func() {
@@ -340,7 +340,7 @@ func TestRenderContext_Direct_PlainText_UnauthenticatedNoHost(t *testing.T) {
 		jsonMode = origJM
 		contextStrict = origStrict
 	}()
-	jsonMode = false
+	setTextFormatForTest(t)
 	contextStrict = false
 
 	out := captureCombinedOutput(t, func() {
@@ -365,7 +365,7 @@ func TestRenderContext_Direct_PlainText_UnauthenticatedWithHost(t *testing.T) {
 		contextStrict = origStrict
 		lastExit = origExit
 	}()
-	jsonMode = false
+	setTextFormatForTest(t)
 	contextStrict = true
 	lastExit = 0
 
@@ -392,7 +392,7 @@ func TestRenderContext_Direct_PlainText_AuthenticatedWithProject(t *testing.T) {
 		jsonMode = origJM
 		contextStrict = origStrict
 	}()
-	jsonMode = false
+	setTextFormatForTest(t)
 	contextStrict = false
 
 	out := captureCombinedOutput(t, func() {
@@ -427,7 +427,7 @@ func TestRenderContext_Direct_PlainText_ProjectError(t *testing.T) {
 		jsonMode = origJM
 		contextStrict = origStrict
 	}()
-	jsonMode = false
+	setTextFormatForTest(t)
 	contextStrict = false
 
 	out := captureCombinedOutput(t, func() {
@@ -565,7 +565,7 @@ func TestContext_ProjectLookupError_PlainText(t *testing.T) {
 
 	origJM := jsonMode
 	defer func() { jsonMode = origJM }()
-	jsonMode = false
+	setTextFormatForTest(t)
 
 	out := captureCombinedOutput(t, func() {
 		rootCmd.SetArgs([]string{"context", "--no-strict"})
@@ -586,7 +586,7 @@ func TestContext_NewClientError_PlainText(t *testing.T) {
 
 	origJM := jsonMode
 	defer func() { jsonMode = origJM }()
-	jsonMode = false
+	setTextFormatForTest(t)
 
 	out := captureCombinedOutput(t, func() {
 		rootCmd.SetArgs([]string{"context", "--no-strict"})

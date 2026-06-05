@@ -787,7 +787,7 @@ func TestRepo_Branch_List_PlainText(t *testing.T) {
 	t.Setenv("GITLAB_CLI_TOKEN", "test")
 	origJM := jsonMode
 	defer func() { jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"repo", "branch", "list", "--project", "group/proj"})
@@ -808,7 +808,7 @@ func TestRepo_Commit_List_PlainText(t *testing.T) {
 	t.Setenv("GITLAB_CLI_TOKEN", "test")
 	origJM := jsonMode
 	defer func() { jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"repo", "commit", "list", "--project", "group/proj"})
@@ -829,7 +829,7 @@ func TestRepo_Tree_List_PlainText(t *testing.T) {
 	t.Setenv("GITLAB_CLI_TOKEN", "test")
 	origJM := jsonMode
 	defer func() { jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"repo", "tree", "--project", "group/proj"})
@@ -850,7 +850,7 @@ func TestRepo_Branch_List_Empty(t *testing.T) {
 	t.Setenv("GITLAB_CLI_TOKEN", "test")
 	origJM := jsonMode
 	defer func() { jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"repo", "branch", "list", "--project", "group/proj"})
@@ -871,7 +871,7 @@ func TestRepo_Commit_List_Empty(t *testing.T) {
 	t.Setenv("GITLAB_CLI_TOKEN", "test")
 	origJM := jsonMode
 	defer func() { jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"repo", "commit", "list", "--project", "group/proj"})
@@ -892,7 +892,7 @@ func TestRepo_Tree_List_Empty(t *testing.T) {
 	t.Setenv("GITLAB_CLI_TOKEN", "test")
 	origJM := jsonMode
 	defer func() { jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"repo", "tree", "--project", "group/proj"})
@@ -913,7 +913,7 @@ func TestRepo_Commit_Get_PlainText(t *testing.T) {
 	t.Setenv("GITLAB_CLI_TOKEN", "test")
 	origJM := jsonMode
 	defer func() { jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"repo", "commit", "get", "abc", "--project", "group/proj"})
@@ -937,7 +937,7 @@ func TestRepo_Branch_Create_PlainText(t *testing.T) {
 	origJM := jsonMode
 	defer func() { dryRun = origDR; jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
 	dryRun = false
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"repo", "branch", "create", "--project", "group/proj", "--name", "feat", "--ref", "main"})
@@ -961,7 +961,7 @@ func TestRepo_File_Create_PlainText(t *testing.T) {
 	origJM := jsonMode
 	defer func() { dryRun = origDR; jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
 	dryRun = false
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{
@@ -989,7 +989,7 @@ func TestRepo_File_Update_PlainText(t *testing.T) {
 	origJM := jsonMode
 	defer func() { dryRun = origDR; jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
 	dryRun = false
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{
@@ -1017,7 +1017,7 @@ func TestRepo_Branch_List_APIError(t *testing.T) {
 	origJM := jsonMode
 	defer func() { lastExit = origExit; jsonMode = origJM }()
 	lastExit = 0
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	rootCmd.SetArgs([]string{"repo", "branch", "list", "--project", "foo/bar"})
 	_ = rootCmd.Execute()
@@ -1038,7 +1038,7 @@ func TestRepo_Commit_List_APIError(t *testing.T) {
 	origJM := jsonMode
 	defer func() { lastExit = origExit; jsonMode = origJM }()
 	lastExit = 0
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	rootCmd.SetArgs([]string{"repo", "commit", "list", "--project", "foo/bar"})
 	_ = rootCmd.Execute()
@@ -1059,7 +1059,7 @@ func TestRepo_Tree_APIError(t *testing.T) {
 	origJM := jsonMode
 	defer func() { lastExit = origExit; jsonMode = origJM }()
 	lastExit = 0
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	rootCmd.SetArgs([]string{"repo", "tree", "--project", "foo/bar"})
 	_ = rootCmd.Execute()
@@ -1150,6 +1150,7 @@ func TestRepo_File_Get_InvalidOutputPath(t *testing.T) {
 }
 
 func TestRepo_File_Get_SaveToFile_PlainText(t *testing.T) {
+	setTextFormatForTest(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("hello"))
 	}))
@@ -1270,6 +1271,7 @@ func TestRepo_File_Update_APIError(t *testing.T) {
 }
 
 func TestRepo_File_Delete_PlainText(t *testing.T) {
+	setTextFormatForTest(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
@@ -1366,6 +1368,7 @@ func TestRepo_Branch_Create_APIError(t *testing.T) {
 }
 
 func TestRepo_Branch_Delete_PlainText(t *testing.T) {
+	setTextFormatForTest(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	}))

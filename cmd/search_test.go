@@ -317,7 +317,7 @@ func TestSearch_Projects_PlainText(t *testing.T) {
 	t.Setenv("GITLAB_CLI_TOKEN", "test")
 	origJM := jsonMode
 	defer func() { jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"search", "projects", "--query", "myproj"})
@@ -338,7 +338,7 @@ func TestSearch_Issues_PlainText(t *testing.T) {
 	t.Setenv("GITLAB_CLI_TOKEN", "test")
 	origJM := jsonMode
 	defer func() { jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"search", "issues", "--query", "bug"})
@@ -359,7 +359,7 @@ func TestSearch_MRs_PlainText(t *testing.T) {
 	t.Setenv("GITLAB_CLI_TOKEN", "test")
 	origJM := jsonMode
 	defer func() { jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"search", "mrs", "--query", "feat"})
@@ -380,7 +380,7 @@ func TestSearch_Commits_PlainText(t *testing.T) {
 	t.Setenv("GITLAB_CLI_TOKEN", "test")
 	origJM := jsonMode
 	defer func() { jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"search", "commits", "--query", "init"})
@@ -401,7 +401,7 @@ func TestSearch_Code_PlainText(t *testing.T) {
 	t.Setenv("GITLAB_CLI_TOKEN", "test")
 	origJM := jsonMode
 	defer func() { jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"search", "code", "--query", "main", "--project", "foo/bar"})
@@ -424,7 +424,7 @@ func TestSearch_Projects_APIError(t *testing.T) {
 	origJM := jsonMode
 	defer func() { lastExit = origExit; jsonMode = origJM }()
 	lastExit = 0
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	rootCmd.SetArgs([]string{"search", "projects", "--query", "test"})
 	_ = rootCmd.Execute()
@@ -471,7 +471,7 @@ func TestSearch_Projects_Empty(t *testing.T) {
 	t.Setenv("GITLAB_CLI_TOKEN", "test")
 	origJM := jsonMode
 	defer func() { jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
-	jsonMode = false
+	setTextFormatForTest(t)
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"search", "projects", "--query", "none"})
 		_ = rootCmd.Execute()
@@ -537,7 +537,7 @@ func TestSearch_Issues_Empty(t *testing.T) {
 	t.Setenv("GITLAB_CLI_TOKEN", "test")
 	origJM := jsonMode
 	defer func() { jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
-	jsonMode = false
+	setTextFormatForTest(t)
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"search", "issues", "--query", "none"})
 		_ = rootCmd.Execute()
@@ -589,7 +589,7 @@ func TestSearch_MRs_Empty(t *testing.T) {
 	t.Setenv("GITLAB_CLI_TOKEN", "test")
 	origJM := jsonMode
 	defer func() { jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
-	jsonMode = false
+	setTextFormatForTest(t)
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"search", "mrs", "--query", "none"})
 		_ = rootCmd.Execute()
@@ -641,7 +641,7 @@ func TestSearch_Code_Empty(t *testing.T) {
 	t.Setenv("GITLAB_CLI_TOKEN", "test")
 	origJM := jsonMode
 	defer func() { jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
-	jsonMode = false
+	setTextFormatForTest(t)
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"search", "code", "--query", "none", "--project", "foo/bar"})
 		_ = rootCmd.Execute()
@@ -707,7 +707,7 @@ func TestSearch_Commits_Empty(t *testing.T) {
 	t.Setenv("GITLAB_CLI_TOKEN", "test")
 	origJM := jsonMode
 	defer func() { jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
-	jsonMode = false
+	setTextFormatForTest(t)
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"search", "commits", "--query", "none"})
 		_ = rootCmd.Execute()

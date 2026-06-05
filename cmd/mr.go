@@ -104,7 +104,8 @@ func init() {
 	// diff
 	mrDiffCmd.Flags().String("project", "", "Project ID or path (required)")
 	mrCmd.AddCommand(mrDiffCmd)
-	markOutputType(mrDiffCmd, "text")
+	markOutputType(mrDiffCmd, "json")
+	markOutputFormats(mrDiffCmd, formatJSON, formatText, formatRaw)
 }
 
 // 鈹€鈹€鈹€ list 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
@@ -662,6 +663,10 @@ var mrDiffCmd = &cobra.Command{
 		}
 		if jsonMode {
 			output.PrintJSON(map[string]any{"diff": diff})
+			return nil
+		}
+		if formatMode == formatRaw {
+			fmt.Print(diff)
 			return nil
 		}
 		if !quietMode {

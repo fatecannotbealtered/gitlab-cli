@@ -410,7 +410,7 @@ func TestRelease_List_PlainText(t *testing.T) {
 	t.Setenv("GITLAB_CLI_TOKEN", "test")
 	origJM := jsonMode
 	defer func() { jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"release", "list", "--project", "group/proj"})
@@ -431,7 +431,7 @@ func TestRelease_Get_PlainText(t *testing.T) {
 	t.Setenv("GITLAB_CLI_TOKEN", "test")
 	origJM := jsonMode
 	defer func() { jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"release", "get", "--project", "group/proj", "--tag", "v1.0"})
@@ -455,7 +455,7 @@ func TestRelease_Create_PlainText(t *testing.T) {
 	origJM := jsonMode
 	defer func() { dryRun = origDR; jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
 	dryRun = false
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"release", "create", "--project", "foo/bar", "--tag", "v1.0", "--name", "Release 1.0"})
@@ -478,7 +478,7 @@ func TestRelease_Update_PlainText(t *testing.T) {
 	origJM := jsonMode
 	defer func() { dryRun = origDR; jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
 	dryRun = false
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"release", "update", "--project", "foo/bar", "--tag", "v1.0", "--name", "Updated"})
@@ -501,7 +501,7 @@ func TestRelease_List_APIError(t *testing.T) {
 	origJM := jsonMode
 	defer func() { lastExit = origExit; jsonMode = origJM }()
 	lastExit = 0
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	rootCmd.SetArgs([]string{"release", "list", "--project", "foo/bar"})
 	_ = rootCmd.Execute()
@@ -520,7 +520,7 @@ func TestRelease_List_Empty(t *testing.T) {
 	t.Setenv("GITLAB_CLI_TOKEN", "test")
 	origJM := jsonMode
 	defer func() { jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"release", "list", "--project", "foo/bar"})
@@ -594,6 +594,7 @@ func TestRelease_List_InvalidLimit(t *testing.T) {
 }
 
 func TestRelease_List_WithAuthor_PlainText(t *testing.T) {
+	setTextFormatForTest(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`[{"tag_name":"v1.0","name":"Release 1.0","released_at":"2024-01-01","author":{"username":"alice"}}]`))
@@ -657,6 +658,7 @@ func TestRelease_Get_APIError(t *testing.T) {
 }
 
 func TestRelease_Get_WithAuthor_PlainText(t *testing.T) {
+	setTextFormatForTest(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"tag_name":"v1.0","name":"Release 1.0","description":"desc","released_at":"2024-01-01","author":{"username":"alice"}}`))
@@ -737,6 +739,7 @@ func TestRelease_Update_APIError(t *testing.T) {
 }
 
 func TestRelease_Delete_PlainText(t *testing.T) {
+	setTextFormatForTest(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	}))

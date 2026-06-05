@@ -163,6 +163,7 @@ func TestDoctor_AuthFailed_JSON(t *testing.T) {
 }
 
 func TestDoctor_AuthFailed_PlainText(t *testing.T) {
+	setTextFormatForTest(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
 		_, _ = w.Write([]byte(`{"message":"403 Forbidden"}`))
@@ -227,6 +228,7 @@ func TestDoctor_ConfigLoadError(t *testing.T) {
 }
 
 func TestDoctor_ConfigLoadError_PlainText(t *testing.T) {
+	setTextFormatForTest(t)
 	home := isolateConfigHome(t)
 	t.Setenv("GITLAB_CLI_HOST", "")
 	t.Setenv("GITLAB_CLI_TOKEN", "")
@@ -253,6 +255,7 @@ func TestDoctor_ConfigLoadError_PlainText(t *testing.T) {
 }
 
 func TestDoctor_NoConfig_PlainText(t *testing.T) {
+	setTextFormatForTest(t)
 	isolateConfigHome(t)
 	t.Setenv("GITLAB_CLI_HOST", "")
 	t.Setenv("GITLAB_CLI_TOKEN", "")
@@ -278,6 +281,7 @@ func TestDoctor_NoConfig_PlainText(t *testing.T) {
 }
 
 func TestDoctor_Success_PlainText(t *testing.T) {
+	setTextFormatForTest(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"id":1,"username":"alice","name":"Alice"}`))

@@ -15,6 +15,8 @@ func init() {
 	_ = os.Setenv("GITLAB_CLI_AGENT_SAFE", "0")
 }
 
+var preserveTextFormatForReset bool
+
 // withAgentSafe enables default agent-safe restrictions for the duration of the test.
 func withAgentSafe(t *testing.T) {
 	t.Helper()
@@ -26,8 +28,10 @@ func withAgentSafe(t *testing.T) {
 // resetRootPersistentFlags clears persistent CLI flags that leak between Execute() calls.
 func resetRootPersistentFlags(t *testing.T) {
 	t.Helper()
+	preserveTextFormat := preserveTextFormatForReset
 	for _, f := range []struct{ name, value string }{
 		{"json", "false"},
+		{"format", "json"},
 		{"force", "false"},
 		{"dry-run", "false"},
 		{"confirm", ""},
@@ -37,13 +41,93 @@ func resetRootPersistentFlags(t *testing.T) {
 		if err := rootCmd.PersistentFlags().Set(f.name, f.value); err != nil {
 			t.Fatalf("reset flag %q: %v", f.name, err)
 		}
+		if flag := rootCmd.PersistentFlags().Lookup(f.name); flag != nil {
+			flag.Changed = false
+		}
 	}
 	forceMode = false
 	confirmFlag = ""
 	dryRun = false
-	jsonMode = false
+	formatMode = formatJSON
+	jsonAlias = false
+	jsonMode = true
 	quietMode = false
 	compactJSON = false
+	if preserveTextFormat {
+		if err := rootCmd.PersistentFlags().Set("format", formatText); err != nil {
+			t.Fatalf("preserve text format: %v", err)
+		}
+		if flag := rootCmd.PersistentFlags().Lookup("format"); flag != nil {
+			flag.Changed = true
+		}
+		formatMode = formatText
+		jsonMode = false
+	}
+}
+
+func setTextFormatForTest(t *testing.T) {
+	t.Helper()
+	formatFlag := rootCmd.PersistentFlags().Lookup("format")
+	jsonFlag := rootCmd.PersistentFlags().Lookup("json")
+
+	if err := rootCmd.PersistentFlags().Set("format", formatText); err != nil {
+		t.Fatalf("set text format: %v", err)
+	}
+	if formatFlag != nil {
+		formatFlag.Changed = true
+	}
+	if err := rootCmd.PersistentFlags().Set("json", "false"); err != nil {
+		t.Fatalf("clear json alias: %v", err)
+	}
+	if jsonFlag != nil {
+		jsonFlag.Changed = false
+	}
+	formatMode = formatText
+	jsonAlias = false
+	jsonMode = false
+	preserveTextFormatForReset = true
+	clearFieldsFlagsForTest(t, rootCmd)
+
+	t.Cleanup(func() {
+		formatMode = formatJSON
+		jsonAlias = false
+		jsonMode = true
+		preserveTextFormatForReset = false
+		if formatFlag != nil {
+			_ = formatFlag.Value.Set(formatJSON)
+			formatFlag.Changed = false
+		}
+		if jsonFlag != nil {
+			_ = jsonFlag.Value.Set("false")
+			jsonFlag.Changed = false
+		}
+	})
+}
+
+func clearFieldsFlagsForTest(t *testing.T, cmd *cobra.Command) {
+	t.Helper()
+	if cmd == nil {
+		return
+	}
+	if flag := cmd.Flags().Lookup("fields"); flag != nil {
+		if err := cmd.Flags().Set("fields", ""); err != nil {
+			t.Fatalf("clear fields flag: %v", err)
+		}
+		flag.Changed = false
+	}
+	for _, child := range cmd.Commands() {
+		clearFieldsFlagsForTest(t, child)
+	}
+}
+
+func resetCommandFlagForTest(t *testing.T, cmd *cobra.Command, name, value string) {
+	t.Helper()
+	if err := cmd.Flags().Set(name, value); err != nil {
+		t.Fatalf("reset flag %s: %v", name, err)
+	}
+	if flag := cmd.Flags().Lookup(name); flag != nil {
+		flag.Changed = false
+	}
 }
 
 func resetVariableFlags(t *testing.T) {

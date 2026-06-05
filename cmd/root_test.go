@@ -113,7 +113,7 @@ func captureHandleAPIErrorPlain(t *testing.T, apiErr error) error {
 	t.Helper()
 	origJM := jsonMode
 	defer func() { jsonMode = origJM }()
-	jsonMode = false
+	setTextFormatForTest(t)
 	stderr := captureStderr(t, func() {
 		_ = handleAPIError(apiErr, false)
 	})
@@ -142,7 +142,7 @@ func TestHandleAPIError_NonAPIError_PlainText(t *testing.T) {
 	lastExit = 0
 	origJM := jsonMode
 	defer func() { jsonMode = origJM }()
-	jsonMode = false
+	setTextFormatForTest(t)
 
 	stderr := captureStderr(t, func() {
 		err := handleAPIError(errors.New("connection reset"), false)
@@ -232,7 +232,7 @@ func TestNewClient_NotLoggedIn_PlainText(t *testing.T) {
 		jsonMode = origJM
 		lastExit = origExit
 	}()
-	jsonMode = false
+	setTextFormatForTest(t)
 	lastExit = 0
 
 	stderr := captureStderr(t, func() {

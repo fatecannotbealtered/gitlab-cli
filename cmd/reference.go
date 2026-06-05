@@ -48,6 +48,7 @@ type refCommand struct {
 	RequiresConfirmation bool         `json:"requiresConfirmation,omitempty"`
 	RiskLevel            string       `json:"riskLevel,omitempty"`
 	OutputType           string       `json:"outputType,omitempty"`
+	Formats              []string     `json:"formats,omitempty"`
 	PositionalArgs       []string     `json:"positionalArgs,omitempty"`
 	SupportsFields       bool         `json:"supportsFields,omitempty"`
 	Flags                []refFlag    `json:"flags,omitempty"`
@@ -144,8 +145,11 @@ func commandToRef(cmd *cobra.Command, prefix, pathPrefix string) refCommand {
 				node.Commands = append(node.Commands, sub)
 			}
 		}
-	} else if node.OutputType == "" {
-		node.OutputType = "json"
+	} else {
+		if node.OutputType == "" {
+			node.OutputType = "json"
+		}
+		node.Formats = commandOutputFormats(cmd)
 	}
 	return node
 }
@@ -244,6 +248,9 @@ func walkCommands(cmd *cobra.Command, lines *[]string, prefix string) {
 				meta = append(meta, "output="+ot)
 			} else {
 				meta = append(meta, "output=json")
+			}
+			if fmts := commandOutputFormats(cmd); len(fmts) > 0 {
+				meta = append(meta, "formats="+strings.Join(fmts, ","))
 			}
 		}
 		if args := parsePositionalArgs(cmd.Use); len(args) > 0 {

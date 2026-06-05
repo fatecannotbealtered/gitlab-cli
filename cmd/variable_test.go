@@ -305,7 +305,7 @@ func TestVariable_List_PlainText(t *testing.T) {
 	t.Setenv("GITLAB_CLI_TOKEN", "test")
 	origJM := jsonMode
 	defer func() { jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"variable", "list", "--project", "foo/bar"})
@@ -329,7 +329,7 @@ func TestVariable_Create_PlainText(t *testing.T) {
 	origJM := jsonMode
 	defer func() { dryRun = origDR; jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
 	dryRun = false
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"variable", "create", "--project", "foo/bar", "--key", "FOO", "--value", "secret"})
@@ -350,7 +350,7 @@ func TestVariable_Get_PlainText(t *testing.T) {
 	t.Setenv("GITLAB_CLI_TOKEN", "test")
 	origJM := jsonMode
 	defer func() { jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"variable", "get", "--project", "foo/bar", "--key", "FOO"})
@@ -373,7 +373,7 @@ func TestVariable_Update_PlainText(t *testing.T) {
 	origJM := jsonMode
 	defer func() { dryRun = origDR; jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
 	dryRun = false
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"variable", "update", "--project", "foo/bar", "--key", "FOO", "--value", "newval"})
@@ -394,7 +394,7 @@ func TestVariable_List_Empty(t *testing.T) {
 	t.Setenv("GITLAB_CLI_TOKEN", "test")
 	origJM := jsonMode
 	defer func() { jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"variable", "list", "--project", "foo/bar"})
@@ -417,7 +417,7 @@ func TestVariable_List_APIError(t *testing.T) {
 	origJM := jsonMode
 	defer func() { lastExit = origExit; jsonMode = origJM }()
 	lastExit = 0
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	rootCmd.SetArgs([]string{"variable", "list", "--project", "foo/bar"})
 	_ = rootCmd.Execute()
@@ -711,7 +711,7 @@ func TestVariable_Update_AllFlags(t *testing.T) {
 		_ = rootCmd.PersistentFlags().Set("json", "false")
 	}()
 	dryRun = false
-	jsonMode = false
+	setTextFormatForTest(t)
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{
 			"variable", "update",
@@ -920,7 +920,7 @@ func TestVariable_Delete_PlainText(t *testing.T) {
 		_ = rootCmd.PersistentFlags().Set("json", "false")
 	}()
 	dryRun = false
-	jsonMode = false
+	setTextFormatForTest(t)
 	lastExit = 0
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"variable", "delete", "--project", "foo/bar", "--key", "FOO", "--force"})
@@ -943,7 +943,7 @@ func TestVariable_Update_PlainTextSuccess(t *testing.T) {
 	origJM := jsonMode
 	defer func() { dryRun = origDR; jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
 	dryRun = false
-	jsonMode = false
+	setTextFormatForTest(t)
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"variable", "update", "--project", "foo/bar", "--key", "FOO", "--value", "new"})
 		_ = rootCmd.Execute()

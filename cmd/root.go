@@ -39,11 +39,19 @@ var version = "dev"
 
 // Global flags.
 var (
-	jsonMode    bool
+	jsonMode    = true
+	jsonAlias   bool
 	compactJSON bool
 	forceMode   bool
 	quietMode   bool
 	dryRun      bool
+	formatMode  = formatJSON
+)
+
+const (
+	formatJSON = "json"
+	formatText = "text"
+	formatRaw  = "raw"
 )
 
 // fieldsFlag is set by commands that opt into the global --fields flag.
@@ -103,8 +111,9 @@ func init() {
 	rootCmd.Version = version
 	rootCmd.CompletionOptions.DisableDefaultCmd = true
 
-	rootCmd.PersistentFlags().BoolVar(&jsonMode, "json", false, "Output result as JSON")
-	rootCmd.PersistentFlags().BoolVar(&compactJSON, "compact", false, "Compact JSON (no indentation; use with --json)")
+	rootCmd.PersistentFlags().StringVar(&formatMode, "format", formatJSON, "Output format: json|text|raw")
+	rootCmd.PersistentFlags().BoolVar(&jsonAlias, "json", false, "Compatibility alias for --format json")
+	rootCmd.PersistentFlags().BoolVar(&compactJSON, "compact", false, "Compact JSON (no indentation; only affects --format json)")
 	rootCmd.PersistentFlags().BoolVar(&forceMode, "force", false, "Skip confirmation prompts")
 	rootCmd.PersistentFlags().BoolVar(&quietMode, "quiet", false, "Suppress non-JSON stdout output (for scripts and AI Agents)")
 	rootCmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "Show what would be done without executing")
@@ -118,6 +127,9 @@ func init() {
 	rootCmd.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
 		cmdStartTime = time.Now()
 		activeCmd = cmd
+		if err := applyFormatFlags(cmd); err != nil {
+			return err
+		}
 		return nil
 	}
 
@@ -203,6 +215,76 @@ func dryRunOutput(action string, detail map[string]any) bool {
 	return true
 }
 
+func applyFormatFlags(cmd *cobra.Command) error {
+	requested := strings.ToLower(strings.TrimSpace(formatMode))
+	if requested == "" {
+		requested = formatJSON
+	}
+	formatFlag := rootCmd.PersistentFlags().Lookup("format")
+	jsonFlag := rootCmd.PersistentFlags().Lookup("json")
+	jsonChanged := jsonFlag != nil && jsonFlag.Changed
+	formatChanged := formatFlag != nil && formatFlag.Changed
+
+	if !jsonChanged && !formatChanged && !jsonMode {
+		requested = formatText
+	}
+
+	if jsonChanged && jsonAlias && formatChanged && requested != formatJSON {
+		jsonMode = true
+		return failArg("--json cannot be used with --format " + requested)
+	}
+	if jsonChanged && jsonAlias {
+		requested = formatJSON
+	}
+	if requested != formatJSON && requested != formatText && requested != formatRaw {
+		jsonMode = true
+		return failArg("--format must be one of: json, text, raw")
+	}
+
+	formatMode = requested
+	jsonMode = formatMode == formatJSON
+
+	if formatMode != formatJSON {
+		if f := cmd.Flags().Lookup("fields"); f != nil && f.Changed {
+			return failArg("--fields is only supported with --format json")
+		}
+	}
+	if !commandSupportsFormat(cmd, formatMode) {
+		return failArg(fmt.Sprintf("%s does not support --format %s", cmd.CommandPath(), formatMode))
+	}
+	return nil
+}
+
+func commandSupportsFormat(cmd *cobra.Command, format string) bool {
+	for _, allowed := range commandOutputFormats(cmd) {
+		if allowed == format {
+			return true
+		}
+	}
+	return false
+}
+
+func commandOutputFormats(cmd *cobra.Command) []string {
+	if cmd == nil || cmd.Annotations == nil {
+		return []string{formatJSON, formatText}
+	}
+	raw := strings.TrimSpace(cmd.Annotations["formats"])
+	if raw == "" {
+		return []string{formatJSON, formatText}
+	}
+	var out []string
+	for _, part := range strings.Split(raw, ",") {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			out = append(out, part)
+		}
+	}
+	if len(out) == 0 {
+		return []string{formatJSON, formatText}
+	}
+	return out
+}
+
 // isWriteCommand returns true if the command has the "write" annotation.
 func isWriteCommand(cmd *cobra.Command) bool {
 	return cmd.Annotations["write"] == "true"
@@ -232,12 +314,19 @@ func markRiskLevel(cmd *cobra.Command, level string) {
 	cmd.Annotations["riskLevel"] = level
 }
 
-// markOutputType sets the default stdout type for agent reference (json, text, bytes).
+// markOutputType sets the default stdout type for agent reference (json, text, raw).
 func markOutputType(cmd *cobra.Command, outputType string) {
 	if cmd.Annotations == nil {
 		cmd.Annotations = map[string]string{}
 	}
 	cmd.Annotations["outputType"] = outputType
+}
+
+func markOutputFormats(cmd *cobra.Command, formats ...string) {
+	if cmd.Annotations == nil {
+		cmd.Annotations = map[string]string{}
+	}
+	cmd.Annotations["formats"] = strings.Join(formats, ",")
 }
 
 // newClient loads config and creates an API client.

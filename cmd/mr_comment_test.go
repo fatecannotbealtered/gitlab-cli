@@ -46,7 +46,7 @@ func TestMRComment_Add_PlainText(t *testing.T) {
 	origJM := jsonMode
 	defer func() { dryRun = origDR; jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
 	dryRun = false
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"mr", "comment", "add", "--project", "foo/bar", "1", "--body", "LGTM"})
@@ -86,7 +86,7 @@ func TestMRComment_List_PlainText(t *testing.T) {
 	t.Setenv("GITLAB_CLI_TOKEN", "test")
 	origJM := jsonMode
 	defer func() { jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"mr", "comment", "list", "--project", "foo/bar", "1"})
@@ -174,7 +174,7 @@ func TestMRComment_Delete_PlainText(t *testing.T) {
 		_ = rootCmd.PersistentFlags().Set("json", "false")
 	}()
 	dryRun = false
-	jsonMode = false
+	setTextFormatForTest(t)
 	lastExit = 0
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
@@ -241,7 +241,7 @@ func TestMRComment_List_Empty(t *testing.T) {
 	t.Setenv("GITLAB_CLI_TOKEN", "test")
 	origJM := jsonMode
 	defer func() { jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"mr", "comment", "list", "--project", "foo/bar", "1"})
@@ -263,7 +263,7 @@ func TestMRComment_List_LongBody(t *testing.T) {
 	t.Setenv("GITLAB_CLI_TOKEN", "test")
 	origJM := jsonMode
 	defer func() { jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"mr", "comment", "list", "--project", "foo/bar", "1"})
@@ -286,7 +286,7 @@ func TestMRComment_List_APIError(t *testing.T) {
 	origJM := jsonMode
 	defer func() { lastExit = origExit; jsonMode = origJM }()
 	lastExit = 0
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	rootCmd.SetArgs([]string{"mr", "comment", "list", "--project", "foo/bar", "1"})
 	_ = rootCmd.Execute()
@@ -309,7 +309,7 @@ func TestMRComment_Delete_APIError(t *testing.T) {
 	defer func() { lastExit = origExit; dryRun = origDR; jsonMode = origJM }()
 	lastExit = 0
 	dryRun = false
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	rootCmd.SetArgs([]string{"mr", "comment", "delete", "--project", "foo/bar", "1", "--note-id", "999", "--force"})
 	_ = rootCmd.Execute()
@@ -355,6 +355,7 @@ func TestMRComment_Add_InvalidIID(t *testing.T) {
 }
 
 func TestMRComment_Add_BodyFile(t *testing.T) {
+	setTextFormatForTest(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
@@ -484,6 +485,7 @@ func TestMRComment_List_NewClientError(t *testing.T) {
 }
 
 func TestMRComment_List_SkipsSystemNotes_PlainText(t *testing.T) {
+	setTextFormatForTest(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, `[{"id":1,"body":"hello","system":false,"author":{"username":"alice"},"created_at":"2024-01-01"},{"id":2,"body":"system","system":true,"author":{"username":"gitlab"},"created_at":"2024-01-01"}]`)

@@ -49,13 +49,14 @@ func TestSetExitCode_Monotonic(t *testing.T) {
 }
 
 func TestRootHelp_ContainsGlobalFlags(t *testing.T) {
+	resetRootPersistentFlags(t)
 	buf := new(bytes.Buffer)
 	rootCmd.SetOut(buf)
 	rootCmd.SetArgs([]string{"--help"})
 	_ = rootCmd.Execute()
 	rootCmd.SetOut(os.Stdout)
 	out := buf.String()
-	for _, want := range []string{"gitlab-cli", "--json", "--quiet", "--dry-run", "--force"} {
+	for _, want := range []string{"gitlab-cli", "--format", "--json", "--quiet", "--dry-run", "--force"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("help should contain %q, got:\n%s", want, out)
 		}
@@ -63,6 +64,7 @@ func TestRootHelp_ContainsGlobalFlags(t *testing.T) {
 }
 
 func TestRootVersion_ContainsBinaryName(t *testing.T) {
+	resetRootPersistentFlags(t)
 	buf := new(bytes.Buffer)
 	rootCmd.SetOut(buf)
 	rootCmd.SetArgs([]string{"--version"})
@@ -74,13 +76,14 @@ func TestRootVersion_ContainsBinaryName(t *testing.T) {
 }
 
 func TestReference_ContainsAuthAndDoctor(t *testing.T) {
+	resetRootPersistentFlags(t)
 	origJM := jsonMode
 	defer func() { jsonMode = origJM }()
-	jsonMode = false
+	setTextFormatForTest(t)
 
 	buf := new(bytes.Buffer)
 	rootCmd.SetOut(buf)
-	rootCmd.SetArgs([]string{"reference"})
+	rootCmd.SetArgs([]string{"reference", "--format", "text"})
 	_ = rootCmd.Execute()
 	rootCmd.SetOut(os.Stdout)
 	out := buf.String()
@@ -133,7 +136,7 @@ func TestDryRunOutput_PlainText(t *testing.T) {
 	origJM := jsonMode
 	defer func() { dryRun = origDR; jsonMode = origJM }()
 	dryRun = true
-	jsonMode = false
+	setTextFormatForTest(t)
 	out := captureStdout(t, func() {
 		if !dryRunOutput("create mr", map[string]any{"title": "x"}) {
 			t.Error("dryRunOutput should return true")
@@ -222,6 +225,7 @@ func TestValidateLimit(t *testing.T) {
 }
 
 func TestReference_JSON(t *testing.T) {
+	resetRootPersistentFlags(t)
 	origJM := jsonMode
 	defer func() { jsonMode = origJM }()
 	jsonMode = true
@@ -234,6 +238,86 @@ func TestReference_JSON(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("reference --json missing %q, got:\n%s", want, out)
 		}
+	}
+}
+
+func TestFormat_DefaultJSON(t *testing.T) {
+	resetRootPersistentFlags(t)
+	out := captureStdout(t, func() {
+		rootCmd.SetArgs([]string{"reference"})
+		_ = rootCmd.Execute()
+	})
+	if !strings.Contains(out, `"commands"`) || !strings.Contains(out, `"globalFlags"`) {
+		t.Fatalf("default format should be JSON, got:\n%s", out)
+	}
+}
+
+func TestFormat_TextExplicit(t *testing.T) {
+	resetRootPersistentFlags(t)
+	buf := new(bytes.Buffer)
+	rootCmd.SetOut(buf)
+	rootCmd.SetArgs([]string{"reference", "--format", "text"})
+	_ = rootCmd.Execute()
+	rootCmd.SetOut(os.Stdout)
+	out := buf.String()
+	if !strings.Contains(out, "# gitlab-cli Command Reference") {
+		t.Fatalf("--format text should render text reference, got:\n%s", out)
+	}
+}
+
+func TestFormat_JSONAliasConflictsWithText(t *testing.T) {
+	resetRootPersistentFlags(t)
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	errOut := captureStderr(t, func() {
+		rootCmd.SetArgs([]string{"reference", "--format", "text", "--json"})
+		_ = rootCmd.Execute()
+	})
+	if lastExit != ExitBadArgs {
+		t.Fatalf("exit=%d want=%d\nstderr:\n%s", lastExit, ExitBadArgs, errOut)
+	}
+	if !strings.Contains(errOut, "--json cannot be used with --format text") {
+		t.Fatalf("expected conflict error, got:\n%s", errOut)
+	}
+}
+
+func TestFormat_UnsupportedRaw(t *testing.T) {
+	resetRootPersistentFlags(t)
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	errOut := captureStderr(t, func() {
+		rootCmd.SetArgs([]string{"reference", "--format", "raw"})
+		_ = rootCmd.Execute()
+	})
+	if lastExit != ExitBadArgs {
+		t.Fatalf("exit=%d want=%d\nstderr:\n%s", lastExit, ExitBadArgs, errOut)
+	}
+	if !strings.Contains(errOut, "does not support --format raw") {
+		t.Fatalf("expected unsupported format error, got:\n%s", errOut)
+	}
+}
+
+func TestFormat_FieldsRequireJSON(t *testing.T) {
+	resetRootPersistentFlags(t)
+	t.Cleanup(func() {
+		resetRootPersistentFlags(t)
+		resetCommandFlagForTest(t, issueListCmd, "project", "")
+		resetCommandFlagForTest(t, issueListCmd, "fields", "")
+	})
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	errOut := captureStderr(t, func() {
+		rootCmd.SetArgs([]string{"issue", "list", "--project", "group/proj", "--fields", "title", "--format", "text"})
+		_ = rootCmd.Execute()
+	})
+	if lastExit != ExitBadArgs {
+		t.Fatalf("exit=%d want=%d\nstderr:\n%s", lastExit, ExitBadArgs, errOut)
+	}
+	if !strings.Contains(errOut, "--fields is only supported with --format json") {
+		t.Fatalf("expected fields format error, got:\n%s", errOut)
 	}
 }
 
@@ -325,7 +409,7 @@ func TestFailWithCode_PlainText(t *testing.T) {
 		jsonMode = origJM
 		lastExit = origExit
 	}()
-	jsonMode = false
+	setTextFormatForTest(t)
 	lastExit = 0
 
 	stderr := captureStderr(t, func() {

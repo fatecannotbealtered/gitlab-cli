@@ -7,9 +7,9 @@
 export GITLAB_CLI_HOST=https://gitlab.example.com
 export GITLAB_CLI_TOKEN=<PAT>
 
-gitlab-cli auth status --json --compact
+gitlab-cli auth status --compact
 gitlab-cli auth login --host https://gitlab.example.com --profile default   # token from env
-gitlab-cli auth logout --json
+gitlab-cli auth logout
 ```
 
 ### Multi-profile
@@ -17,9 +17,9 @@ gitlab-cli auth logout --json
 ```bash
 gitlab-cli auth login --host https://gitlab.com --profile personal
 gitlab-cli auth login --host https://gitlab.corp.example --profile work
-gitlab-cli auth profile list --json
+gitlab-cli auth profile list
 gitlab-cli auth profile use work
-gitlab-cli auth profile remove old --json
+gitlab-cli auth profile remove old
 ```
 
 Precedence: `GITLAB_CLI_*` > `GITLAB_*` > active profile > `~/.gitlab-cli/config.json`
@@ -27,8 +27,8 @@ Precedence: `GITLAB_CLI_*` > `GITLAB_*` > active profile > `~/.gitlab-cli/config
 ## Context (read first in a workflow)
 
 ```bash
-gitlab-cli context --json --compact
-gitlab-cli context --no-strict --json    # do not exit 3 when unauthenticated
+gitlab-cli context --compact
+gitlab-cli context --no-strict    # do not exit 3 when unauthenticated
 ```
 
 Key fields: `git.remote.projectPath`, `git.currentBranch`, `gitlab.project.id`, `gitlab.username`
@@ -36,14 +36,14 @@ Key fields: `git.remote.projectPath`, `git.currentBranch`, `gitlab.project.id`, 
 Typical pattern:
 
 ```bash
-PROJECT=$(gitlab-cli context --json --compact | jq -r '.git.remote.projectPath')
-gitlab-cli mr list --project "$PROJECT" --json --compact
+PROJECT=$(gitlab-cli context --compact | jq -r '.git.remote.projectPath')
+gitlab-cli mr list --project "$PROJECT" --compact
 ```
 
 ## Doctor
 
 ```bash
-gitlab-cli doctor --json --compact
+gitlab-cli doctor --compact
 ```
 
 Check `authValid: true` before bulk automation.
@@ -51,9 +51,9 @@ Check `authValid: true` before bulk automation.
 ## Update CLI
 
 ```bash
-gitlab-cli update --check --json --compact
-gitlab-cli update --dry-run --json --compact
-gitlab-cli update --confirm <targetVersion> --json --compact
+gitlab-cli update --check --compact
+gitlab-cli update --dry-run --compact
+gitlab-cli update --confirm <targetVersion> --compact
 ```
 
 `update` downloads GitHub Release assets, verifies `checksums.txt`, then replaces the current binary. On Windows, replacement may be scheduled for after the current process exits.
@@ -61,7 +61,7 @@ gitlab-cli update --confirm <targetVersion> --json --compact
 ## Self-description
 
 ```bash
-gitlab-cli reference --json --compact
+gitlab-cli reference --compact
 ```
 
 Use for `requiresConfirmation`, `riskLevel`, `write`, per-command flags.

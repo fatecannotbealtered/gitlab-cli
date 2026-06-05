@@ -4,10 +4,11 @@
 
 | Flag | Purpose |
 |------|---------|
-| `--json` | Machine-readable stdout |
-| `--compact` | Minified JSON (use with `--json`) |
-| `--quiet` | Suppress non-JSON stdout noise |
-| `--fields a,b,c` | Project fields from flat JSON (case-insensitive) |
+| `--format json|text|raw` | Output format. Default: `json`; `text` is human-readable; `raw` is unwrapped bytes/logs/diffs where supported |
+| `--json` | Compatibility alias for `--format json`; do not combine with `--format text/raw` |
+| `--compact` | Minified JSON (only affects `--format json`) |
+| `--quiet` | Suppress text helper output |
+| `--fields a,b,c` | Project fields from flat JSON (case-insensitive; JSON only) |
 | `--dry-run` | Preview writes without executing |
 | `--confirm <token>` | Non-interactive confirmation (preferred) |
 | `--force` | Skip confirmation (needs `GITLAB_CLI_ALLOW_FORCE=1` in agent-safe mode) |
@@ -36,9 +37,9 @@ List commands also support `--limit` (1–100) and `--all` (up to 10000 items).
 }
 ```
 
-Not all list commands migrated yet; `mr list` uses this shape. Others may still return a bare array — check `reference --json` or prefer `mr`-style commands as reference.
+Not all list commands migrated yet; `mr list` uses this shape. Others may still return a bare array — check `reference` or prefer `mr`-style commands as reference.
 
-## Error envelope (stderr, with `--json`)
+## Error envelope (stderr, JSON)
 
 ```json
 {
@@ -95,7 +96,7 @@ Redacted flags include: `--token`, `--value`, `--content`, `--body`, `--variable
 ## Machine-readable command tree
 
 ```bash
-gitlab-cli reference --json --compact
+gitlab-cli reference --compact
 ```
 
 Top-level fields: `globalFlags`, `exitCodes`, `commands[]` with `write`, `requiresConfirmation`, `riskLevel`, `outputType`.

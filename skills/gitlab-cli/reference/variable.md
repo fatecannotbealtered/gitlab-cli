@@ -3,17 +3,17 @@
 Secrets and config for pipelines. **Values are sensitive.**
 
 ```bash
-gitlab-cli variable list --project G --json --compact        # values redacted
-gitlab-cli variable get --project G --key MY_SECRET --json
-gitlab-cli variable get --project G --key X --filter env_scope=production --json
+gitlab-cli variable list --project G --compact        # values redacted
+gitlab-cli variable get --project G --key MY_SECRET
+gitlab-cli variable get --project G --key X --filter env_scope=production
 
 # Show secrets only when user explicitly needs them:
 # export GITLAB_CLI_ALLOW_SHOW_VALUES=1
-gitlab-cli variable list --project G --json --show-values
+gitlab-cli variable list --project G --show-values
 
-gitlab-cli variable create --project G --key FOO --value bar --masked --json
-gitlab-cli variable update --project G --key FOO --value baz --json
-gitlab-cli variable delete --project G --key FOO --confirm FOO --json
+gitlab-cli variable create --project G --key FOO --value bar --masked
+gitlab-cli variable update --project G --key FOO --value baz
+gitlab-cli variable delete --project G --key FOO --confirm FOO
 ```
 
 ## Flat Variable JSON (no value)

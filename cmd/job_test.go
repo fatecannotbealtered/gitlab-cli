@@ -390,7 +390,7 @@ func TestJob_Get_PlainText(t *testing.T) {
 	t.Setenv("GITLAB_CLI_TOKEN", "tok")
 	origJM := jsonMode
 	defer func() { jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"job", "get", "--project", "42", "99"})
@@ -413,7 +413,7 @@ func TestJob_Retry_PlainText(t *testing.T) {
 	origJM := jsonMode
 	defer func() { dryRun = origDR; jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
 	dryRun = false
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"job", "retry", "--project", "42", "99"})
@@ -436,7 +436,7 @@ func TestJob_Cancel_PlainText(t *testing.T) {
 	origJM := jsonMode
 	defer func() { dryRun = origDR; jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
 	dryRun = false
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"job", "cancel", "--project", "42", "99"})
@@ -458,7 +458,7 @@ func TestJob_Log_PlainText(t *testing.T) {
 	t.Setenv("GITLAB_CLI_TOKEN", "tok")
 	origJM := jsonMode
 	defer func() { jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"job", "log", "--project", "42", "99"})
@@ -543,7 +543,7 @@ func TestJob_Wait_Timeout2(t *testing.T) {
 	origJM := jsonMode
 	origExit := lastExit
 	defer func() { jsonMode = origJM; lastExit = origExit; _ = rootCmd.PersistentFlags().Set("json", "false") }()
-	jsonMode = false
+	setTextFormatForTest(t)
 	lastExit = 0
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	captureStdout(t, func() {
@@ -567,7 +567,7 @@ func TestJob_Get_APIError(t *testing.T) {
 	origJM := jsonMode
 	defer func() { lastExit = origExit; jsonMode = origJM }()
 	lastExit = 0
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	rootCmd.SetArgs([]string{"job", "get", "--project", "foo/bar", "999"})
 	_ = rootCmd.Execute()
@@ -588,7 +588,7 @@ func TestJob_Log_APIError(t *testing.T) {
 	origJM := jsonMode
 	defer func() { lastExit = origExit; jsonMode = origJM }()
 	lastExit = 0
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	rootCmd.SetArgs([]string{"job", "log", "--project", "foo/bar", "999"})
 	_ = rootCmd.Execute()
@@ -611,7 +611,7 @@ func TestJob_Retry_APIError(t *testing.T) {
 	defer func() { lastExit = origExit; dryRun = origDR; jsonMode = origJM }()
 	lastExit = 0
 	dryRun = false
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	rootCmd.SetArgs([]string{"job", "retry", "--project", "foo/bar", "999"})
 	_ = rootCmd.Execute()
@@ -634,7 +634,7 @@ func TestJob_Cancel_APIError(t *testing.T) {
 	defer func() { lastExit = origExit; dryRun = origDR; jsonMode = origJM }()
 	lastExit = 0
 	dryRun = false
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	rootCmd.SetArgs([]string{"job", "cancel", "--project", "foo/bar", "999"})
 	_ = rootCmd.Execute()
@@ -773,6 +773,7 @@ func TestJob_Log_InvalidID(t *testing.T) {
 }
 
 func TestJob_Log_Follow_PlainText(t *testing.T) {
+	setTextFormatForTest(t)
 	srv := jobLogFollowServer(t)
 	defer srv.Close()
 	t.Setenv("GITLAB_CLI_HOST", srv.URL)
@@ -997,6 +998,7 @@ func TestJob_Artifacts_APIError(t *testing.T) {
 }
 
 func TestJob_Artifacts_PlainText(t *testing.T) {
+	setTextFormatForTest(t)
 	tmpFile := filepath.Join(t.TempDir(), "artifacts.zip")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/zip")
@@ -1096,6 +1098,7 @@ func TestJob_Wait_GetAPIError(t *testing.T) {
 }
 
 func TestJob_Wait_PlainTextSuccess(t *testing.T) {
+	setTextFormatForTest(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"id":99,"name":"build","status":"success","stage":"build","ref":"main"}`))
@@ -1120,6 +1123,7 @@ func TestJob_Wait_PlainTextSuccess(t *testing.T) {
 }
 
 func TestJob_Wait_PlainTextWaitingStderr(t *testing.T) {
+	setTextFormatForTest(t)
 	calls := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
@@ -1144,6 +1148,7 @@ func TestJob_Wait_PlainTextWaitingStderr(t *testing.T) {
 }
 
 func TestJob_Wait_TimeoutPlainTextStderr(t *testing.T) {
+	setTextFormatForTest(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"id":99,"name":"build","status":"running","stage":"build","ref":"main"}`))

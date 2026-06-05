@@ -1,13 +1,13 @@
 # Releases
 
 ```bash
-gitlab-cli release list --project G --json --compact
-gitlab-cli release get --project G --tag v1.0.0 --json
+gitlab-cli release list --project G --compact
+gitlab-cli release get --project G --tag v1.0.0
 
 gitlab-cli release create --project G --tag v1.0.0 --name "v1.0.0" \
-  --ref main --description "..." --json
-gitlab-cli release update --project G --tag v1.0.0 --name "v1.0.0" --json
-gitlab-cli release delete --project G --tag v1.0.0 --confirm v1.0.0 --json
+  --ref main --description "..."
+gitlab-cli release update --project G --tag v1.0.0 --name "v1.0.0"
+gitlab-cli release delete --project G --tag v1.0.0 --confirm v1.0.0
 ```
 
 ## Flat Release JSON (excerpt)

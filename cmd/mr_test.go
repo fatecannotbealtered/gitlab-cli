@@ -457,7 +457,7 @@ func TestMR_Get_PlainText(t *testing.T) {
 
 	origJM := jsonMode
 	defer func() { jsonMode = origJM }()
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 
 	out := captureStdout(t, func() {
@@ -479,7 +479,7 @@ func TestMR_List_PlainText(t *testing.T) {
 	t.Setenv("GITLAB_CLI_TOKEN", "tok")
 	origJM := jsonMode
 	defer func() { jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"mr", "list", "--project", "group/proj"})
@@ -550,7 +550,7 @@ func TestMR_Create_PlainText(t *testing.T) {
 	origJM := jsonMode
 	defer func() { dryRun = origDR; jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
 	dryRun = false
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"mr", "create", "--project", "foo/bar", "--title", "feat", "--source-branch", "feat"})
@@ -573,7 +573,7 @@ func TestMR_Update_PlainText(t *testing.T) {
 	origJM := jsonMode
 	defer func() { dryRun = origDR; jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
 	dryRun = false
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"mr", "update", "1", "--project", "foo/bar", "--title", "updated"})
@@ -596,10 +596,10 @@ func TestMR_Close_PlainText(t *testing.T) {
 	origJM := jsonMode
 	defer func() { dryRun = origDR; jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
 	dryRun = false
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"mr", "close", "1", "--project", "foo/bar"})
+		rootCmd.SetArgs([]string{"mr", "close", "1", "--project", "foo/bar", "--confirm", "1"})
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, "Closed") {
@@ -619,10 +619,10 @@ func TestMR_Merge_PlainText(t *testing.T) {
 	origJM := jsonMode
 	defer func() { dryRun = origDR; jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
 	dryRun = false
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"mr", "merge", "1", "--project", "foo/bar"})
+		rootCmd.SetArgs([]string{"mr", "merge", "1", "--project", "foo/bar", "--confirm", "1"})
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, "Merged") {
@@ -642,7 +642,7 @@ func TestMR_Reopen_PlainText(t *testing.T) {
 	origJM := jsonMode
 	defer func() { dryRun = origDR; jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
 	dryRun = false
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"mr", "reopen", "1", "--project", "foo/bar"})
@@ -675,7 +675,7 @@ func TestMR_Approve_PlainText(t *testing.T) {
 		_ = rootCmd.PersistentFlags().Set("json", "false")
 	}()
 	dryRun = false
-	jsonMode = false
+	setTextFormatForTest(t)
 	lastExit = 0
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
@@ -708,7 +708,7 @@ func TestMR_Unapprove_PlainText(t *testing.T) {
 		_ = rootCmd.PersistentFlags().Set("json", "false")
 	}()
 	dryRun = false
-	jsonMode = false
+	setTextFormatForTest(t)
 	lastExit = 0
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
@@ -731,7 +731,7 @@ func TestMR_Diff_PlainText(t *testing.T) {
 	t.Setenv("GITLAB_CLI_TOKEN", "test")
 	origJM := jsonMode
 	defer func() { jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"mr", "diff", "1", "--project", "foo/bar"})
@@ -752,7 +752,7 @@ func TestMR_List_Empty(t *testing.T) {
 	t.Setenv("GITLAB_CLI_TOKEN", "test")
 	origJM := jsonMode
 	defer func() { jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"mr", "list", "--project", "foo/bar"})
@@ -813,7 +813,7 @@ func TestMR_List_APIError(t *testing.T) {
 	origJM := jsonMode
 	defer func() { lastExit = origExit; jsonMode = origJM }()
 	lastExit = 0
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	rootCmd.SetArgs([]string{"mr", "list", "--project", "foo/bar"})
 	_ = rootCmd.Execute()
@@ -834,7 +834,7 @@ func TestMR_Get_APIError(t *testing.T) {
 	origJM := jsonMode
 	defer func() { lastExit = origExit; jsonMode = origJM }()
 	lastExit = 0
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	rootCmd.SetArgs([]string{"mr", "get", "--project", "foo/bar", "999"})
 	_ = rootCmd.Execute()
@@ -967,7 +967,7 @@ func TestMR_Merge_APIError(t *testing.T) {
 	defer func() { lastExit = origExit; dryRun = origDR; jsonMode = origJM }()
 	lastExit = 0
 	dryRun = false
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	rootCmd.SetArgs([]string{"mr", "merge", "1", "--project", "foo/bar"})
 	_ = rootCmd.Execute()
@@ -1190,6 +1190,7 @@ func TestMR_Current_Success_JSON(t *testing.T) {
 }
 
 func TestMR_Current_Success_PlainText(t *testing.T) {
+	setTextFormatForTest(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`[{"id":1,"iid":3,"title":"feat","state":"opened","source_branch":"feat/x","target_branch":"main","web_url":"http://x","author":{"username":"alice"}}]`))
@@ -1260,6 +1261,7 @@ func TestMR_Current_APIError(t *testing.T) {
 }
 
 func TestMR_Create_Auto_Success(t *testing.T) {
+	setTextFormatForTest(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
@@ -1351,6 +1353,7 @@ func TestMR_Create_FindExisting_JSON(t *testing.T) {
 }
 
 func TestMR_Create_FindExisting_PlainText(t *testing.T) {
+	setTextFormatForTest(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`[{"id":1,"iid":5,"title":"existing","state":"opened","source_branch":"feat","target_branch":"main","web_url":"http://x"}]`))
@@ -1373,6 +1376,7 @@ func TestMR_Create_FindExisting_PlainText(t *testing.T) {
 }
 
 func TestMR_Create_WithAssignee(t *testing.T) {
+	setTextFormatForTest(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if strings.Contains(r.URL.Path, "/users") {
@@ -1432,6 +1436,7 @@ func TestMR_Update_NewClientError(t *testing.T) {
 }
 
 func TestMR_Update_WithAssignee(t *testing.T) {
+	setTextFormatForTest(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if strings.Contains(r.URL.Path, "/users") {
@@ -1495,6 +1500,7 @@ func TestMR_Update_APIError(t *testing.T) {
 }
 
 func TestMR_Merge_WithConfirm(t *testing.T) {
+	setTextFormatForTest(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"id":1,"iid":1,"title":"feat","state":"merged","source_branch":"feat","target_branch":"main","web_url":"http://x"}`))
@@ -1526,6 +1532,7 @@ func TestMR_Merge_NewClientError(t *testing.T) {
 }
 
 func TestMR_Close_WithConfirm(t *testing.T) {
+	setTextFormatForTest(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"id":1,"iid":1,"title":"feat","state":"closed","source_branch":"feat","target_branch":"main","web_url":"http://x"}`))
@@ -1710,6 +1717,7 @@ func TestMR_Diff_JSON(t *testing.T) {
 }
 
 func TestMR_Diff_Quiet(t *testing.T) {
+	setTextFormatForTest(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("diff --git a/x b/x\n"))
 	}))

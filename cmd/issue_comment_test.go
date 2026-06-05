@@ -127,7 +127,7 @@ func TestIssueComment_Add_PlainText(t *testing.T) {
 	origJM := jsonMode
 	defer func() { dryRun = origDR; jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
 	dryRun = false
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"issue", "comment", "add", "1", "--project", "foo/bar", "--body", "hello"})
@@ -148,7 +148,7 @@ func TestIssueComment_List_PlainText(t *testing.T) {
 	t.Setenv("GITLAB_CLI_TOKEN", "tok")
 	origJM := jsonMode
 	defer func() { jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"issue", "comment", "list", "--project", "group/proj", "1"})
@@ -270,7 +270,7 @@ func TestIssueComment_Delete_PlainText(t *testing.T) {
 		_ = rootCmd.PersistentFlags().Set("json", "false")
 	}()
 	dryRun = false
-	jsonMode = false
+	setTextFormatForTest(t)
 	lastExit = 0
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
@@ -315,7 +315,7 @@ func TestIssueComment_Add_BodyFile(t *testing.T) {
 	origJM := jsonMode
 	defer func() { dryRun = origDR; jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
 	dryRun = false
-	jsonMode = false
+	setTextFormatForTest(t)
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"issue", "comment", "add", "1", "--project", "foo/bar", "--body-file", path})
 		_ = rootCmd.Execute()
@@ -452,7 +452,7 @@ func TestIssueComment_List_Empty(t *testing.T) {
 	t.Setenv("GITLAB_CLI_TOKEN", "test")
 	origJM := jsonMode
 	defer func() { jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
-	jsonMode = false
+	setTextFormatForTest(t)
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"issue", "comment", "list", "--project", "foo/bar", "1"})
 		_ = rootCmd.Execute()
@@ -476,7 +476,7 @@ func TestIssueComment_List_SkipsSystemNotes(t *testing.T) {
 	t.Setenv("GITLAB_CLI_TOKEN", "test")
 	origJM := jsonMode
 	defer func() { jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
-	jsonMode = false
+	setTextFormatForTest(t)
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"issue", "comment", "list", "--project", "foo/bar", "1"})
 		_ = rootCmd.Execute()

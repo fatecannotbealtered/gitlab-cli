@@ -173,7 +173,7 @@ func TestAuth_Logout_PlainText_DryRun(t *testing.T) {
 	origDR := dryRun
 	origJM := jsonMode
 	defer func() { dryRun = origDR; jsonMode = origJM }()
-	jsonMode = false
+	setTextFormatForTest(t)
 
 	origExit := lastExit
 	defer func() { lastExit = origExit }()
@@ -223,6 +223,7 @@ func TestAuth_ProfileList_JSON(t *testing.T) {
 }
 
 func TestAuth_ProfileList_PlainText(t *testing.T) {
+	setTextFormatForTest(t)
 	home := isolateConfigHome(t)
 	clearAuthEnv(t)
 	resetAuthLoginFlags(t)
@@ -270,6 +271,7 @@ func TestAuth_ProfileList_LoadError(t *testing.T) {
 }
 
 func TestAuth_Login_NonInteractive_Success(t *testing.T) {
+	setTextFormatForTest(t)
 	srv := mockUserServer(t)
 	defer srv.Close()
 
@@ -587,6 +589,7 @@ func TestAuth_Logout_Success_JSON(t *testing.T) {
 }
 
 func TestAuth_Logout_Success_PlainText(t *testing.T) {
+	setTextFormatForTest(t)
 	home := isolateConfigHome(t)
 	clearAuthEnv(t)
 	resetAuthLoginFlags(t)
@@ -776,6 +779,7 @@ func TestAuth_Status_JSON_NotConfigured(t *testing.T) {
 }
 
 func TestAuth_Status_LoadError_PlainText(t *testing.T) {
+	setTextFormatForTest(t)
 	home := isolateConfigHome(t)
 	clearAuthEnv(t)
 	resetAuthLoginFlags(t)
@@ -817,6 +821,7 @@ func TestAuth_Status_LoadError(t *testing.T) {
 }
 
 func TestAuth_Status_PlainText_Configured(t *testing.T) {
+	setTextFormatForTest(t)
 	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
 	t.Setenv("GITLAB_CLI_TOKEN", "tok")
 	resetAuthLoginFlags(t)
@@ -839,6 +844,7 @@ func TestAuth_Status_PlainText_Configured(t *testing.T) {
 }
 
 func TestAuth_Status_PlainText_NotConfigured(t *testing.T) {
+	setTextFormatForTest(t)
 	isolateConfigHome(t)
 	clearAuthEnv(t)
 	resetAuthLoginFlags(t)
@@ -947,7 +953,7 @@ func TestAuth_Login_NonInteractive_PlainText(t *testing.T) {
 
 	origJM := jsonMode
 	defer func() { jsonMode = origJM }()
-	jsonMode = false
+	setTextFormatForTest(t)
 
 	captureCombinedOutput(t, func() {
 		rootCmd.SetArgs([]string{"auth", "login", "--host", srv.URL, "--token", "secret-token"})
@@ -1036,7 +1042,7 @@ func TestAuth_Status_PlainText_WithHostUnconfigured(t *testing.T) {
 		jsonMode = origJM
 		lastExit = origExit
 	}()
-	jsonMode = false
+	setTextFormatForTest(t)
 	lastExit = 0
 
 	captureCombinedOutput(t, func() {
@@ -1059,7 +1065,7 @@ func TestAuth_ProfileUse_PlainText(t *testing.T) {
 }`)
 	origJM := jsonMode
 	defer func() { jsonMode = origJM }()
-	jsonMode = false
+	setTextFormatForTest(t)
 
 	out := captureCombinedOutput(t, func() {
 		rootCmd.SetArgs([]string{"auth", "profile", "use", "work"})
@@ -1081,7 +1087,7 @@ func TestAuth_ProfileRemove_PlainText(t *testing.T) {
 }`)
 	origJM := jsonMode
 	defer func() { jsonMode = origJM }()
-	jsonMode = false
+	setTextFormatForTest(t)
 
 	out := captureCombinedOutput(t, func() {
 		rootCmd.SetArgs([]string{"auth", "profile", "remove", "work"})

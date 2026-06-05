@@ -10,6 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Built-in `update` command to check GitHub Releases, verify `checksums.txt`, and self-update the current binary with `--dry-run` / `--confirm` agent workflow support.
+- Global `--format json|text|raw` output selector. JSON is now the default; `--json` remains as a compatibility alias for `--format json`, while `raw` is reserved for unwrapped bytes/logs/diffs.
+
+### Changed
+
+- Documentation and skill references now recommend default JSON plus `--compact`, with `--format text` only for human-readable output.
 
 ## [1.1.0] - 2026-05-26
 

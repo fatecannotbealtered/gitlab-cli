@@ -54,6 +54,9 @@ var repoFileGetCmd = &cobra.Command{
 		if path == "" {
 			return failArg("--path is required")
 		}
+		if formatMode == formatText && (outPath == "" || outPath == "-") {
+			return failArg("repo file get --format text requires --output; use --format raw for stdout content")
+		}
 
 		if outPath != "" && outPath != "-" {
 			if err := validateOutputPath(outPath); err != nil {
@@ -68,16 +71,40 @@ var repoFileGetCmd = &cobra.Command{
 			return handleAPIError(err, jsonMode)
 		}
 
+		if jsonMode {
+			result := map[string]any{
+				"project": project,
+				"path":    path,
+				"ref":     ref,
+				"bytes":   len(data),
+			}
+			if outPath != "" && outPath != "-" {
+				if err := os.WriteFile(outPath, data, 0o644); err != nil {
+					return failWithCode("writing file: "+err.Error(), ExitNetwork, output.ErrNetwork)
+				}
+				result["output"] = outPath
+				output.PrintJSON(result)
+				return nil
+			}
+			if utf8.Valid(data) {
+				result["encoding"] = "text"
+				result["content"] = string(data)
+			} else {
+				result["encoding"] = "base64"
+				result["content"] = base64.StdEncoding.EncodeToString(data)
+			}
+			output.PrintJSON(result)
+			return nil
+		}
+
 		if outPath == "" || outPath == "-" {
 			_, _ = os.Stdout.Write(data)
 			return nil
 		}
 		if err := os.WriteFile(outPath, data, 0o644); err != nil {
-			output.Error("writing file: " + err.Error())
-			setExitCode(ExitNetwork)
-			return ErrSilent
+			return failWithCode("writing file: "+err.Error(), ExitNetwork, output.ErrNetwork)
 		}
-		if !jsonMode {
+		if formatMode == formatText {
 			output.Success(fmt.Sprintf("Saved to %s (%d bytes)", outPath, len(data)))
 		}
 		return nil
@@ -530,7 +557,8 @@ func init() {
 	repoFileGetCmd.Flags().String("path", "", "File path in repository (required)")
 	repoFileGetCmd.Flags().String("ref", "", "Branch/tag/commit (default: HEAD)")
 	repoFileGetCmd.Flags().String("output", "", "Output file path (default: stdout)")
-	markOutputType(repoFileGetCmd, "bytes")
+	markOutputType(repoFileGetCmd, "json")
+	markOutputFormats(repoFileGetCmd, formatJSON, formatText, formatRaw)
 
 	repoFileCmd.AddCommand(repoFileCreateCmd)
 	repoFileCreateCmd.Flags().String("project", "", "Project ID or path (required)")

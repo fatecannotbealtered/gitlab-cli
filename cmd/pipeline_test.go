@@ -553,7 +553,7 @@ func TestPipeline_Get_PlainText(t *testing.T) {
 
 	origJM := jsonMode
 	defer func() { jsonMode = origJM }()
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 
 	out := captureStdout(t, func() {
@@ -575,7 +575,7 @@ func TestPipeline_List_PlainText(t *testing.T) {
 	t.Setenv("GITLAB_CLI_TOKEN", "tok")
 	origJM := jsonMode
 	defer func() { jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"pipeline", "list", "--project", "42"})
@@ -599,7 +599,7 @@ func TestPipeline_Create_PlainText(t *testing.T) {
 	origJM := jsonMode
 	defer func() { dryRun = origDR; jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
 	dryRun = false
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"pipeline", "create", "--project", "foo/bar", "--ref", "main", "--confirm", "main"})
@@ -622,7 +622,7 @@ func TestPipeline_Retry_PlainText(t *testing.T) {
 	origJM := jsonMode
 	defer func() { dryRun = origDR; jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
 	dryRun = false
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"pipeline", "retry", "--project", "foo/bar", "1"})
@@ -645,7 +645,7 @@ func TestPipeline_Cancel_PlainText(t *testing.T) {
 	origJM := jsonMode
 	defer func() { dryRun = origDR; jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
 	dryRun = false
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"pipeline", "cancel", "--project", "foo/bar", "1", "--confirm", "1"})
@@ -666,7 +666,7 @@ func TestPipeline_Jobs_PlainText(t *testing.T) {
 	t.Setenv("GITLAB_CLI_TOKEN", "test")
 	origJM := jsonMode
 	defer func() { jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"pipeline", "jobs", "--project", "foo/bar", "1"})
@@ -727,7 +727,7 @@ func TestPipeline_List_Empty(t *testing.T) {
 	t.Setenv("GITLAB_CLI_TOKEN", "test")
 	origJM := jsonMode
 	defer func() { jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"pipeline", "list", "--project", "foo/bar"})
@@ -767,7 +767,7 @@ func TestPipeline_List_APIError(t *testing.T) {
 	origJM := jsonMode
 	defer func() { lastExit = origExit; jsonMode = origJM }()
 	lastExit = 0
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	rootCmd.SetArgs([]string{"pipeline", "list", "--project", "foo/bar"})
 	_ = rootCmd.Execute()
@@ -788,7 +788,7 @@ func TestPipeline_Get_APIError(t *testing.T) {
 	origJM := jsonMode
 	defer func() { lastExit = origExit; jsonMode = origJM }()
 	lastExit = 0
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	rootCmd.SetArgs([]string{"pipeline", "get", "--project", "foo/bar", "999"})
 	_ = rootCmd.Execute()
@@ -827,7 +827,7 @@ func TestPipeline_Retry_APIError(t *testing.T) {
 	defer func() { lastExit = origExit; dryRun = origDR; jsonMode = origJM }()
 	lastExit = 0
 	dryRun = false
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	rootCmd.SetArgs([]string{"pipeline", "retry", "--project", "foo/bar", "999"})
 	_ = rootCmd.Execute()
@@ -850,7 +850,7 @@ func TestPipeline_Cancel_APIError(t *testing.T) {
 	defer func() { lastExit = origExit; dryRun = origDR; jsonMode = origJM }()
 	lastExit = 0
 	dryRun = false
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	rootCmd.SetArgs([]string{"pipeline", "cancel", "--project", "foo/bar", "999", "--confirm", "999"})
 	_ = rootCmd.Execute()
@@ -871,7 +871,7 @@ func TestPipeline_Jobs_APIError(t *testing.T) {
 	origJM := jsonMode
 	defer func() { lastExit = origExit; jsonMode = origJM }()
 	lastExit = 0
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	rootCmd.SetArgs([]string{"pipeline", "jobs", "--project", "foo/bar", "1"})
 	_ = rootCmd.Execute()
@@ -890,7 +890,7 @@ func TestPipeline_Jobs_Empty(t *testing.T) {
 	t.Setenv("GITLAB_CLI_TOKEN", "test")
 	origJM := jsonMode
 	defer func() { jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"pipeline", "jobs", "--project", "foo/bar", "1"})
@@ -1092,6 +1092,7 @@ func TestPipeline_Get_NewClientError(t *testing.T) {
 }
 
 func TestPipeline_Current_PlainText(t *testing.T) {
+	setTextFormatForTest(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`[{"id":5,"iid":2,"ref":"main","status":"success","source":"push","web_url":"http://pipe/5"}]`))
@@ -1471,6 +1472,7 @@ func TestPipeline_Wait_GetAPIError(t *testing.T) {
 }
 
 func TestPipeline_Wait_PlainTextSuccess(t *testing.T) {
+	setTextFormatForTest(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"id":1,"iid":1,"ref":"main","status":"success","project_id":1}`))
@@ -1495,6 +1497,7 @@ func TestPipeline_Wait_PlainTextSuccess(t *testing.T) {
 }
 
 func TestPipeline_Wait_PlainTextWaitingStderr(t *testing.T) {
+	setTextFormatForTest(t)
 	calls := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
@@ -1519,6 +1522,7 @@ func TestPipeline_Wait_PlainTextWaitingStderr(t *testing.T) {
 }
 
 func TestPipeline_Wait_TimeoutPlainTextStderr(t *testing.T) {
+	setTextFormatForTest(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"id":1,"iid":1,"ref":"main","status":"running","project_id":1}`))

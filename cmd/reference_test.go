@@ -9,6 +9,7 @@ import (
 )
 
 func TestReference_JSON_HasAgentMetadata(t *testing.T) {
+	resetRootPersistentFlags(t)
 	origJM := jsonMode
 	defer func() { jsonMode = origJM }()
 	jsonMode = true
@@ -42,9 +43,25 @@ func TestReference_JSON_HasAgentMetadata(t *testing.T) {
 	if mrDiff == nil {
 		t.Fatal("mr diff not found")
 	}
-	if mrDiff.OutputType != "text" {
-		t.Errorf("mr diff outputType = %q, want text", mrDiff.OutputType)
+	if mrDiff.OutputType != "json" {
+		t.Errorf("mr diff outputType = %q, want json", mrDiff.OutputType)
 	}
+	if !containsAllStrings(mrDiff.Formats, []string{"json", "text", "raw"}) {
+		t.Errorf("mr diff formats = %v, want json/text/raw", mrDiff.Formats)
+	}
+}
+
+func containsAllStrings(got, want []string) bool {
+	seen := map[string]bool{}
+	for _, item := range got {
+		seen[item] = true
+	}
+	for _, item := range want {
+		if !seen[item] {
+			return false
+		}
+	}
+	return true
 }
 
 func findRefCommandByPath(nodes []refCommand, path string) *refCommand {

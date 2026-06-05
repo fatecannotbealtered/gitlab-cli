@@ -246,7 +246,7 @@ func TestLabel_List_PlainText(t *testing.T) {
 	t.Setenv("GITLAB_CLI_TOKEN", "test")
 	origJM := jsonMode
 	defer func() { jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"label", "list", "--project", "foo/bar"})
@@ -270,7 +270,7 @@ func TestLabel_Create_PlainText(t *testing.T) {
 	origJM := jsonMode
 	defer func() { dryRun = origDR; jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
 	dryRun = false
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"label", "create", "--project", "foo/bar", "--name", "bug", "--color", "#e11"})
@@ -293,7 +293,7 @@ func TestLabel_Update_PlainText(t *testing.T) {
 	origJM := jsonMode
 	defer func() { dryRun = origDR; jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
 	dryRun = false
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"label", "update", "--project", "foo/bar", "--label-id", "1", "--name", "bug2"})
@@ -316,7 +316,7 @@ func TestLabel_List_APIError(t *testing.T) {
 	origJM := jsonMode
 	defer func() { lastExit = origExit; jsonMode = origJM }()
 	lastExit = 0
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	rootCmd.SetArgs([]string{"label", "list", "--project", "foo/bar"})
 	_ = rootCmd.Execute()
@@ -335,7 +335,7 @@ func TestLabel_List_Empty(t *testing.T) {
 	t.Setenv("GITLAB_CLI_TOKEN", "test")
 	origJM := jsonMode
 	defer func() { jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
-	jsonMode = false
+	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"label", "list", "--project", "foo/bar"})
@@ -451,7 +451,7 @@ func TestLabel_Create_WithPriority(t *testing.T) {
 	origJM := jsonMode
 	defer func() { dryRun = origDR; jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
 	dryRun = false
-	jsonMode = false
+	setTextFormatForTest(t)
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"label", "create", "--project", "foo/bar", "--name", "bug", "--color", "#e11", "--priority", "5"})
 		_ = rootCmd.Execute()
@@ -541,7 +541,7 @@ func TestLabel_Update_WithPriority(t *testing.T) {
 	origJM := jsonMode
 	defer func() { dryRun = origDR; jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
 	dryRun = false
-	jsonMode = false
+	setTextFormatForTest(t)
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"label", "update", "--project", "foo/bar", "--label-id", "1", "--priority", "3"})
 		_ = rootCmd.Execute()
@@ -678,7 +678,7 @@ func TestLabel_Delete_PlainText(t *testing.T) {
 		_ = rootCmd.PersistentFlags().Set("json", "false")
 	}()
 	dryRun = false
-	jsonMode = false
+	setTextFormatForTest(t)
 	lastExit = 0
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
