@@ -58,7 +58,7 @@ Full contracts (exit codes, error JSON, list envelope, audit): **[reference/cont
 
 | User intent | Read this |
 |-------------|-----------|
-| 登录 / 多实例 / 自检 | [reference/bootstrap.md](reference/bootstrap.md) |
+| 登录 / 多实例 / 自检 / 更新 CLI | [reference/bootstrap.md](reference/bootstrap.md) |
 | 合并代码 / Review / MR 评论 | [reference/mr.md](reference/mr.md) |
 | Issue / Bug / 任务 / 评论 | [reference/issue.md](reference/issue.md) |
 | CI 流水线 / Job 日志 / 等构建 | [reference/ci.md](reference/ci.md) |

@@ -78,6 +78,9 @@ func BuildCommandCases(f *Fixture) []CommandCase {
 		{Path: "context", Args: func(f *Fixture) []string { return j("context") }, WorkDir: func(f *Fixture) string { return f.GitCloneDir }, SkipIf: skipNoGit},
 		{Path: "doctor", Args: func(f *Fixture) []string { return j("doctor") }},
 		{Path: "reference", Args: func(f *Fixture) []string { return j("reference") }},
+		{Path: "update", Args: func(f *Fixture) []string { return j("update", "--check") }, SkipIf: func(f *Fixture) string {
+			return "update checks GitHub Releases; covered by unit tests"
+		}},
 
 		// project
 		{Path: "project list", Args: func(f *Fixture) []string { return j("project", "list", "--limit", "5") }},

@@ -116,6 +116,7 @@ gitlab-cli auth profile list [--json]
 gitlab-cli auth profile use <name>
 gitlab-cli auth profile remove <name> [--json]
 gitlab-cli doctor
+gitlab-cli update [--check] [--target-version vX.Y.Z] [--reinstall] [--json]
 ```
 
 ### Workflow context
@@ -332,6 +333,14 @@ gitlab-cli mr merge --project group/proj 42 --dry-run --json
 gitlab-cli mr merge --project group/proj 42 --confirm 42 --json
 ```
 
+Example (self-update after dry-run):
+
+```bash
+gitlab-cli update --check --json
+gitlab-cli update --dry-run --json
+gitlab-cli update --confirm <targetVersion> --json
+```
+
 ## Multiple profiles
 
 Store credentials for multiple GitLab hosts under named profiles:
@@ -365,6 +374,7 @@ gitlab-cli/
 │   ├── reference.go             # Self-documenting command reference
 │   ├── context.go               # Agent bootstrap snapshot
 │   ├── auth.go, doctor.go       # Auth & diagnostics
+│   ├── update.go                # Self-update from GitHub Releases
 │   ├── mr.go, mr_comment.go     # Merge requests
 │   ├── issue.go, issue_comment.go
 │   ├── pipeline.go, job.go

@@ -108,6 +108,7 @@ gitlab-cli auth login [--host URL] [--token PAT]
 gitlab-cli auth logout
 gitlab-cli auth status
 gitlab-cli doctor
+gitlab-cli update [--check] [--target-version vX.Y.Z] [--reinstall] [--json]
 ```
 
 ### Merge Request / Issue / Pipeline / Job / Repo / Release / Label / Milestone / Variable / Search / User / Project
@@ -315,6 +316,14 @@ gitlab-cli doctor --json --compact
 - `--show-values` 需设置 `GITLAB_CLI_ALLOW_SHOW_VALUES=1`
 - 写操作优先使用 `--confirm <token>` 而非 `--force`
 - 设置 `GITLAB_CLI_AGENT_SAFE=0` 可关闭全部限制
+
+自更新也遵循同样流程：
+
+```bash
+gitlab-cli update --check --json
+gitlab-cli update --dry-run --json
+gitlab-cli update --confirm <targetVersion> --json
+```
 
 ## 多 Profile
 

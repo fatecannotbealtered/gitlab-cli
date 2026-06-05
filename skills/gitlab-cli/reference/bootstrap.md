@@ -1,4 +1,4 @@
-# Bootstrap: auth, context, doctor
+# Bootstrap: auth, context, doctor, update
 
 ## Auth
 
@@ -47,6 +47,16 @@ gitlab-cli doctor --json --compact
 ```
 
 Check `authValid: true` before bulk automation.
+
+## Update CLI
+
+```bash
+gitlab-cli update --check --json --compact
+gitlab-cli update --dry-run --json --compact
+gitlab-cli update --confirm <targetVersion> --json --compact
+```
+
+`update` downloads GitHub Release assets, verifies `checksums.txt`, then replaces the current binary. On Windows, replacement may be scheduled for after the current process exits.
 
 ## Self-description
 
