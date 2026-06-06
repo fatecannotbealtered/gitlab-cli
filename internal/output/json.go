@@ -83,7 +83,7 @@ func ErrorEnvelope(msg string, statusCode int, code ErrorCode) Envelope {
 func PrintJSONErr(v any) error {
 	data, err := marshalJSON(SuccessEnvelope(v))
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "json marshal error: %v\n", err)
+		_, _ = fmt.Fprintf(os.Stderr, "json marshal error: %v\n", err)
 		return err
 	}
 	fmt.Println(string(data))
@@ -203,8 +203,8 @@ func emitErrorPayload(msg string, statusCode int, code ErrorCode) {
 	}
 	data, err := emitJSONMarshal(payload)
 	if err != nil {
-		fmt.Fprintf(os.Stdout, `{"ok":false,"schema_version":%q,"error":{"code":%q,"message":%q,"details":{},"retryable":false}}`+"\n", SchemaVersion, code, msg)
+		_, _ = fmt.Fprintf(os.Stdout, `{"ok":false,"schema_version":%q,"error":{"code":%q,"message":%q,"details":{},"retryable":false}}`+"\n", SchemaVersion, code, msg)
 		return
 	}
-	fmt.Fprintln(os.Stdout, string(data))
+	_, _ = fmt.Fprintln(os.Stdout, string(data))
 }

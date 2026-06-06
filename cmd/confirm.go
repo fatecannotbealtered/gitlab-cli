@@ -20,16 +20,6 @@ var confirmNow = time.Now
 
 const confirmTokenTTL = 15 * time.Minute
 
-// test hooks
-var (
-	stdinIsTerminalFunc  = isTerminal
-	readConfirmInputFunc = func() (string, error) {
-		var input string
-		_, err := fmt.Fscanln(os.Stdin, &input)
-		return input, err
-	}
-)
-
 func initConfirmFlag() {
 	rootCmd.PersistentFlags().StringVar(&confirmFlag, "confirm", "", "Non-interactive confirmation: value must match the expected token for this action")
 }

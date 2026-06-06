@@ -17,12 +17,6 @@ func failNotFound(msg string) error {
 	return ErrSilent
 }
 
-// failCancelled reports user-aborted or missing confirmation (exit 10).
-func failCancelled(msg string) error {
-	emitError(msg, ExitCancelled, output.ErrCancelled)
-	return ErrSilent
-}
-
 // failConfirmRequired reports a missing non-interactive confirmation token (exit 5).
 func failConfirmRequired(msg string) error {
 	emitError(msg, ExitConfirm, output.ErrConfirmRequired)

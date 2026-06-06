@@ -422,19 +422,3 @@ func unwrapJSONData(t *testing.T, out string) any {
 	}
 	return data
 }
-
-func unwrapJSONErrorMap(t *testing.T, out string) map[string]any {
-	t.Helper()
-	var env map[string]any
-	if err := json.Unmarshal([]byte(out), &env); err != nil {
-		t.Fatalf("output is not valid JSON: %v\noutput:\n%s", err, out)
-	}
-	if ok, _ := env["ok"].(bool); ok {
-		t.Fatalf("expected ok=false envelope, got:\n%s", out)
-	}
-	errObj, ok := env["error"].(map[string]any)
-	if !ok {
-		t.Fatalf("missing error object in envelope:\n%s", out)
-	}
-	return errObj
-}
