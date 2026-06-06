@@ -60,9 +60,7 @@ var repoFileGetCmd = &cobra.Command{
 
 		if outPath != "" && outPath != "-" {
 			if err := validateOutputPath(outPath); err != nil {
-				output.Error(err.Error())
-				setExitCode(ExitBadArgs)
-				return ErrSilent
+				return failArg(err.Error())
 			}
 		}
 
@@ -134,9 +132,7 @@ var repoFileCreateCmd = &cobra.Command{
 
 		finalContent, finalEncoding, err := resolveContent(content, contentFile, encoding)
 		if err != nil {
-			output.Error(err.Error())
-			setExitCode(ExitBadArgs)
-			return ErrSilent
+			return failArg(err.Error())
 		}
 
 		if dryRunOutput("repo file create", map[string]any{
@@ -191,9 +187,7 @@ var repoFileUpdateCmd = &cobra.Command{
 
 		finalContent, finalEncoding, err := resolveContent(content, contentFile, encoding)
 		if err != nil {
-			output.Error(err.Error())
-			setExitCode(ExitBadArgs)
-			return ErrSilent
+			return failArg(err.Error())
 		}
 
 		if dryRunOutput("repo file update", map[string]any{
@@ -240,13 +234,17 @@ var repoFileDeleteCmd = &cobra.Command{
 			return failArg("--project, --path, --branch, and --commit-message are required")
 		}
 
-		if dryRunOutput("repo file delete", map[string]any{
-			"project": project, "path": path, "branch": branch,
-		}) {
+		confirmPayload := map[string]any{
+			"project":       project,
+			"path":          path,
+			"branch":        branch,
+			"commitMessage": commitMsg,
+		}
+		if dryRunOutput("repo file delete", confirmPayload) {
 			return nil
 		}
 
-		if err := requireConfirm(cmd, fmt.Sprintf("Type the file path to confirm deletion of %q", path), path); err != nil {
+		if err := requireConfirm(cmd, "repo file delete", confirmPayload); err != nil {
 			return err
 		}
 
@@ -372,11 +370,12 @@ var repoBranchDeleteCmd = &cobra.Command{
 			return failArg("--project and --name are required")
 		}
 
-		if dryRunOutput("repo branch delete", map[string]any{"project": project, "name": name}) {
+		confirmPayload := map[string]any{"project": project, "name": name}
+		if dryRunOutput("repo branch delete", confirmPayload) {
 			return nil
 		}
 
-		if err := requireConfirm(cmd, fmt.Sprintf("Type the branch name to confirm deletion of %q", name), name); err != nil {
+		if err := requireConfirm(cmd, "repo branch delete", confirmPayload); err != nil {
 			return err
 		}
 

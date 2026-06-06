@@ -145,7 +145,7 @@ func TestVariable_Create_DryRun_JSON(t *testing.T) {
 		_ = rootCmd.Execute()
 	})
 
-	for _, want := range []string{`"dryRun": true`, `"action"`, `"key": "MY_SECRET"`} {
+	for _, want := range []string{`"confirm_token"`, `"action"`, `"key": "MY_SECRET"`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("dry-run JSON missing %q\noutput:\n%s", want, out)
 		}
@@ -170,7 +170,7 @@ func TestVariable_Update_DryRun_JSON(t *testing.T) {
 		_ = rootCmd.Execute()
 	})
 
-	for _, want := range []string{`"dryRun": true`, `"key": "MY_SECRET"`} {
+	for _, want := range []string{`"confirm_token"`, `"key": "MY_SECRET"`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("dry-run JSON missing %q\noutput:\n%s", want, out)
 		}
@@ -187,12 +187,11 @@ func TestVariable_Delete_DryRun_JSON(t *testing.T) {
 			"--dry-run", "--json",
 			"--project", "group/proj",
 			"--key", "MY_SECRET",
-			"--force",
 		})
 		_ = rootCmd.Execute()
 	})
 
-	for _, want := range []string{`"dryRun": true`, `"key": "MY_SECRET"`} {
+	for _, want := range []string{`"confirm_token"`, `"key": "MY_SECRET"`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("dry-run JSON missing %q\noutput:\n%s", want, out)
 		}
@@ -250,6 +249,7 @@ func TestVariable_Update_JSON(t *testing.T) {
 }
 
 func TestVariable_Delete_JSON(t *testing.T) {
+	resetVariableFlags(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodDelete {
 			w.WriteHeader(http.StatusNoContent)
@@ -267,7 +267,9 @@ func TestVariable_Delete_JSON(t *testing.T) {
 	dryRun = false
 	lastExit = 0
 	captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"variable", "delete", "--project", "foo/bar", "--key", "FOO", "--json", "--force"})
+		args := []string{"variable", "delete", "--project", "foo/bar", "--key", "FOO", "--json"}
+		args = append(args, confirmArgsForTest(t, "delete variable", map[string]any{"project": "foo/bar", "key": "FOO", "envScope": ""})...)
+		rootCmd.SetArgs(args)
 		_ = rootCmd.Execute()
 	})
 	if lastExit != ExitOK {
@@ -821,6 +823,7 @@ func TestVariable_Delete_MissingKey(t *testing.T) {
 }
 
 func TestVariable_Delete_MissingAuth(t *testing.T) {
+	resetVariableFlags(t)
 	isolateConfigHome(t)
 	t.Setenv("GITLAB_CLI_HOST", "")
 	t.Setenv("GITLAB_CLI_TOKEN", "")
@@ -829,7 +832,9 @@ func TestVariable_Delete_MissingAuth(t *testing.T) {
 	defer func() { lastExit = origExit; dryRun = origDR }()
 	lastExit = 0
 	dryRun = false
-	rootCmd.SetArgs([]string{"variable", "delete", "--project", "foo/bar", "--key", "FOO", "--force"})
+	args := []string{"variable", "delete", "--project", "foo/bar", "--key", "FOO"}
+	args = append(args, confirmArgsForTest(t, "delete variable", map[string]any{"project": "foo/bar", "key": "FOO", "envScope": ""})...)
+	rootCmd.SetArgs(args)
 	_ = rootCmd.Execute()
 	if lastExit != ExitAuth {
 		t.Errorf("exit code = %d, want %d", lastExit, ExitAuth)
@@ -840,6 +845,7 @@ func TestVariable_Delete_ConfirmCancelled(t *testing.T) {
 	t.Setenv("GITLAB_CLI_AGENT_SAFE", "0")
 	withNonInteractiveStdin(t)
 	resetRootPersistentFlags(t)
+	resetVariableFlags(t)
 	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
 	t.Setenv("GITLAB_CLI_TOKEN", "test")
 	origExit := lastExit
@@ -855,6 +861,7 @@ func TestVariable_Delete_ConfirmCancelled(t *testing.T) {
 }
 
 func TestVariable_Delete_WithFilter(t *testing.T) {
+	resetVariableFlags(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodDelete {
 			w.WriteHeader(http.StatusNoContent)
@@ -871,7 +878,9 @@ func TestVariable_Delete_WithFilter(t *testing.T) {
 	dryRun = false
 	lastExit = 0
 	captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"variable", "delete", "--project", "foo/bar", "--key", "FOO", "--filter", "env_scope=production", "--force"})
+		args := []string{"variable", "delete", "--project", "foo/bar", "--key", "FOO", "--filter", "env_scope=production"}
+		args = append(args, confirmArgsForTest(t, "delete variable", map[string]any{"project": "foo/bar", "key": "FOO", "envScope": "production"})...)
+		rootCmd.SetArgs(args)
 		_ = rootCmd.Execute()
 	})
 	if lastExit != ExitOK {
@@ -880,6 +889,7 @@ func TestVariable_Delete_WithFilter(t *testing.T) {
 }
 
 func TestVariable_Delete_APIError(t *testing.T) {
+	resetVariableFlags(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = w.Write([]byte(`{"message":"500"}`))
@@ -892,7 +902,9 @@ func TestVariable_Delete_APIError(t *testing.T) {
 	defer func() { dryRun = origDR; lastExit = origExit }()
 	dryRun = false
 	lastExit = 0
-	rootCmd.SetArgs([]string{"variable", "delete", "--project", "foo/bar", "--key", "FOO", "--force"})
+	args := []string{"variable", "delete", "--project", "foo/bar", "--key", "FOO"}
+	args = append(args, confirmArgsForTest(t, "delete variable", map[string]any{"project": "foo/bar", "key": "FOO", "envScope": ""})...)
+	rootCmd.SetArgs(args)
 	_ = rootCmd.Execute()
 	if lastExit == ExitOK {
 		t.Errorf("expected non-zero exit for API error, got %d", lastExit)
@@ -900,6 +912,7 @@ func TestVariable_Delete_APIError(t *testing.T) {
 }
 
 func TestVariable_Delete_PlainText(t *testing.T) {
+	resetVariableFlags(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodDelete {
 			w.WriteHeader(http.StatusNoContent)
@@ -923,7 +936,9 @@ func TestVariable_Delete_PlainText(t *testing.T) {
 	setTextFormatForTest(t)
 	lastExit = 0
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"variable", "delete", "--project", "foo/bar", "--key", "FOO", "--force"})
+		args := []string{"variable", "delete", "--project", "foo/bar", "--key", "FOO"}
+		args = append(args, confirmArgsForTest(t, "delete variable", map[string]any{"project": "foo/bar", "key": "FOO", "envScope": ""})...)
+		rootCmd.SetArgs(args)
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, "deleted") {

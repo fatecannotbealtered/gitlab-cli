@@ -55,9 +55,7 @@ var issueCommentAddCmd = &cobra.Command{
 		if bodyFile != "" {
 			content, err := readBodyFile(bodyFile)
 			if err != nil {
-				output.Error(err.Error())
-				setExitCode(ExitBadArgs)
-				return ErrSilent
+				return failArg(err.Error())
 			}
 			body = content
 		}
@@ -170,14 +168,15 @@ var issueCommentDeleteCmd = &cobra.Command{
 		if noteID == 0 {
 			return failArg("--note-id is required")
 		}
-		if dryRunOutput("delete comment", map[string]any{"project": project, "iid": iid, "noteId": noteID}) {
+		confirmPayload := map[string]any{"project": project, "iid": iid, "noteId": noteID}
+		if dryRunOutput("delete comment", confirmPayload) {
 			return nil
 		}
 		client, _, err := newClient()
 		if err != nil {
 			return err
 		}
-		if err := requireConfirm(cmd, fmt.Sprintf("Type the note ID (%d) to confirm deletion", noteID), strconv.Itoa(noteID)); err != nil {
+		if err := requireConfirm(cmd, "delete comment", confirmPayload); err != nil {
 			return err
 		}
 		if err := client.Issues.DeleteNote(apiCtx(), project, iid, noteID); err != nil {

@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"strconv"
 
 	"github.com/fatecannotbealtered/gitlab-cli/internal/api"
 	"github.com/fatecannotbealtered/gitlab-cli/internal/output"
@@ -248,14 +247,15 @@ var milestoneCloseCmd = &cobra.Command{
 		if milestoneID == 0 {
 			return failArg("--milestone-id is required")
 		}
-		if dryRunOutput("close milestone", map[string]any{"project": project, "milestoneId": milestoneID}) {
+		confirmPayload := map[string]any{"project": project, "milestoneId": milestoneID}
+		if dryRunOutput("close milestone", confirmPayload) {
 			return nil
 		}
 		client, _, err := newClient()
 		if err != nil {
 			return err
 		}
-		if err := requireConfirm(cmd, fmt.Sprintf("Type the milestone ID (%d) to confirm close", milestoneID), strconv.Itoa(milestoneID)); err != nil {
+		if err := requireConfirm(cmd, "close milestone", confirmPayload); err != nil {
 			return err
 		}
 		m, err := client.Milestones.Update(apiCtx(), project, milestoneID, api.MilestoneUpdateOpts{StateEvent: "close"})

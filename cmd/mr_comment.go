@@ -57,9 +57,7 @@ var mrCommentAddCmd = &cobra.Command{
 		if bodyFile != "" {
 			data, err := os.ReadFile(bodyFile)
 			if err != nil {
-				output.Error("reading body-file: " + err.Error())
-				setExitCode(ExitBadArgs)
-				return ErrSilent
+				return failArg("reading body-file: " + err.Error())
 			}
 			body = string(data)
 		}
@@ -169,11 +167,12 @@ var mrCommentDeleteCmd = &cobra.Command{
 			return failArg("--note-id is required")
 		}
 
-		if dryRunOutput("delete mr comment", map[string]any{"project": project, "iid": iid, "noteId": noteID}) {
+		confirmPayload := map[string]any{"project": project, "iid": iid, "noteId": noteID}
+		if dryRunOutput("delete mr comment", confirmPayload) {
 			return nil
 		}
 
-		if err := requireConfirm(cmd, fmt.Sprintf("Type %d to confirm deletion", noteID), strconv.Itoa(noteID)); err != nil {
+		if err := requireConfirm(cmd, "delete mr comment", confirmPayload); err != nil {
 			return err
 		}
 

@@ -105,7 +105,7 @@ func TestJobRetry_DryRun(t *testing.T) {
 		rootCmd.SetArgs([]string{"job", "retry", "--project", "42", "99", "--dry-run", "--json"})
 		_ = rootCmd.Execute()
 	})
-	if !strings.Contains(out, `"dryRun": true`) {
+	if !strings.Contains(out, `"confirm_token"`) {
 		t.Errorf("expected dryRun:true, got:\n%s", out)
 	}
 }
@@ -118,7 +118,7 @@ func TestJobCancel_DryRun(t *testing.T) {
 		rootCmd.SetArgs([]string{"job", "cancel", "--project", "42", "99", "--dry-run", "--json"})
 		_ = rootCmd.Execute()
 	})
-	if !strings.Contains(out, `"dryRun": true`) {
+	if !strings.Contains(out, `"confirm_token"`) {
 		t.Errorf("expected dryRun:true, got:\n%s", out)
 	}
 }
@@ -236,7 +236,7 @@ func TestJob_Retry_DryRun_JSON(t *testing.T) {
 		rootCmd.SetArgs([]string{"job", "retry", "--project", "42", "10", "--dry-run", "--json"})
 		_ = rootCmd.Execute()
 	})
-	if !strings.Contains(out, `"dryRun": true`) {
+	if !strings.Contains(out, `"confirm_token"`) {
 		t.Errorf("expected dryRun:true, got:\n%s", out)
 	}
 }
@@ -250,7 +250,7 @@ func TestJob_Cancel_DryRun_JSON(t *testing.T) {
 		rootCmd.SetArgs([]string{"job", "cancel", "--project", "42", "10", "--dry-run", "--json"})
 		_ = rootCmd.Execute()
 	})
-	if !strings.Contains(out, `"dryRun": true`) {
+	if !strings.Contains(out, `"confirm_token"`) {
 		t.Errorf("expected dryRun:true, got:\n%s", out)
 	}
 }
@@ -1199,15 +1199,15 @@ func TestJob_Wait_ContextCancelledDuringSleep(t *testing.T) {
 	}
 	t.Cleanup(func() { jobWaitCmd.RunE = origRunE })
 
-	stderr := captureStderr(t, func() {
+	stdout := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"job", "wait", "--project", "42", "99", "--interval", "1"})
 		_ = rootCmd.Execute()
 	})
 	if LastExitCode() != ExitNetwork {
 		t.Errorf("exit = %d, want %d", LastExitCode(), ExitNetwork)
 	}
-	if !strings.Contains(stderr, "context canceled") {
-		t.Errorf("expected context canceled on stderr, got:\n%s", stderr)
+	if !strings.Contains(stdout, "context canceled") {
+		t.Errorf("expected context canceled on stdout, got:\n%s", stdout)
 	}
 }
 

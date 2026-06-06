@@ -207,7 +207,7 @@ For any command that mutates GitLab state:
 
 1. Call `markWrite(cmdVar)` in `init()` so audit logging captures it.
 2. In RunE, call `if dryRunOutput("create mr", map[string]any{"title": title, ...}) { return nil }` BEFORE the API call.
-3. For destructive deletes, prompt with `confirmAction("Type %s to delete", id)` (skipped automatically when `--force` is set).
+3. For destructive deletes, call `requireConfirm(cmd, action, payload)` after a `dryRunOutput(...)` preview. Do not add interactive prompts or `--force` flows.
 
 ### Required flags / arg validation
 
@@ -266,7 +266,7 @@ func TestMR_List(t *testing.T) {
 Cover at minimum:
 - `--help` for the parent command lists all subcommands
 - One smoke test per subcommand using `cobra.SetArgs` + capturing stdout
-- A `--dry-run --json` test for one write command (asserts `dryRun:true`)
+- A `--dry-run --compact` test for one write command (asserts `ok:true`, `data.preview`, and `data.confirm_token`)
 
 ## SKILL segment file
 
@@ -279,16 +279,17 @@ Brief description for AI agents.
 
 ```bash
 # Read
-gitlab-cli <domain> list --project <ID> --json
-gitlab-cli <domain> get <ID> --json --fields iid,title,state
+gitlab-cli <domain> list --project <ID> --compact
+gitlab-cli <domain> get <ID> --fields iid,title,state --compact
 
 # Write
-gitlab-cli <domain> create --project <ID> --title "..." --json
-gitlab-cli <domain> update <ID> --title "..." --json
-gitlab-cli <domain> delete <ID> --force
+gitlab-cli <domain> create --project <ID> --title "..." --dry-run --compact
+gitlab-cli <domain> update <ID> --title "..." --dry-run --compact
+gitlab-cli <domain> delete <ID> --dry-run --compact
+gitlab-cli <domain> delete <ID> --confirm <confirm_token> --compact
 ```
 
-### Flat <Domain> JSON
+### <Domain> data payload
 
 ```json
 {
@@ -312,7 +313,7 @@ Before reporting "done":
 - [ ] `go build ./...` exit 0
 - [ ] `go test ./...` all packages PASS
 - [ ] `gitlab-cli <domain> --help` shows all subcommands you registered
-- [ ] At least one `--json` test asserts machine-readable output
+- [ ] At least one JSON test asserts the `ok` / `schema_version` envelope
 - [ ] All write commands have `markWrite(cmd)` and `dryRunOutput(...)` short-circuit
 - [ ] No DTO or method belongs to another domain
 - [ ] `_skill_<domain>.md` segment exists and follows the template

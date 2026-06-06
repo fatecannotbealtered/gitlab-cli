@@ -67,8 +67,11 @@ type contextGitLab struct {
 
 // contextResult is the top-level JSON envelope.
 type contextResult struct {
-	Git    *contextGit    `json:"git"`
-	GitLab *contextGitLab `json:"gitlab"`
+	Env     string         `json:"env"`
+	Account string         `json:"account,omitempty"`
+	Config  map[string]any `json:"config"`
+	Git     *contextGit    `json:"git"`
+	GitLab  *contextGitLab `json:"gitlab"`
 }
 
 func runContext(cmd *cobra.Command, _ []string) error {
@@ -76,7 +79,10 @@ func runContext(cmd *cobra.Command, _ []string) error {
 	if noStrict {
 		contextStrict = false
 	}
-	result := &contextResult{}
+	result := &contextResult{
+		Env:    "local",
+		Config: map[string]any{"authenticated": false},
+	}
 
 	// 1. Git context (always attempt, never fatal)
 	gc, _ := gitctx.Detect("")
@@ -106,6 +112,7 @@ func runContext(cmd *cobra.Command, _ []string) error {
 			Host:          host,
 			Authenticated: false,
 		}
+		result.Config["host"] = host
 		return renderContext(result, true)
 	}
 
@@ -113,6 +120,7 @@ func runContext(cmd *cobra.Command, _ []string) error {
 		Host:          cfg.Host,
 		Authenticated: false,
 	}
+	result.Config["host"] = cfg.Host
 
 	// newClient uses MustLoad which validates host+token; since we already checked
 	// above, this should succeed. On failure, degrade gracefully.
@@ -131,6 +139,8 @@ func runContext(cmd *cobra.Command, _ []string) error {
 	glCtx.Authenticated = true
 	glCtx.Username = me.Username
 	glCtx.Name = me.Name
+	result.Account = me.Username
+	result.Config["authenticated"] = true
 
 	// 4. Project info (if GitLab remote detected)
 	if result.Git != nil && result.Git.Remote != nil {

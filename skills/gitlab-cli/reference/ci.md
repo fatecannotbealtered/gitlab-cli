@@ -16,17 +16,17 @@ gitlab-cli pipeline jobs --project G 123
 
 ```bash
 gitlab-cli pipeline create --project G --ref main --dry-run
-gitlab-cli pipeline create --project G --ref main --confirm main
-gitlab-cli pipeline create --project G --ref main --variable FOO=bar --confirm main
+gitlab-cli pipeline create --project G --ref main --confirm <confirm_token>
+gitlab-cli pipeline create --project G --ref main --variable FOO=bar --confirm <confirm_token>
 gitlab-cli pipeline retry --project G 123
-gitlab-cli pipeline cancel --project G 123 --confirm 123
+gitlab-cli pipeline cancel --project G 123 --confirm <confirm_token>
 ```
 
 ## Wait for pipeline
 
 ```bash
 gitlab-cli pipeline wait --project G 123 --timeout 600 --interval 15 --compact
-# exit 0 = success, 8 = timeout, 9 = failed/canceled/skipped
+# exit 0 = success, 8 = timeout, 6 = failed/canceled/skipped
 ```
 
 ## Job
@@ -46,19 +46,19 @@ gitlab-cli job artifacts --project G 456 --output ./artifacts.zip
 ## Agent CI loop
 
 ```bash
-PIPELINE_ID=$(gitlab-cli pipeline create --project G --ref main --confirm main --compact | jq -r .id)
+PIPELINE_ID=$(gitlab-cli pipeline create --project G --ref main --confirm <confirm_token> --compact | jq -r .data.id)
 
 gitlab-cli pipeline wait --project G "$PIPELINE_ID" --timeout 600 --compact
 EXIT=$?
 
 if [ "$EXIT" -ne 0 ]; then
   JOB=$(gitlab-cli pipeline jobs --project G "$PIPELINE_ID" --compact \
-    | jq -r '[.[] | select(.status=="failed")][0].id')
+    | jq -r '[.data[] | select(.status=="failed")][0].id')
   gitlab-cli job log --project G "$JOB" --format raw
 fi
 ```
 
-## Flat Pipeline JSON (excerpt)
+## Pipeline data payload (excerpt)
 
 ```json
 {

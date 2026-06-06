@@ -69,11 +69,11 @@
       <table>
         <thead><tr><th>验收项</th><th>标准</th><th>结果</th></tr></thead>
         <tbody>
-          <tr><td>叶子命令</td><td>reference --json</td><td><span class="badge badge-pass">85</span></td></tr>
+          <tr><td>叶子命令</td><td>reference --compact</td><td><span class="badge badge-pass">85</span></td></tr>
           <tr><td>单测覆盖</td><td>TestUnit_EveryLeafCommandHasTest</td><td><span class="badge badge-pass">通过</span></td></tr>
           <tr><td>单测全绿</td><td>go test ./...</td><td><span class="badge badge-pass">通过</span></td></tr>
           <tr><td>集成测试</td><td>真实 GitLab API</td><td><span class="badge badge-pass">85+0=85</span></td></tr>
-          <tr><td>连通性</td><td>doctor --json</td><td><span class="badge badge-pass">authValid</span></td></tr>
+          <tr><td>连通性</td><td>doctor --compact</td><td><span class="badge badge-pass">data.authValid</span></td></tr>
         </tbody>
       </table>
     </section>
@@ -89,7 +89,7 @@ ok  	.../internal/api	4.171s</pre>
 --- PASS: TestAllCommands_EveryLeaf (14.11s)
 ok  	.../e2e	538.868s</pre>
       <h3>2.5 doctor</h3><pre>gitlab-cli-e2e   Up (healthy)   8929-&gt;8929
-{"authValid": true, "username": "root", "host": "http://localhost:8929"}</pre>
+{"ok":true,"schema_version":"1.0","data":{"authValid":true,"username":"root","host":"http://localhost:8929"},"meta":{"duration_ms":84}}</pre>
     </section>
     <section>
       <h2>3. 逐条结果（85 条）</h2>

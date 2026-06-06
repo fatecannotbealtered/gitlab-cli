@@ -243,6 +243,9 @@ var mrCurrentCmd = &cobra.Command{
 			return handleAPIError(err, jsonMode)
 		}
 		if len(mrs) == 0 {
+			if jsonMode {
+				return failNotFound(fmt.Sprintf("no open MR found for branch %q", ctx.CurrentBranch))
+			}
 			output.Info(fmt.Sprintf("No open MR found for branch %q", ctx.CurrentBranch))
 			setExitCode(ExitNotFound)
 			return ErrSilent
@@ -292,17 +295,13 @@ var mrCreateCmd = &cobra.Command{
 		}
 
 		if project == "" {
-			output.Error("--project is required (or use --auto)")
-			setExitCode(ExitBadArgs)
-			return ErrSilent
+			return failArg("--project is required (or use --auto)")
 		}
 		if title == "" {
 			return failArg("--title is required")
 		}
 		if srcBranch == "" {
-			output.Error("--source-branch is required (or use --auto)")
-			setExitCode(ExitBadArgs)
-			return ErrSilent
+			return failArg("--source-branch is required (or use --auto)")
 		}
 
 		findExisting, _ := cmd.Flags().GetBool("find-existing")
@@ -468,10 +467,18 @@ var mrMergeCmd = &cobra.Command{
 		msg, _ := cmd.Flags().GetString("merge-commit-message")
 		sha, _ := cmd.Flags().GetString("sha")
 
-		if dryRunOutput("merge mr", map[string]any{"project": project, "iid": iid}) {
+		confirmPayload := map[string]any{
+			"project":                  project,
+			"iid":                      iid,
+			"squash":                   squash,
+			"shouldRemoveSourceBranch": removeSrc,
+			"mergeCommitMessage":       msg,
+			"sha":                      sha,
+		}
+		if dryRunOutput("merge mr", confirmPayload) {
 			return nil
 		}
-		if err := requireConfirm(cmd, fmt.Sprintf("merge MR !%d in %s", iid, project), strconv.Itoa(iid)); err != nil {
+		if err := requireConfirm(cmd, "merge mr", confirmPayload); err != nil {
 			return err
 		}
 
@@ -512,10 +519,11 @@ var mrCloseCmd = &cobra.Command{
 		if err != nil {
 			return failArg("iid must be an integer")
 		}
-		if dryRunOutput("close mr", map[string]any{"project": project, "iid": iid}) {
+		confirmPayload := map[string]any{"project": project, "iid": iid}
+		if dryRunOutput("close mr", confirmPayload) {
 			return nil
 		}
-		if err := requireConfirm(cmd, fmt.Sprintf("close MR !%d in %s", iid, project), strconv.Itoa(iid)); err != nil {
+		if err := requireConfirm(cmd, "close mr", confirmPayload); err != nil {
 			return err
 		}
 		client, _, err := newClient()

@@ -43,7 +43,7 @@ func TestIssueComment_Add_DryRun_JSON(t *testing.T) {
 		})
 		_ = rootCmd.Execute()
 	})
-	for _, want := range []string{`"dryRun": true`, `"body": "hello"`} {
+	for _, want := range []string{`"confirm_token"`, `"body": "hello"`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in output:\n%s", want, out)
 		}
@@ -85,7 +85,7 @@ func TestIssueComment_Delete_DryRun_JSON(t *testing.T) {
 		})
 		_ = rootCmd.Execute()
 	})
-	for _, want := range []string{`"dryRun": true`, `"noteId": 42`} {
+	for _, want := range []string{`"confirm_token"`, `"noteId": 42`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in output:\n%s", want, out)
 		}
@@ -177,7 +177,9 @@ func TestIssueComment_Delete_JSON(t *testing.T) {
 	dryRun = false
 	lastExit = 0
 	captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"issue", "comment", "delete", "1", "--project", "foo/bar", "--note-id", "5", "--json", "--force"})
+		args := []string{"issue", "comment", "delete", "1", "--project", "foo/bar", "--note-id", "5", "--json"}
+		args = append(args, confirmArgsForTest(t, "delete comment", map[string]any{"project": "foo/bar", "iid": 1, "noteId": 5})...)
+		rootCmd.SetArgs(args)
 		_ = rootCmd.Execute()
 	})
 	if lastExit != ExitOK {
@@ -274,7 +276,9 @@ func TestIssueComment_Delete_PlainText(t *testing.T) {
 	lastExit = 0
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"issue", "comment", "delete", "1", "--project", "foo/bar", "--note-id", "5", "--force"})
+		args := []string{"issue", "comment", "delete", "1", "--project", "foo/bar", "--note-id", "5"}
+		args = append(args, confirmArgsForTest(t, "delete comment", map[string]any{"project": "foo/bar", "iid": 1, "noteId": 5})...)
+		rootCmd.SetArgs(args)
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, "Deleted") {
@@ -552,7 +556,9 @@ func TestIssueComment_Delete_MissingAuth(t *testing.T) {
 	defer func() { lastExit = origExit; dryRun = origDR }()
 	lastExit = 0
 	dryRun = false
-	rootCmd.SetArgs([]string{"issue", "comment", "delete", "1", "--project", "foo/bar", "--note-id", "5", "--force"})
+	args := []string{"issue", "comment", "delete", "1", "--project", "foo/bar", "--note-id", "5"}
+	args = append(args, confirmArgsForTest(t, "delete comment", map[string]any{"project": "foo/bar", "iid": 1, "noteId": 5})...)
+	rootCmd.SetArgs(args)
 	_ = rootCmd.Execute()
 	if lastExit != ExitAuth {
 		t.Errorf("exit code = %d, want %d", lastExit, ExitAuth)
@@ -590,7 +596,9 @@ func TestIssueComment_Delete_APIError(t *testing.T) {
 	defer func() { dryRun = origDR; lastExit = origExit }()
 	dryRun = false
 	lastExit = 0
-	rootCmd.SetArgs([]string{"issue", "comment", "delete", "1", "--project", "foo/bar", "--note-id", "5", "--force"})
+	args := []string{"issue", "comment", "delete", "1", "--project", "foo/bar", "--note-id", "5"}
+	args = append(args, confirmArgsForTest(t, "delete comment", map[string]any{"project": "foo/bar", "iid": 1, "noteId": 5})...)
+	rootCmd.SetArgs(args)
 	_ = rootCmd.Execute()
 	if lastExit == ExitOK {
 		t.Errorf("expected non-zero exit for API error, got %d", lastExit)

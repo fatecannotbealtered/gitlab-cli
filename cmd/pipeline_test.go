@@ -56,6 +56,19 @@ func resetPipelineFlags(t *testing.T) {
 	}
 }
 
+func pipelineCreateConfirmArgsForTest(t *testing.T, project, ref string, variables []string) []string {
+	t.Helper()
+	if variables == nil {
+		variables = []string{}
+	}
+	return confirmArgsForTest(t, "create pipeline", map[string]any{"project": project, "ref": ref, "variables": variables})
+}
+
+func pipelineCancelConfirmArgsForTest(t *testing.T, project string, pipelineID int) []string {
+	t.Helper()
+	return confirmArgsForTest(t, "cancel pipeline", map[string]any{"project": project, "pipeline_id": pipelineID})
+}
+
 func TestPipelineHelp_ListsSubcommands(t *testing.T) {
 	buf := new(bytes.Buffer)
 	rootCmd.SetOut(buf)
@@ -117,7 +130,7 @@ func TestPipelineCreate_DryRun(t *testing.T) {
 		rootCmd.SetArgs([]string{"pipeline", "create", "--project", "42", "--ref", "main", "--dry-run", "--json"})
 		_ = rootCmd.Execute()
 	})
-	if !strings.Contains(out, `"dryRun": true`) {
+	if !strings.Contains(out, `"confirm_token"`) {
 		t.Errorf("expected dryRun:true in output, got:\n%s", out)
 	}
 }
@@ -131,7 +144,7 @@ func TestPipelineRetry_DryRun(t *testing.T) {
 		rootCmd.SetArgs([]string{"pipeline", "retry", "--project", "42", "10", "--dry-run", "--json"})
 		_ = rootCmd.Execute()
 	})
-	if !strings.Contains(out, `"dryRun": true`) {
+	if !strings.Contains(out, `"confirm_token"`) {
 		t.Errorf("expected dryRun:true, got:\n%s", out)
 	}
 }
@@ -145,7 +158,7 @@ func TestPipelineCancel_DryRun(t *testing.T) {
 		rootCmd.SetArgs([]string{"pipeline", "cancel", "--project", "42", "10", "--dry-run", "--json"})
 		_ = rootCmd.Execute()
 	})
-	if !strings.Contains(out, `"dryRun": true`) {
+	if !strings.Contains(out, `"confirm_token"`) {
 		t.Errorf("expected dryRun:true, got:\n%s", out)
 	}
 }
@@ -286,7 +299,7 @@ func TestPipeline_Create_DryRun_JSON(t *testing.T) {
 		rootCmd.SetArgs([]string{"pipeline", "create", "--project", "42", "--ref", "main", "--dry-run", "--json"})
 		_ = rootCmd.Execute()
 	})
-	if !strings.Contains(out, `"dryRun": true`) {
+	if !strings.Contains(out, `"confirm_token"`) {
 		t.Errorf("expected dryRun:true, got:\n%s", out)
 	}
 }
@@ -300,7 +313,7 @@ func TestPipeline_Retry_DryRun_JSON(t *testing.T) {
 		rootCmd.SetArgs([]string{"pipeline", "retry", "--project", "42", "10", "--dry-run", "--json"})
 		_ = rootCmd.Execute()
 	})
-	if !strings.Contains(out, `"dryRun": true`) {
+	if !strings.Contains(out, `"confirm_token"`) {
 		t.Errorf("expected dryRun:true, got:\n%s", out)
 	}
 }
@@ -314,7 +327,7 @@ func TestPipeline_Cancel_DryRun_JSON(t *testing.T) {
 		rootCmd.SetArgs([]string{"pipeline", "cancel", "--project", "42", "10", "--dry-run", "--json"})
 		_ = rootCmd.Execute()
 	})
-	if !strings.Contains(out, `"dryRun": true`) {
+	if !strings.Contains(out, `"confirm_token"`) {
 		t.Errorf("expected dryRun:true, got:\n%s", out)
 	}
 }
@@ -466,6 +479,7 @@ func TestPipeline_Wait_Timeout(t *testing.T) {
 }
 
 func TestPipeline_Create_JSON(t *testing.T) {
+	resetPipelineFlags(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/pipeline") {
 			w.Header().Set("Content-Type", "application/json")
@@ -483,7 +497,9 @@ func TestPipeline_Create_JSON(t *testing.T) {
 	defer func() { dryRun = origDR; jsonMode = origJM }()
 	dryRun = false
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"pipeline", "create", "--project", "foo/bar", "--ref", "main", "--json", "--confirm", "main"})
+		args := []string{"pipeline", "create", "--project", "foo/bar", "--ref", "main", "--json"}
+		args = append(args, pipelineCreateConfirmArgsForTest(t, "foo/bar", "main", nil)...)
+		rootCmd.SetArgs(args)
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, `"created"`) {
@@ -517,6 +533,7 @@ func TestPipeline_Retry_JSON(t *testing.T) {
 }
 
 func TestPipeline_Cancel_JSON(t *testing.T) {
+	resetPipelineFlags(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/cancel") {
 			w.Header().Set("Content-Type", "application/json")
@@ -533,7 +550,9 @@ func TestPipeline_Cancel_JSON(t *testing.T) {
 	defer func() { dryRun = origDR; jsonMode = origJM }()
 	dryRun = false
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"pipeline", "cancel", "--project", "foo/bar", "1", "--json", "--confirm", "1"})
+		args := []string{"pipeline", "cancel", "--project", "foo/bar", "1", "--json"}
+		args = append(args, pipelineCancelConfirmArgsForTest(t, "foo/bar", 1)...)
+		rootCmd.SetArgs(args)
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, `"canceled"`) {
@@ -587,6 +606,7 @@ func TestPipeline_List_PlainText(t *testing.T) {
 }
 
 func TestPipeline_Create_PlainText(t *testing.T) {
+	resetPipelineFlags(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
@@ -602,7 +622,9 @@ func TestPipeline_Create_PlainText(t *testing.T) {
 	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"pipeline", "create", "--project", "foo/bar", "--ref", "main", "--confirm", "main"})
+		args := []string{"pipeline", "create", "--project", "foo/bar", "--ref", "main"}
+		args = append(args, pipelineCreateConfirmArgsForTest(t, "foo/bar", "main", nil)...)
+		rootCmd.SetArgs(args)
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, "Pipeline") {
@@ -634,6 +656,7 @@ func TestPipeline_Retry_PlainText(t *testing.T) {
 }
 
 func TestPipeline_Cancel_PlainText(t *testing.T) {
+	resetPipelineFlags(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"id":1,"iid":1,"ref":"main","status":"canceled","source":"api","created_at":"2024-01-01","web_url":"http://x","project_id":1}`))
@@ -648,7 +671,9 @@ func TestPipeline_Cancel_PlainText(t *testing.T) {
 	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"pipeline", "cancel", "--project", "foo/bar", "1", "--confirm", "1"})
+		args := []string{"pipeline", "cancel", "--project", "foo/bar", "1"}
+		args = append(args, pipelineCancelConfirmArgsForTest(t, "foo/bar", 1)...)
+		rootCmd.SetArgs(args)
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, "canceled") {
@@ -837,6 +862,7 @@ func TestPipeline_Retry_APIError(t *testing.T) {
 }
 
 func TestPipeline_Cancel_APIError(t *testing.T) {
+	resetPipelineFlags(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		_, _ = w.Write([]byte(`{"message":"404 Not Found"}`))
@@ -852,7 +878,9 @@ func TestPipeline_Cancel_APIError(t *testing.T) {
 	dryRun = false
 	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
-	rootCmd.SetArgs([]string{"pipeline", "cancel", "--project", "foo/bar", "999", "--confirm", "999"})
+	args := []string{"pipeline", "cancel", "--project", "foo/bar", "999"}
+	args = append(args, pipelineCancelConfirmArgsForTest(t, "foo/bar", 999)...)
+	rootCmd.SetArgs(args)
 	_ = rootCmd.Execute()
 	if lastExit == ExitOK {
 		t.Errorf("expected non-zero exit for API error, got %d", lastExit)
@@ -1157,8 +1185,8 @@ func TestPipeline_Current_NoPipelines(t *testing.T) {
 	if LastExitCode() != ExitNotFound {
 		t.Errorf("exit = %d, want %d", LastExitCode(), ExitNotFound)
 	}
-	if !strings.Contains(out, "No pipelines found") {
-		t.Errorf("expected empty message, got:\n%s", out)
+	if !strings.Contains(out, `"E_NOT_FOUND"`) || !strings.Contains(out, "no pipelines found") {
+		t.Errorf("expected no pipelines JSON error, got:\n%s", out)
 	}
 }
 
@@ -1261,7 +1289,9 @@ func TestPipeline_Create_NewClientError(t *testing.T) {
 	origExit := lastExit
 	defer func() { lastExit = origExit }()
 	lastExit = 0
-	rootCmd.SetArgs([]string{"pipeline", "create", "--project", "42", "--ref", "main", "--confirm", "main"})
+	args := []string{"pipeline", "create", "--project", "42", "--ref", "main"}
+	args = append(args, pipelineCreateConfirmArgsForTest(t, "42", "main", nil)...)
+	rootCmd.SetArgs(args)
 	_ = rootCmd.Execute()
 	if lastExit != ExitAuth {
 		t.Errorf("exit = %d, want %d", lastExit, ExitAuth)
@@ -1280,7 +1310,9 @@ func TestPipeline_Create_APIError(t *testing.T) {
 	origExit := lastExit
 	defer func() { lastExit = origExit }()
 	lastExit = 0
-	rootCmd.SetArgs([]string{"pipeline", "create", "--project", "42", "--ref", "main", "--confirm", "main"})
+	args := []string{"pipeline", "create", "--project", "42", "--ref", "main"}
+	args = append(args, pipelineCreateConfirmArgsForTest(t, "42", "main", nil)...)
+	rootCmd.SetArgs(args)
 	_ = rootCmd.Execute()
 	if lastExit == ExitOK {
 		t.Errorf("expected non-zero exit for API error, got %d", lastExit)
@@ -1353,7 +1385,9 @@ func TestPipeline_Cancel_NewClientError(t *testing.T) {
 	origExit := lastExit
 	defer func() { lastExit = origExit }()
 	lastExit = 0
-	rootCmd.SetArgs([]string{"pipeline", "cancel", "--project", "42", "1", "--confirm", "1"})
+	args := []string{"pipeline", "cancel", "--project", "42", "1"}
+	args = append(args, pipelineCancelConfirmArgsForTest(t, "42", 1)...)
+	rootCmd.SetArgs(args)
 	_ = rootCmd.Execute()
 	if lastExit != ExitAuth {
 		t.Errorf("exit = %d, want %d", lastExit, ExitAuth)
@@ -1573,15 +1607,15 @@ func TestPipeline_Wait_ContextCancelledDuringSleep(t *testing.T) {
 	}
 	t.Cleanup(func() { pipelineWaitCmd.RunE = origRunE })
 
-	stderr := captureStderr(t, func() {
+	stdout := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"pipeline", "wait", "--project", "42", "1", "--interval", "1"})
 		_ = rootCmd.Execute()
 	})
 	if LastExitCode() != ExitNetwork {
 		t.Errorf("exit = %d, want %d", LastExitCode(), ExitNetwork)
 	}
-	if !strings.Contains(stderr, "context canceled") {
-		t.Errorf("expected context canceled on stderr, got:\n%s", stderr)
+	if !strings.Contains(stdout, "context canceled") {
+		t.Errorf("expected context canceled on stdout, got:\n%s", stdout)
 	}
 }
 

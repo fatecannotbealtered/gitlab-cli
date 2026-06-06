@@ -38,7 +38,7 @@ func TestLabelCreate_DryRun_JSON(t *testing.T) {
 		rootCmd.SetArgs([]string{"label", "create", "--project", "42", "--name", "bug", "--color", "#FF0000", "--dry-run", "--json"})
 		_ = rootCmd.Execute()
 	})
-	for _, want := range []string{`"dryRun": true`, `"action": "create label"`} {
+	for _, want := range []string{`"confirm_token"`, `"action": "create label"`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in dry-run output, got:\n%s", want, out)
 		}
@@ -59,7 +59,7 @@ func TestLabelDelete_DryRun_JSON(t *testing.T) {
 		rootCmd.SetArgs([]string{"label", "delete", "--project", "42", "--label-id", "1", "--dry-run", "--json"})
 		_ = rootCmd.Execute()
 	})
-	for _, want := range []string{`"dryRun": true`, `"action": "delete label"`} {
+	for _, want := range []string{`"confirm_token"`, `"action": "delete label"`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in dry-run output, got:\n%s", want, out)
 		}
@@ -132,7 +132,7 @@ func TestLabel_Update_DryRun_JSON(t *testing.T) {
 		})
 		_ = rootCmd.Execute()
 	})
-	for _, want := range []string{`"dryRun": true`, `"action": "update label"`} {
+	for _, want := range []string{`"confirm_token"`, `"action": "update label"`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in dry-run output, got:\n%s", want, out)
 		}
@@ -204,7 +204,9 @@ func TestLabel_Delete_JSON(t *testing.T) {
 	dryRun = false
 	lastExit = 0
 	captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"label", "delete", "--project", "foo/bar", "--label-id", "1", "--json", "--force"})
+		args := []string{"label", "delete", "--project", "foo/bar", "--label-id", "1", "--json"}
+		args = append(args, confirmArgsForTest(t, "delete label", map[string]any{"project": "foo/bar", "labelId": 1})...)
+		rootCmd.SetArgs(args)
 		_ = rootCmd.Execute()
 	})
 	if lastExit != ExitOK {
@@ -612,7 +614,9 @@ func TestLabel_Delete_MissingAuth(t *testing.T) {
 	defer func() { lastExit = origExit; dryRun = origDR }()
 	lastExit = 0
 	dryRun = false
-	rootCmd.SetArgs([]string{"label", "delete", "--project", "foo/bar", "--label-id", "1", "--force"})
+	args := []string{"label", "delete", "--project", "foo/bar", "--label-id", "1"}
+	args = append(args, confirmArgsForTest(t, "delete label", map[string]any{"project": "foo/bar", "labelId": 1})...)
+	rootCmd.SetArgs(args)
 	_ = rootCmd.Execute()
 	if lastExit != ExitAuth {
 		t.Errorf("exit code = %d, want %d", lastExit, ExitAuth)
@@ -650,7 +654,9 @@ func TestLabel_Delete_APIError(t *testing.T) {
 	defer func() { dryRun = origDR; lastExit = origExit }()
 	dryRun = false
 	lastExit = 0
-	rootCmd.SetArgs([]string{"label", "delete", "--project", "foo/bar", "--label-id", "1", "--force"})
+	args := []string{"label", "delete", "--project", "foo/bar", "--label-id", "1"}
+	args = append(args, confirmArgsForTest(t, "delete label", map[string]any{"project": "foo/bar", "labelId": 1})...)
+	rootCmd.SetArgs(args)
 	_ = rootCmd.Execute()
 	if lastExit == ExitOK {
 		t.Errorf("expected non-zero exit for API error, got %d", lastExit)
@@ -682,7 +688,9 @@ func TestLabel_Delete_PlainText(t *testing.T) {
 	lastExit = 0
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"label", "delete", "--project", "foo/bar", "--label-id", "1", "--force"})
+		args := []string{"label", "delete", "--project", "foo/bar", "--label-id", "1"}
+		args = append(args, confirmArgsForTest(t, "delete label", map[string]any{"project": "foo/bar", "labelId": 1})...)
+		rootCmd.SetArgs(args)
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, "Deleted") {

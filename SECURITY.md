@@ -4,6 +4,11 @@
 
 Only the latest minor version receives security updates.
 
+| Version | Supported |
+|---------|-----------|
+| 1.2.x | Yes |
+| < 1.2 | No |
+
 ## Reporting a Vulnerability
 
 Please **do not open public GitHub issues for undisclosed vulnerabilities**.

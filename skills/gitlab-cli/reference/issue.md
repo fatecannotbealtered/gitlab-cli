@@ -19,14 +19,15 @@ gitlab-cli issue assign 12 alice --project G
 gitlab-cli issue assign 12 me --project G
 gitlab-cli issue label 12 --project G --add bug --remove triage
 
-gitlab-cli issue close 12 --project G --confirm 12
+gitlab-cli issue close 12 --project G --dry-run
+gitlab-cli issue close 12 --project G --confirm <confirm_token>
 gitlab-cli issue reopen 12 --project G
 
 gitlab-cli issue comment add 12 --project G --body "Repro steps: ..."
-gitlab-cli issue comment delete 12 --project G --note-id 99 --confirm 99
+gitlab-cli issue comment delete 12 --project G --note-id 99 --confirm <confirm_token>
 ```
 
-## Flat Issue JSON (excerpt)
+## Issue data payload (excerpt)
 
 ```json
 {

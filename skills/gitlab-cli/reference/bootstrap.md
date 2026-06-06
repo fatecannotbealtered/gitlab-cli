@@ -36,7 +36,7 @@ Key fields: `git.remote.projectPath`, `git.currentBranch`, `gitlab.project.id`, 
 Typical pattern:
 
 ```bash
-PROJECT=$(gitlab-cli context --compact | jq -r '.git.remote.projectPath')
+PROJECT=$(gitlab-cli context --compact | jq -r '.data.git.remote.projectPath')
 gitlab-cli mr list --project "$PROJECT" --compact
 ```
 
@@ -46,17 +46,17 @@ gitlab-cli mr list --project "$PROJECT" --compact
 gitlab-cli doctor --compact
 ```
 
-Check `authValid: true` before bulk automation.
+Check `data.authValid: true` before bulk automation.
 
 ## Update CLI
 
 ```bash
 gitlab-cli update --check --compact
 gitlab-cli update --dry-run --compact
-gitlab-cli update --confirm <targetVersion> --compact
+gitlab-cli update --confirm <confirm_token> --compact
 ```
 
-`update` downloads GitHub Release assets, verifies `checksums.txt`, then replaces the current binary. On Windows, replacement may be scheduled for after the current process exits.
+`update --dry-run` returns `data.confirm_token`. `update` downloads GitHub Release assets, verifies `checksums.txt`, then replaces the current binary. On Windows, replacement may be scheduled for after the current process exits.
 
 ## Self-description
 

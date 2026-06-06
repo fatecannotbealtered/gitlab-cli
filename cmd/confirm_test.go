@@ -2,13 +2,12 @@ package cmd
 
 import (
 	"errors"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -53,7 +52,11 @@ func TestRequireConfirm_MatchingToken(t *testing.T) {
 	confirmFlag = "yes"
 	forceMode = false
 
-	if err := requireConfirm(&cobra.Command{}, "proceed", "yes"); err != nil {
+	payload := map[string]any{"id": "yes"}
+	token, _ := newConfirmToken("proceed", payload)
+	confirmFlag = token
+
+	if err := requireConfirm(&cobra.Command{}, "proceed", payload); err != nil {
 		t.Fatalf("requireConfirm() = %v", err)
 	}
 }
@@ -76,24 +79,31 @@ func TestRequireConfirm_WrongToken_NonTTY(t *testing.T) {
 	if !errors.Is(err, ErrSilent) {
 		t.Fatalf("requireConfirm() = %v", err)
 	}
-	if lastExit != ExitCancelled {
-		t.Fatalf("exit=%d want=%d", lastExit, ExitCancelled)
+	if lastExit != ExitConflict {
+		t.Fatalf("exit=%d want=%d", lastExit, ExitConflict)
 	}
 }
 
-func TestRequireConfirm_ForceAllowed(t *testing.T) {
+func TestRequireConfirm_ForceDoesNotBypassToken(t *testing.T) {
 	t.Setenv("GITLAB_CLI_AGENT_SAFE", "0")
 	origConfirm := confirmFlag
 	origForce := forceMode
+	origExit := lastExit
 	defer func() {
 		confirmFlag = origConfirm
 		forceMode = origForce
+		lastExit = origExit
 	}()
 	confirmFlag = ""
 	forceMode = true
+	lastExit = 0
 
-	if err := requireConfirm(&cobra.Command{}, "delete", "secret"); err != nil {
+	err := requireConfirm(&cobra.Command{}, "delete", "secret")
+	if !errors.Is(err, ErrSilent) {
 		t.Fatalf("requireConfirm(force) = %v", err)
+	}
+	if lastExit != ExitConfirm {
+		t.Fatalf("exit=%d want=%d", lastExit, ExitConfirm)
 	}
 }
 
@@ -115,46 +125,20 @@ func TestRequireConfirm_ForceBlockedInAgentSafe(t *testing.T) {
 	if !errors.Is(err, ErrSilent) {
 		t.Fatalf("requireConfirm() = %v", err)
 	}
-	if lastExit != ExitBadArgs {
-		t.Fatalf("exit=%d want=%d", lastExit, ExitBadArgs)
+	if lastExit != ExitConfirm {
+		t.Fatalf("exit=%d want=%d", lastExit, ExitConfirm)
 	}
 }
 
-func TestRequireConfirm_TTY_ReadError(t *testing.T) {
-	candidates := []string{"/dev/null"}
-	if runtime.GOOS == "windows" {
-		candidates = append([]string{"NUL", "CONIN$"}, candidates...)
-	}
-
-	var f *os.File
-	for _, name := range candidates {
-		file, err := os.Open(name)
-		if err != nil {
-			continue
-		}
-		if !isTerminal(file) {
-			file.Close()
-			continue
-		}
-		f = file
-		break
-	}
-	if f == nil {
-		t.Skip("no character device available for TTY read-error test")
-	}
-	defer f.Close()
-
-	origStdin := os.Stdin
+func TestRequireConfirm_MissingToken(t *testing.T) {
 	origConfirm := confirmFlag
 	origForce := forceMode
 	origExit := lastExit
 	defer func() {
-		os.Stdin = origStdin
 		confirmFlag = origConfirm
 		forceMode = origForce
 		lastExit = origExit
 	}()
-	os.Stdin = f
 	confirmFlag = ""
 	forceMode = false
 	lastExit = 0
@@ -163,8 +147,8 @@ func TestRequireConfirm_TTY_ReadError(t *testing.T) {
 	if !errors.Is(err, ErrSilent) {
 		t.Fatalf("requireConfirm() = %v", err)
 	}
-	if lastExit != ExitCancelled {
-		t.Fatalf("exit=%d want=%d", lastExit, ExitCancelled)
+	if lastExit != ExitConfirm {
+		t.Fatalf("exit=%d want=%d", lastExit, ExitConfirm)
 	}
 }
 
@@ -183,17 +167,17 @@ func TestRequireConfirm_NonTTY_ExitCancelled(t *testing.T) {
 	lastExit = 0
 	jsonMode = true
 
-	stderr := captureStderr(t, func() {
+	stdout := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"issue", "close", "5", "--project", "group/proj", "--json"})
 		_ = rootCmd.Execute()
 	})
 
-	if lastExit != ExitCancelled {
-		t.Errorf("exit code = %d, want %d (ExitCancelled)", lastExit, ExitCancelled)
+	if lastExit != ExitConfirm {
+		t.Errorf("exit code = %d, want %d (ExitConfirm)", lastExit, ExitConfirm)
 	}
-	for _, want := range []string{`"errorCode": "CANCELLED"`, "confirmation required", `--confirm`} {
-		if !strings.Contains(stderr, want) {
-			t.Errorf("stderr missing %q, got:\n%s", want, stderr)
+	for _, want := range []string{`"code": "E_CONFIRM_REQUIRED"`, "confirmation required", `--confirm`} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("stdout missing %q, got:\n%s", want, stdout)
 		}
 	}
 }
@@ -228,12 +212,14 @@ func TestRequireConfirm_ConfirmToken_AllowsExecution(t *testing.T) {
 	dryRun = false
 	lastExit = 0
 	jsonMode = true
+	payload := map[string]any{"project": "group/proj", "name": "feat/x"}
+	token, _ := newConfirmToken("repo branch delete", payload)
 
 	captureStdout(t, func() {
 		rootCmd.SetArgs([]string{
 			"repo", "branch", "delete",
 			"--project", "group/proj", "--name", "feat/x",
-			"--confirm", "feat/x", "--json",
+			"--confirm", token, "--json",
 		})
 		_ = rootCmd.Execute()
 	})
@@ -242,7 +228,7 @@ func TestRequireConfirm_ConfirmToken_AllowsExecution(t *testing.T) {
 		t.Errorf("exit code = %d, want %d", lastExit, ExitOK)
 	}
 	if !deleted {
-		t.Error("expected DeleteBranch API call when --confirm matches branch name")
+		t.Error("expected DeleteBranch API call when --confirm token matches operation")
 	}
 }
 
@@ -274,66 +260,63 @@ func TestDryRun_Delete_NoForceRequired(t *testing.T) {
 	if lastExit != ExitOK {
 		t.Errorf("exit code = %d, want %d", lastExit, ExitOK)
 	}
-	for _, want := range []string{`"dryRun": true`, `"action": "release delete"`, `"tag": "v1.0.0"`} {
+	for _, want := range []string{`"confirm_token"`, `"action": "release delete"`, `"tag": "v1.0.0"`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("stdout missing %q, got:\n%s", want, out)
 		}
 	}
 }
 
-func TestRequireConfirm_HookTTY_Accepted(t *testing.T) {
-	origIn := readConfirmInputFunc
-	origTTY := stdinIsTerminalFunc
-	defer func() {
-		readConfirmInputFunc = origIn
-		stdinIsTerminalFunc = origTTY
-	}()
-	stdinIsTerminalFunc = func(*os.File) bool { return true }
-	readConfirmInputFunc = func() (string, error) { return "secret", nil }
+func TestRequireConfirm_GeneratedTokenAccepted(t *testing.T) {
+	origConfirm := confirmFlag
+	defer func() { confirmFlag = origConfirm }()
+	payload := map[string]any{"name": "secret"}
+	token, _ := newConfirmToken("delete branch", payload)
+	confirmFlag = token
 
-	if err := requireConfirm(&cobra.Command{}, "delete branch", "secret"); err != nil {
+	if err := requireConfirm(&cobra.Command{}, "delete branch", payload); err != nil {
 		t.Fatalf("requireConfirm() = %v", err)
 	}
 }
 
-func TestRequireConfirm_HookTTY_Rejected(t *testing.T) {
-	origIn := readConfirmInputFunc
-	origTTY := stdinIsTerminalFunc
+func TestRequireConfirm_TokenPayloadMismatch(t *testing.T) {
 	origExit := lastExit
+	origConfirm := confirmFlag
 	defer func() {
-		readConfirmInputFunc = origIn
-		stdinIsTerminalFunc = origTTY
+		confirmFlag = origConfirm
 		lastExit = origExit
 	}()
-	stdinIsTerminalFunc = func(*os.File) bool { return true }
-	readConfirmInputFunc = func() (string, error) { return "wrong", nil }
+	token, _ := newConfirmToken("delete branch", map[string]any{"name": "secret"})
+	confirmFlag = token
 	lastExit = 0
 
-	if err := requireConfirm(&cobra.Command{}, "delete branch", "secret"); err == nil {
+	if err := requireConfirm(&cobra.Command{}, "delete branch", map[string]any{"name": "other"}); err == nil {
 		t.Fatal("expected rejection")
 	}
-	if lastExit != ExitCancelled {
-		t.Fatalf("exit=%d want=%d", lastExit, ExitCancelled)
+	if lastExit != ExitConflict {
+		t.Fatalf("exit=%d want=%d", lastExit, ExitConflict)
 	}
 }
 
-func TestRequireConfirm_HookTTY_ReadError(t *testing.T) {
-	origIn := readConfirmInputFunc
-	origTTY := stdinIsTerminalFunc
+func TestRequireConfirm_ExpiredToken(t *testing.T) {
 	origExit := lastExit
+	origConfirm := confirmFlag
+	origNow := confirmNow
 	defer func() {
-		readConfirmInputFunc = origIn
-		stdinIsTerminalFunc = origTTY
+		confirmFlag = origConfirm
+		confirmNow = origNow
 		lastExit = origExit
 	}()
-	stdinIsTerminalFunc = func(*os.File) bool { return true }
-	readConfirmInputFunc = func() (string, error) { return "", io.EOF }
+	payload := map[string]any{"name": "secret"}
+	token, expires := newConfirmToken("delete branch", payload)
+	confirmFlag = token
+	confirmNow = func() time.Time { return expires.Add(time.Second) }
 	lastExit = 0
 
-	if err := requireConfirm(&cobra.Command{}, "delete branch", "secret"); err == nil {
-		t.Fatal("expected read error")
+	if err := requireConfirm(&cobra.Command{}, "delete branch", payload); err == nil {
+		t.Fatal("expected expired token error")
 	}
-	if lastExit != ExitCancelled {
-		t.Fatalf("exit=%d want=%d", lastExit, ExitCancelled)
+	if lastExit != ExitConflict {
+		t.Fatalf("exit=%d want=%d", lastExit, ExitConflict)
 	}
 }

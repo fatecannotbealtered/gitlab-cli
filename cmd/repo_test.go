@@ -104,7 +104,7 @@ func TestRepoBranchCreate_DryRun_JSON(t *testing.T) {
 		rootCmd.SetArgs([]string{"repo", "branch", "create", "--project", "1", "--name", "feature", "--ref", "main", "--dry-run", "--json"})
 		_ = rootCmd.Execute()
 	})
-	for _, want := range []string{`"dryRun": true`, `"action": "repo branch create"`} {
+	for _, want := range []string{`"confirm_token"`, `"action": "repo branch create"`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in dry-run output, got:\n%s", want, out)
 		}
@@ -125,7 +125,7 @@ func TestRepoBranchDelete_DryRun_JSON(t *testing.T) {
 		rootCmd.SetArgs([]string{"repo", "branch", "delete", "--project", "1", "--name", "feature", "--dry-run", "--json"})
 		_ = rootCmd.Execute()
 	})
-	for _, want := range []string{`"dryRun": true`, `"action": "repo branch delete"`} {
+	for _, want := range []string{`"confirm_token"`, `"action": "repo branch delete"`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in dry-run output, got:\n%s", want, out)
 		}
@@ -152,7 +152,7 @@ func TestRepoFileCreate_DryRun_JSON(t *testing.T) {
 		})
 		_ = rootCmd.Execute()
 	})
-	for _, want := range []string{`"dryRun": true`, `"action": "repo file create"`} {
+	for _, want := range []string{`"confirm_token"`, `"action": "repo file create"`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in dry-run output, got:\n%s", want, out)
 		}
@@ -179,7 +179,7 @@ func TestRepoFileUpdate_DryRun_JSON(t *testing.T) {
 		})
 		_ = rootCmd.Execute()
 	})
-	for _, want := range []string{`"dryRun": true`, `"action": "repo file update"`} {
+	for _, want := range []string{`"confirm_token"`, `"action": "repo file update"`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in dry-run output, got:\n%s", want, out)
 		}
@@ -205,7 +205,7 @@ func TestRepoFileDelete_DryRun_JSON(t *testing.T) {
 		})
 		_ = rootCmd.Execute()
 	})
-	for _, want := range []string{`"dryRun": true`, `"action": "repo file delete"`} {
+	for _, want := range []string{`"confirm_token"`, `"action": "repo file delete"`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in dry-run output, got:\n%s", want, out)
 		}
@@ -347,7 +347,7 @@ func TestRepo_File_Create_DryRun_JSON(t *testing.T) {
 		})
 		_ = rootCmd.Execute()
 	})
-	for _, want := range []string{`"dryRun": true`, `"action": "repo file create"`} {
+	for _, want := range []string{`"confirm_token"`, `"action": "repo file create"`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in dry-run output, got:\n%s", want, out)
 		}
@@ -369,7 +369,7 @@ func TestRepo_File_Update_DryRun_JSON(t *testing.T) {
 		})
 		_ = rootCmd.Execute()
 	})
-	for _, want := range []string{`"dryRun": true`, `"action": "repo file update"`} {
+	for _, want := range []string{`"confirm_token"`, `"action": "repo file update"`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in dry-run output, got:\n%s", want, out)
 		}
@@ -390,7 +390,7 @@ func TestRepo_File_Delete_DryRun_JSON(t *testing.T) {
 		})
 		_ = rootCmd.Execute()
 	})
-	for _, want := range []string{`"dryRun": true`, `"action": "repo file delete"`} {
+	for _, want := range []string{`"confirm_token"`, `"action": "repo file delete"`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in dry-run output, got:\n%s", want, out)
 		}
@@ -432,7 +432,7 @@ func TestRepo_Branch_Create_DryRun_JSON(t *testing.T) {
 		})
 		_ = rootCmd.Execute()
 	})
-	for _, want := range []string{`"dryRun": true`, `"action": "repo branch create"`} {
+	for _, want := range []string{`"confirm_token"`, `"action": "repo branch create"`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in dry-run output, got:\n%s", want, out)
 		}
@@ -452,7 +452,7 @@ func TestRepo_Branch_Delete_DryRun_JSON(t *testing.T) {
 		})
 		_ = rootCmd.Execute()
 	})
-	for _, want := range []string{`"dryRun": true`, `"action": "repo branch delete"`} {
+	for _, want := range []string{`"confirm_token"`, `"action": "repo branch delete"`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in dry-run output, got:\n%s", want, out)
 		}
@@ -620,12 +620,14 @@ func TestRepo_File_Delete_JSON(t *testing.T) {
 	dryRun = false
 	lastExit = 0
 	captureStdout(t, func() {
-		rootCmd.SetArgs([]string{
+		args := []string{
 			"repo", "file", "delete",
 			"--project", "foo/bar", "--path", "README.md",
 			"--branch", "main", "--commit-message", "delete readme",
-			"--json", "--force",
-		})
+			"--json",
+		}
+		args = append(args, confirmArgsForTest(t, "repo file delete", map[string]any{"project": "foo/bar", "path": "README.md", "branch": "main", "commitMessage": "delete readme"})...)
+		rootCmd.SetArgs(args)
 		_ = rootCmd.Execute()
 	})
 	if lastExit != ExitOK {
@@ -677,7 +679,9 @@ func TestRepo_Branch_Delete_JSON(t *testing.T) {
 	dryRun = false
 	lastExit = 0
 	captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"repo", "branch", "delete", "--project", "foo/bar", "--name", "feat", "--json", "--force"})
+		args := []string{"repo", "branch", "delete", "--project", "foo/bar", "--name", "feat", "--json"}
+		args = append(args, confirmArgsForTest(t, "repo branch delete", map[string]any{"project": "foo/bar", "name": "feat"})...)
+		rootCmd.SetArgs(args)
 		_ = rootCmd.Execute()
 	})
 	if lastExit != ExitOK {
@@ -1280,7 +1284,9 @@ func TestRepo_File_Delete_PlainText(t *testing.T) {
 	t.Setenv("GITLAB_CLI_HOST", srv.URL)
 	t.Setenv("GITLAB_CLI_TOKEN", "test")
 	out := captureCombinedOutput(t, func() {
-		rootCmd.SetArgs([]string{"repo", "file", "delete", "--project", "g/p", "--path", "README.md", "--branch", "main", "--commit-message", "del", "--force"})
+		args := []string{"repo", "file", "delete", "--project", "g/p", "--path", "README.md", "--branch", "main", "--commit-message", "del"}
+		args = append(args, confirmArgsForTest(t, "repo file delete", map[string]any{"project": "g/p", "path": "README.md", "branch": "main", "commitMessage": "del"})...)
+		rootCmd.SetArgs(args)
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, "Deleted") {
@@ -1298,8 +1304,8 @@ func TestRepo_File_Delete_ConfirmRejected(t *testing.T) {
 	lastExit = 0
 	rootCmd.SetArgs([]string{"repo", "file", "delete", "--project", "g/p", "--path", "README.md", "--branch", "main", "--commit-message", "del", "--confirm", "wrong"})
 	_ = rootCmd.Execute()
-	if lastExit != ExitCancelled {
-		t.Errorf("exit = %d, want %d", lastExit, ExitCancelled)
+	if lastExit != ExitConflict {
+		t.Errorf("exit = %d, want %d", lastExit, ExitConflict)
 	}
 }
 
@@ -1315,7 +1321,9 @@ func TestRepo_File_Delete_APIError(t *testing.T) {
 	origExit := lastExit
 	defer func() { lastExit = origExit }()
 	lastExit = 0
-	rootCmd.SetArgs([]string{"repo", "file", "delete", "--project", "g/p", "--path", "README.md", "--branch", "main", "--commit-message", "del", "--force"})
+	args := []string{"repo", "file", "delete", "--project", "g/p", "--path", "README.md", "--branch", "main", "--commit-message", "del"}
+	args = append(args, confirmArgsForTest(t, "repo file delete", map[string]any{"project": "g/p", "path": "README.md", "branch": "main", "commitMessage": "del"})...)
+	rootCmd.SetArgs(args)
 	_ = rootCmd.Execute()
 	if lastExit == ExitOK {
 		t.Errorf("expected non-zero exit, got %d", lastExit)
@@ -1377,7 +1385,9 @@ func TestRepo_Branch_Delete_PlainText(t *testing.T) {
 	t.Setenv("GITLAB_CLI_HOST", srv.URL)
 	t.Setenv("GITLAB_CLI_TOKEN", "test")
 	out := captureCombinedOutput(t, func() {
-		rootCmd.SetArgs([]string{"repo", "branch", "delete", "--project", "g/p", "--name", "feat", "--force"})
+		args := []string{"repo", "branch", "delete", "--project", "g/p", "--name", "feat"}
+		args = append(args, confirmArgsForTest(t, "repo branch delete", map[string]any{"project": "g/p", "name": "feat"})...)
+		rootCmd.SetArgs(args)
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, "Deleted branch") {
@@ -1395,8 +1405,8 @@ func TestRepo_Branch_Delete_ConfirmRejected(t *testing.T) {
 	lastExit = 0
 	rootCmd.SetArgs([]string{"repo", "branch", "delete", "--project", "g/p", "--name", "feat", "--confirm", "wrong"})
 	_ = rootCmd.Execute()
-	if lastExit != ExitCancelled {
-		t.Errorf("exit = %d, want %d", lastExit, ExitCancelled)
+	if lastExit != ExitConflict {
+		t.Errorf("exit = %d, want %d", lastExit, ExitConflict)
 	}
 }
 
@@ -1559,7 +1569,9 @@ func TestRepo_File_Delete_NewClientError(t *testing.T) {
 	origExit := lastExit
 	defer func() { lastExit = origExit }()
 	lastExit = 0
-	rootCmd.SetArgs([]string{"repo", "file", "delete", "--project", "g/p", "--path", "a.md", "--branch", "main", "--commit-message", "del", "--force"})
+	args := []string{"repo", "file", "delete", "--project", "g/p", "--path", "a.md", "--branch", "main", "--commit-message", "del"}
+	args = append(args, confirmArgsForTest(t, "repo file delete", map[string]any{"project": "g/p", "path": "a.md", "branch": "main", "commitMessage": "del"})...)
+	rootCmd.SetArgs(args)
 	_ = rootCmd.Execute()
 	if lastExit != ExitAuth {
 		t.Errorf("exit = %d, want %d", lastExit, ExitAuth)
@@ -1625,7 +1637,9 @@ func TestRepo_Branch_Delete_NewClientError(t *testing.T) {
 	origExit := lastExit
 	defer func() { lastExit = origExit }()
 	lastExit = 0
-	rootCmd.SetArgs([]string{"repo", "branch", "delete", "--project", "g/p", "--name", "feat", "--force"})
+	args := []string{"repo", "branch", "delete", "--project", "g/p", "--name", "feat"}
+	args = append(args, confirmArgsForTest(t, "repo branch delete", map[string]any{"project": "g/p", "name": "feat"})...)
+	rootCmd.SetArgs(args)
 	_ = rootCmd.Execute()
 	if lastExit != ExitAuth {
 		t.Errorf("exit = %d, want %d", lastExit, ExitAuth)

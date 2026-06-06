@@ -91,7 +91,7 @@ func TestReleaseCreate_DryRun_JSON(t *testing.T) {
 		})
 		_ = rootCmd.Execute()
 	})
-	for _, want := range []string{`"dryRun": true`, `"action": "release create"`} {
+	for _, want := range []string{`"confirm_token"`, `"action": "release create"`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in dry-run output, got:\n%s", want, out)
 		}
@@ -116,7 +116,7 @@ func TestReleaseUpdate_DryRun_JSON(t *testing.T) {
 		})
 		_ = rootCmd.Execute()
 	})
-	for _, want := range []string{`"dryRun": true`, `"action": "release update"`} {
+	for _, want := range []string{`"confirm_token"`, `"action": "release update"`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in dry-run output, got:\n%s", want, out)
 		}
@@ -141,7 +141,7 @@ func TestReleaseDelete_DryRun_JSON(t *testing.T) {
 		})
 		_ = rootCmd.Execute()
 	})
-	for _, want := range []string{`"dryRun": true`, `"action": "release delete"`} {
+	for _, want := range []string{`"confirm_token"`, `"action": "release delete"`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in dry-run output, got:\n%s", want, out)
 		}
@@ -278,7 +278,7 @@ func TestRelease_Create_DryRun_JSON(t *testing.T) {
 		})
 		_ = rootCmd.Execute()
 	})
-	for _, want := range []string{`"dryRun": true`, `"action": "release create"`} {
+	for _, want := range []string{`"confirm_token"`, `"action": "release create"`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in dry-run output, got:\n%s", want, out)
 		}
@@ -298,7 +298,7 @@ func TestRelease_Update_DryRun_JSON(t *testing.T) {
 		})
 		_ = rootCmd.Execute()
 	})
-	for _, want := range []string{`"dryRun": true`, `"action": "release update"`} {
+	for _, want := range []string{`"confirm_token"`, `"action": "release update"`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in dry-run output, got:\n%s", want, out)
 		}
@@ -318,7 +318,7 @@ func TestRelease_Delete_DryRun_JSON(t *testing.T) {
 		})
 		_ = rootCmd.Execute()
 	})
-	for _, want := range []string{`"dryRun": true`, `"action": "release delete"`} {
+	for _, want := range []string{`"confirm_token"`, `"action": "release delete"`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in dry-run output, got:\n%s", want, out)
 		}
@@ -392,7 +392,9 @@ func TestRelease_Delete_JSON(t *testing.T) {
 	dryRun = false
 	lastExit = 0
 	captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"release", "delete", "--project", "foo/bar", "--tag", "v1.0", "--json", "--force"})
+		args := []string{"release", "delete", "--project", "foo/bar", "--tag", "v1.0", "--json"}
+		args = append(args, confirmArgsForTest(t, "release delete", map[string]any{"project": "foo/bar", "tag": "v1.0"})...)
+		rootCmd.SetArgs(args)
 		_ = rootCmd.Execute()
 	})
 	if lastExit != ExitOK {
@@ -748,7 +750,9 @@ func TestRelease_Delete_PlainText(t *testing.T) {
 	t.Setenv("GITLAB_CLI_HOST", srv.URL)
 	t.Setenv("GITLAB_CLI_TOKEN", "test")
 	out := captureCombinedOutput(t, func() {
-		rootCmd.SetArgs([]string{"release", "delete", "--project", "g/p", "--tag", "v1.0", "--force"})
+		args := []string{"release", "delete", "--project", "g/p", "--tag", "v1.0"}
+		args = append(args, confirmArgsForTest(t, "release delete", map[string]any{"project": "g/p", "tag": "v1.0"})...)
+		rootCmd.SetArgs(args)
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, "Deleted release") {
@@ -761,7 +765,9 @@ func TestRelease_Delete_NewClientError(t *testing.T) {
 	origExit := lastExit
 	defer func() { lastExit = origExit }()
 	lastExit = 0
-	rootCmd.SetArgs([]string{"release", "delete", "--project", "g/p", "--tag", "v1.0", "--force"})
+	args := []string{"release", "delete", "--project", "g/p", "--tag", "v1.0"}
+	args = append(args, confirmArgsForTest(t, "release delete", map[string]any{"project": "g/p", "tag": "v1.0"})...)
+	rootCmd.SetArgs(args)
 	_ = rootCmd.Execute()
 	if lastExit != ExitAuth {
 		t.Errorf("exit = %d, want %d", lastExit, ExitAuth)
@@ -780,7 +786,9 @@ func TestRelease_Delete_APIError(t *testing.T) {
 	origExit := lastExit
 	defer func() { lastExit = origExit }()
 	lastExit = 0
-	rootCmd.SetArgs([]string{"release", "delete", "--project", "g/p", "--tag", "v1.0", "--force"})
+	args := []string{"release", "delete", "--project", "g/p", "--tag", "v1.0"}
+	args = append(args, confirmArgsForTest(t, "release delete", map[string]any{"project": "g/p", "tag": "v1.0"})...)
+	rootCmd.SetArgs(args)
 	_ = rootCmd.Execute()
 	if lastExit == ExitOK {
 		t.Errorf("expected non-zero exit, got %d", lastExit)
@@ -825,7 +833,7 @@ func TestRelease_Delete_ConfirmRejected(t *testing.T) {
 	lastExit = 0
 	rootCmd.SetArgs([]string{"release", "delete", "--project", "g/p", "--tag", "v1.0", "--confirm", "wrong"})
 	_ = rootCmd.Execute()
-	if lastExit != ExitCancelled {
-		t.Errorf("exit = %d, want %d", lastExit, ExitCancelled)
+	if lastExit != ExitConflict {
+		t.Errorf("exit = %d, want %d", lastExit, ExitConflict)
 	}
 }

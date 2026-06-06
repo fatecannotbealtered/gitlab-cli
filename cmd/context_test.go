@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -39,10 +38,7 @@ func TestContext_NotConfigured_JSON(t *testing.T) {
 		_ = rootCmd.Execute()
 	})
 
-	var result map[string]any
-	if err := json.Unmarshal([]byte(out), &result); err != nil {
-		t.Fatalf("output is not valid JSON: %v\noutput:\n%s", err, out)
-	}
+	result := unwrapJSONDataMap(t, out)
 
 	gitlab, ok := result["gitlab"].(map[string]any)
 	if !ok {
@@ -76,10 +72,7 @@ func TestContext_HappyPath_JSON(t *testing.T) {
 		_ = rootCmd.Execute()
 	})
 
-	var result map[string]any
-	if err := json.Unmarshal([]byte(out), &result); err != nil {
-		t.Fatalf("output is not valid JSON: %v\noutput:\n%s", err, out)
-	}
+	result := unwrapJSONDataMap(t, out)
 
 	gitlab, ok := result["gitlab"].(map[string]any)
 	if !ok {
@@ -113,10 +106,7 @@ func TestContext_AuthenticatedNoGitLabRemote_JSON(t *testing.T) {
 		_ = rootCmd.Execute()
 	})
 
-	var result map[string]any
-	if err := json.Unmarshal([]byte(out), &result); err != nil {
-		t.Fatalf("output is not valid JSON: %v\noutput:\n%s", err, out)
-	}
+	result := unwrapJSONDataMap(t, out)
 
 	gitlab, ok := result["gitlab"].(map[string]any)
 	if !ok {
@@ -152,10 +142,7 @@ func TestContext_Get_NoGitRepo(t *testing.T) {
 		_ = rootCmd.Execute()
 	})
 
-	var result map[string]any
-	if err := json.Unmarshal([]byte(out), &result); err != nil {
-		t.Fatalf("output is not valid JSON: %v\noutput:\n%s", err, out)
-	}
+	result := unwrapJSONDataMap(t, out)
 	// git section should be absent or empty since we're not in a git repo
 	if git, ok := result["git"]; ok && git != nil {
 		t.Logf("note: git section present (may be inside a git repo): %v", git)
@@ -488,10 +475,7 @@ func TestContext_APIUserError_JSON(t *testing.T) {
 		_ = rootCmd.Execute()
 	})
 
-	var result map[string]any
-	if err := json.Unmarshal([]byte(out), &result); err != nil {
-		t.Fatalf("invalid JSON: %v\n%s", err, out)
-	}
+	result := unwrapJSONDataMap(t, out)
 	gitlab := result["gitlab"].(map[string]any)
 	if gitlab["authenticated"] != false {
 		t.Fatalf("expected authenticated=false, got %v", gitlab["authenticated"])
@@ -530,10 +514,7 @@ func TestContext_ProjectLookupError_JSON(t *testing.T) {
 		_ = rootCmd.Execute()
 	})
 
-	var result map[string]any
-	if err := json.Unmarshal([]byte(out), &result); err != nil {
-		t.Fatalf("invalid JSON: %v\n%s", err, out)
-	}
+	result := unwrapJSONDataMap(t, out)
 	gitlab := result["gitlab"].(map[string]any)
 	if gitlab["projectError"] == nil {
 		t.Fatalf("expected projectError in output:\n%s", out)

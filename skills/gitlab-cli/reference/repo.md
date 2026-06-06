@@ -10,7 +10,7 @@ gitlab-cli repo file create --project G --path src/x.go --branch main \
 gitlab-cli repo file update --project G --path src/x.go --branch main \
   --content "..." --commit-message "update x"
 gitlab-cli repo file delete --project G --path src/x.go --branch main \
-  --commit-message "remove x" --confirm src/x.go
+  --commit-message "remove x" --confirm <confirm_token>
 ```
 
 Use `--content-file` only for trusted local paths.
@@ -20,7 +20,7 @@ Use `--content-file` only for trusted local paths.
 ```bash
 gitlab-cli repo branch list --project G --compact
 gitlab-cli repo branch create --project G --name feat/x --ref main
-gitlab-cli repo branch delete --project G --name feat/x --confirm feat/x
+gitlab-cli repo branch delete --project G --name feat/x --confirm <confirm_token>
 ```
 
 ## Commits & tree

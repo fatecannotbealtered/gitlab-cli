@@ -130,6 +130,9 @@ var pipelineCurrentCmd = &cobra.Command{
 			return handleAPIError(err, jsonMode)
 		}
 		if len(pipelines) == 0 {
+			if jsonMode {
+				return failNotFound(fmt.Sprintf("no pipelines found for branch %q", ctx.CurrentBranch))
+			}
 			output.Info(fmt.Sprintf("No pipelines found for branch %q.", ctx.CurrentBranch))
 			setExitCode(ExitNotFound)
 			return ErrSilent
@@ -162,10 +165,11 @@ var pipelineCreateCmd = &cobra.Command{
 			return err
 		}
 
-		if dryRunOutput("create pipeline", map[string]any{"project": project, "ref": ref}) {
+		confirmPayload := map[string]any{"project": project, "ref": ref, "variables": varFlags}
+		if dryRunOutput("create pipeline", confirmPayload) {
 			return nil
 		}
-		if err := requireConfirm(cmd, fmt.Sprintf("create pipeline on ref %q in %s", ref, project), ref); err != nil {
+		if err := requireConfirm(cmd, "create pipeline", confirmPayload); err != nil {
 			return err
 		}
 
@@ -233,10 +237,11 @@ var pipelineCancelCmd = &cobra.Command{
 		if err != nil {
 			return failArg("pipeline_id must be an integer")
 		}
-		if dryRunOutput("cancel pipeline", map[string]any{"project": project, "pipeline_id": pipelineID}) {
+		confirmPayload := map[string]any{"project": project, "pipeline_id": pipelineID}
+		if dryRunOutput("cancel pipeline", confirmPayload) {
 			return nil
 		}
-		if err := requireConfirm(cmd, fmt.Sprintf("cancel pipeline #%d in %s", pipelineID, project), strconv.Itoa(pipelineID)); err != nil {
+		if err := requireConfirm(cmd, "cancel pipeline", confirmPayload); err != nil {
 			return err
 		}
 		client, _, err := newClient()
@@ -355,17 +360,13 @@ var pipelineWaitCmd = &cobra.Command{
 				return nil
 			}
 			if timeoutSec > 0 && elapsed >= time.Duration(timeoutSec)*time.Second {
-				output.Error(fmt.Sprintf("timed out waiting for pipeline #%d", pipelineID))
-				setExitCode(ExitTimeout)
-				return ErrSilent
+				return failWithCode(fmt.Sprintf("timed out waiting for pipeline #%d", pipelineID), ExitTimeout, output.ErrTimeout)
 			}
 			if !jsonMode && !quietMode {
 				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Waiting... status=%s (%.0fs elapsed)\n", p.Status, elapsed.Seconds())
 			}
 			if err := sleepContext(cmd.Context(), interval); err != nil {
-				output.Error(err.Error())
-				setExitCode(ExitNetwork)
-				return ErrSilent
+				return failWithCode(err.Error(), ExitNetwork, output.ErrNetwork)
 			}
 		}
 	},

@@ -273,27 +273,33 @@ func TestPrintErrorJSON(t *testing.T) {
 	defer func() { Compact = origCompact }()
 	Compact = false
 
-	_, stderr := captureStdoutStderr(func() {
+	stdout, stderr := captureStdoutStderr(func() {
 		PrintErrorJSON("not found", 404)
 		PrintErrorJSON("local", 0)
 	})
-	if !strings.Contains(stderr, `"errorCode": "NOT_FOUND"`) {
+	if stderr != "" {
 		t.Errorf("stderr = %q", stderr)
 	}
-	if !strings.Contains(stderr, `"errorCode": "UNKNOWN_ERROR"`) {
-		t.Errorf("status 0 stderr = %q", stderr)
+	if !strings.Contains(stdout, `"ok": false`) || !strings.Contains(stdout, `"code": "E_NOT_FOUND"`) {
+		t.Errorf("stdout = %q", stdout)
+	}
+	if !strings.Contains(stdout, `"code": "E_UNKNOWN"`) {
+		t.Errorf("status 0 stdout = %q", stdout)
 	}
 }
 
 func TestPrintErrorJSONWithCode(t *testing.T) {
-	_, stderr := captureStdoutStderr(func() {
+	stdout, stderr := captureStdoutStderr(func() {
 		PrintErrorJSONWithCode("cancelled", 0, ErrCancelled)
 	})
-	if !strings.Contains(stderr, `"errorCode": "CANCELLED"`) {
+	if stderr != "" {
 		t.Errorf("stderr = %q", stderr)
 	}
-	if !strings.Contains(stderr, "confirmation") {
-		t.Errorf("expected cancelled hint in %q", stderr)
+	if !strings.Contains(stdout, `"code": "E_CANCELLED"`) {
+		t.Errorf("stdout = %q", stdout)
+	}
+	if !strings.Contains(stdout, "confirmation") {
+		t.Errorf("expected cancelled hint in %q", stdout)
 	}
 }
 
@@ -311,11 +317,14 @@ func TestEmitErrorPayload_Fallback(t *testing.T) {
 	emitJSONMarshal = func(any) ([]byte, error) { return nil, errors.New("boom") }
 	defer func() { emitJSONMarshal = orig }()
 
-	_, stderr := captureStdoutStderr(func() {
+	stdout, stderr := captureStdoutStderr(func() {
 		emitErrorPayload("fail", 500, ErrServer)
 	})
-	if !strings.Contains(stderr, `"errorCode": "SERVER_ERROR"`) {
-		t.Errorf("fallback stderr = %q", stderr)
+	if stderr != "" {
+		t.Errorf("stderr = %q", stderr)
+	}
+	if !strings.Contains(stdout, `"code":"E_SERVER"`) {
+		t.Errorf("fallback stdout = %q", stdout)
 	}
 }
 

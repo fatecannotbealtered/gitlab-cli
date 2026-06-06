@@ -39,7 +39,7 @@ The update flow downloads the platform archive and checksums.txt, verifies the
 archive SHA256, extracts the gitlab-cli binary, and replaces the current binary.
 
 Use --check to inspect availability without installing. Writes require
---confirm <version> in non-interactive agent runs.`,
+--dry-run first, then --confirm <confirm_token> in non-interactive agent runs.`,
 	Args: cobra.NoArgs,
 	RunE: runUpdate,
 }
@@ -122,17 +122,27 @@ func runUpdate(cmd *cobra.Command, _ []string) error {
 		return nil
 	}
 
-	confirmToken := plan.TargetVersion
+	confirmPayload := map[string]any{
+		"currentVersion": plan.CurrentVersion,
+		"targetVersion":  plan.TargetVersion,
+		"assetName":      plan.AssetName,
+		"assetURL":       plan.AssetURL,
+		"reinstall":      reinstall,
+	}
 	if dryRun {
+		confirmToken, expires := newConfirmToken("update gitlab-cli", confirmPayload)
 		result["status"] = "dry_run"
-		result["action"] = "update gitlab-cli"
-		result["dryRun"] = true
-		result["confirm"] = confirmToken
+		result["preview"] = map[string]any{
+			"action":  "update gitlab-cli",
+			"changes": []map[string]any{confirmPayload},
+		}
+		result["confirm_token"] = confirmToken
+		result["expires_at"] = expires.Format(time.RFC3339)
 		printUpdateResult(result)
 		return nil
 	}
 
-	if err := requireConfirm(cmd, fmt.Sprintf("update gitlab-cli to %s", plan.TargetVersion), confirmToken); err != nil {
+	if err := requireConfirm(cmd, "update gitlab-cli", confirmPayload); err != nil {
 		return err
 	}
 

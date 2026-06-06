@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"strconv"
 
 	"github.com/fatecannotbealtered/gitlab-cli/internal/api"
 	"github.com/fatecannotbealtered/gitlab-cli/internal/output"
@@ -200,14 +199,15 @@ var labelDeleteCmd = &cobra.Command{
 		if labelID == 0 {
 			return failArg("--label-id is required")
 		}
-		if dryRunOutput("delete label", map[string]any{"project": project, "labelId": labelID}) {
+		confirmPayload := map[string]any{"project": project, "labelId": labelID}
+		if dryRunOutput("delete label", confirmPayload) {
 			return nil
 		}
 		client, _, err := newClient()
 		if err != nil {
 			return err
 		}
-		if err := requireConfirm(cmd, fmt.Sprintf("Type the label ID (%d) to confirm deletion", labelID), strconv.Itoa(labelID)); err != nil {
+		if err := requireConfirm(cmd, "delete label", confirmPayload); err != nil {
 			return err
 		}
 		if err := client.Labels.Delete(apiCtx(), project, labelID); err != nil {

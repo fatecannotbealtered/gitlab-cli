@@ -17,7 +17,7 @@ gitlab-cli mr comment list --project G 42 --compact
 
 ## Write
 
-Always preview: `--dry-run`. Then confirm: `--confirm <token>` (token is usually the IID).
+Always preview: `--dry-run`. Then confirm with `--confirm <confirm_token>` from `data.confirm_token`.
 
 ```bash
 # Create
@@ -32,18 +32,19 @@ gitlab-cli mr approve --project G 42
 gitlab-cli mr unapprove --project G 42
 
 # Merge / close (requires confirmation)
-gitlab-cli mr merge --project G 42 --confirm 42
-gitlab-cli mr merge --project G 42 --confirm 42 --should-remove-source-branch
-gitlab-cli mr close --project G 42 --confirm 42
+gitlab-cli mr merge --project G 42 --dry-run
+gitlab-cli mr merge --project G 42 --confirm <confirm_token>
+gitlab-cli mr merge --project G 42 --confirm <confirm_token> --should-remove-source-branch
+gitlab-cli mr close --project G 42 --confirm <confirm_token>
 gitlab-cli mr reopen --project G 42
 
 # Comments
 gitlab-cli mr comment add --project G 42 --body "LGTM, nit: rename foo"
 gitlab-cli mr comment add --project G 42 --body-file review.txt
-gitlab-cli mr comment delete --project G 42 --note-id 99 --confirm 99
+gitlab-cli mr comment delete --project G 42 --note-id 99 --confirm <confirm_token>
 ```
 
-## Flat MR JSON (excerpt)
+## MR data payload (excerpt)
 
 ```json
 {
@@ -58,7 +59,7 @@ gitlab-cli mr comment delete --project G 42 --note-id 99 --confirm 99
 }
 ```
 
-## List JSON envelope
+## List data payload
 
 ```json
 {"items":[...],"count":5,"limit":20,"hasMore":true,"all":false}
@@ -80,7 +81,8 @@ gitlab-cli mr approve --project G 42
 See [ci.md](ci.md). After pipeline success:
 
 ```bash
-gitlab-cli mr merge --project G 42 --confirm 42
+gitlab-cli mr merge --project G 42 --dry-run
+gitlab-cli mr merge --project G 42 --confirm <confirm_token>
 ```
 
 ## Notes

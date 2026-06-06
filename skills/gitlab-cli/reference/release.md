@@ -7,10 +7,11 @@ gitlab-cli release get --project G --tag v1.0.0
 gitlab-cli release create --project G --tag v1.0.0 --name "v1.0.0" \
   --ref main --description "..."
 gitlab-cli release update --project G --tag v1.0.0 --name "v1.0.0"
-gitlab-cli release delete --project G --tag v1.0.0 --confirm v1.0.0
+gitlab-cli release delete --project G --tag v1.0.0 --dry-run
+gitlab-cli release delete --project G --tag v1.0.0 --confirm <confirm_token>
 ```
 
-## Flat Release JSON (excerpt)
+## Release data payload (excerpt)
 
 ```json
 {

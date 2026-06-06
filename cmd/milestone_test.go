@@ -38,7 +38,7 @@ func TestMilestoneCreate_DryRun_JSON(t *testing.T) {
 		rootCmd.SetArgs([]string{"milestone", "create", "--project", "42", "--title", "v1.0", "--dry-run", "--json"})
 		_ = rootCmd.Execute()
 	})
-	for _, want := range []string{`"dryRun": true`, `"action": "create milestone"`} {
+	for _, want := range []string{`"confirm_token"`, `"action": "create milestone"`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in dry-run output, got:\n%s", want, out)
 		}
@@ -59,7 +59,7 @@ func TestMilestoneClose_DryRun_JSON(t *testing.T) {
 		rootCmd.SetArgs([]string{"milestone", "close", "--project", "42", "--milestone-id", "5", "--dry-run", "--json"})
 		_ = rootCmd.Execute()
 	})
-	for _, want := range []string{`"dryRun": true`, `"action": "close milestone"`} {
+	for _, want := range []string{`"confirm_token"`, `"action": "close milestone"`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in dry-run output, got:\n%s", want, out)
 		}
@@ -153,7 +153,7 @@ func TestMilestone_Update_DryRun_JSON(t *testing.T) {
 		})
 		_ = rootCmd.Execute()
 	})
-	for _, want := range []string{`"dryRun": true`, `"action": "update milestone"`} {
+	for _, want := range []string{`"confirm_token"`, `"action": "update milestone"`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in dry-run output, got:\n%s", want, out)
 		}
@@ -174,7 +174,7 @@ func TestMilestone_Close_DryRun_JSON(t *testing.T) {
 		})
 		_ = rootCmd.Execute()
 	})
-	for _, want := range []string{`"dryRun": true`, `"action": "close milestone"`} {
+	for _, want := range []string{`"confirm_token"`, `"action": "close milestone"`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in dry-run output, got:\n%s", want, out)
 		}
@@ -241,7 +241,9 @@ func TestMilestone_Close_JSON(t *testing.T) {
 	defer func() { dryRun = origDR; jsonMode = origJM }()
 	dryRun = false
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"milestone", "close", "--project", "foo/bar", "--milestone-id", "1", "--json", "--force"})
+		args := []string{"milestone", "close", "--project", "foo/bar", "--milestone-id", "1", "--json"}
+		args = append(args, confirmArgsForTest(t, "close milestone", map[string]any{"project": "foo/bar", "milestoneId": 1})...)
+		rootCmd.SetArgs(args)
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, `"closed"`) {
@@ -691,7 +693,9 @@ func TestMilestone_Close_MissingAuth(t *testing.T) {
 	defer func() { lastExit = origExit; dryRun = origDR }()
 	lastExit = 0
 	dryRun = false
-	rootCmd.SetArgs([]string{"milestone", "close", "--project", "foo/bar", "--milestone-id", "1", "--force"})
+	args := []string{"milestone", "close", "--project", "foo/bar", "--milestone-id", "1"}
+	args = append(args, confirmArgsForTest(t, "close milestone", map[string]any{"project": "foo/bar", "milestoneId": 1})...)
+	rootCmd.SetArgs(args)
 	_ = rootCmd.Execute()
 	if lastExit != ExitAuth {
 		t.Errorf("exit code = %d, want %d", lastExit, ExitAuth)
@@ -729,7 +733,9 @@ func TestMilestone_Close_APIError(t *testing.T) {
 	defer func() { dryRun = origDR; lastExit = origExit }()
 	dryRun = false
 	lastExit = 0
-	rootCmd.SetArgs([]string{"milestone", "close", "--project", "foo/bar", "--milestone-id", "1", "--force"})
+	args := []string{"milestone", "close", "--project", "foo/bar", "--milestone-id", "1"}
+	args = append(args, confirmArgsForTest(t, "close milestone", map[string]any{"project": "foo/bar", "milestoneId": 1})...)
+	rootCmd.SetArgs(args)
 	_ = rootCmd.Execute()
 	if lastExit == ExitOK {
 		t.Errorf("expected non-zero exit for API error, got %d", lastExit)
@@ -750,7 +756,9 @@ func TestMilestone_Close_PlainText(t *testing.T) {
 	dryRun = false
 	setTextFormatForTest(t)
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"milestone", "close", "--project", "foo/bar", "--milestone-id", "1", "--force"})
+		args := []string{"milestone", "close", "--project", "foo/bar", "--milestone-id", "1"}
+		args = append(args, confirmArgsForTest(t, "close milestone", map[string]any{"project": "foo/bar", "milestoneId": 1})...)
+		rootCmd.SetArgs(args)
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, "Closed") {

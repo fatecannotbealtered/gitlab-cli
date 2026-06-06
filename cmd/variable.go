@@ -336,11 +336,12 @@ var variableDeleteCmd = &cobra.Command{
 		}
 		envScope := parseEnvScopeFilter(cmd)
 
-		if dryRunOutput("delete variable", map[string]any{
+		confirmPayload := map[string]any{
 			"project":  project,
 			"key":      key,
 			"envScope": envScope,
-		}) {
+		}
+		if dryRunOutput("delete variable", confirmPayload) {
 			return nil
 		}
 
@@ -349,7 +350,7 @@ var variableDeleteCmd = &cobra.Command{
 			return err
 		}
 
-		if err := requireConfirm(cmd, fmt.Sprintf("Type %q to confirm deletion", key), key); err != nil {
+		if err := requireConfirm(cmd, "delete variable", confirmPayload); err != nil {
 			return err
 		}
 

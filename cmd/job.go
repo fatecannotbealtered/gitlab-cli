@@ -207,15 +207,11 @@ var jobArtifactsCmd = &cobra.Command{
 			return failArg("job_id must be an integer")
 		}
 		if err := validateOutputPath(outPath); err != nil {
-			output.Error(err.Error())
-			setExitCode(ExitBadArgs)
-			return ErrSilent
+			return failArg(err.Error())
 		}
 		f, err := os.OpenFile(outPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 		if err != nil {
-			output.Error("creating output file: " + err.Error())
-			setExitCode(ExitNetwork)
-			return ErrSilent
+			return failWithCode("creating output file: "+err.Error(), ExitNetwork, output.ErrNetwork)
 		}
 		if err := client.Jobs.ArtifactsTo(apiCtx(), project, jobID, f); err != nil {
 			_ = f.Close()
@@ -223,9 +219,7 @@ var jobArtifactsCmd = &cobra.Command{
 			return handleAPIError(err, jsonMode)
 		}
 		if err := closeOutputFile(f); err != nil {
-			output.Error("closing output file: " + err.Error())
-			setExitCode(ExitNetwork)
-			return ErrSilent
+			return failWithCode("closing output file: "+err.Error(), ExitNetwork, output.ErrNetwork)
 		}
 		fi, _ := os.Stat(outPath)
 		var nbytes int64
@@ -284,17 +278,13 @@ var jobWaitCmd = &cobra.Command{
 				return nil
 			}
 			if timeoutSec > 0 && elapsed >= time.Duration(timeoutSec)*time.Second {
-				output.Error(fmt.Sprintf("timed out waiting for job #%d", jobID))
-				setExitCode(ExitTimeout)
-				return ErrSilent
+				return failWithCode(fmt.Sprintf("timed out waiting for job #%d", jobID), ExitTimeout, output.ErrTimeout)
 			}
 			if !jsonMode && !quietMode {
 				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Waiting... status=%s (%.0fs elapsed)\n", j.Status, elapsed.Seconds())
 			}
 			if err := sleepContext(cmd.Context(), interval); err != nil {
-				output.Error(err.Error())
-				setExitCode(ExitNetwork)
-				return ErrSilent
+				return failWithCode(err.Error(), ExitNetwork, output.ErrNetwork)
 			}
 		}
 	},

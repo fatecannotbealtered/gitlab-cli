@@ -91,7 +91,7 @@ func TestIssue_Create_DryRun_JSON(t *testing.T) {
 		rootCmd.SetArgs([]string{"issue", "create", "--project", "foo/bar", "--title", "new bug", "--dry-run", "--json"})
 		_ = rootCmd.Execute()
 	})
-	for _, want := range []string{`"dryRun": true`, `"action"`} {
+	for _, want := range []string{`"confirm_token"`, `"action"`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in output:\n%s", want, out)
 		}
@@ -107,7 +107,7 @@ func TestIssue_Update_DryRun_JSON(t *testing.T) {
 		rootCmd.SetArgs([]string{"issue", "update", "1", "--project", "foo/bar", "--title", "fixed", "--dry-run", "--json"})
 		_ = rootCmd.Execute()
 	})
-	for _, want := range []string{`"dryRun": true`, `"iid": 1`} {
+	for _, want := range []string{`"confirm_token"`, `"iid": 1`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in output:\n%s", want, out)
 		}
@@ -123,7 +123,7 @@ func TestIssue_Close_DryRun_JSON(t *testing.T) {
 		rootCmd.SetArgs([]string{"issue", "close", "2", "--project", "foo/bar", "--dry-run", "--json"})
 		_ = rootCmd.Execute()
 	})
-	for _, want := range []string{`"dryRun": true`, `"iid": 2`} {
+	for _, want := range []string{`"confirm_token"`, `"iid": 2`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in output:\n%s", want, out)
 		}
@@ -139,7 +139,7 @@ func TestIssue_Reopen_DryRun_JSON(t *testing.T) {
 		rootCmd.SetArgs([]string{"issue", "reopen", "3", "--project", "foo/bar", "--dry-run", "--json"})
 		_ = rootCmd.Execute()
 	})
-	for _, want := range []string{`"dryRun": true`, `"iid": 3`} {
+	for _, want := range []string{`"confirm_token"`, `"iid": 3`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in output:\n%s", want, out)
 		}
@@ -155,7 +155,7 @@ func TestIssue_Assign_DryRun_JSON(t *testing.T) {
 		rootCmd.SetArgs([]string{"issue", "assign", "4", "alice", "--project", "foo/bar", "--dry-run", "--json"})
 		_ = rootCmd.Execute()
 	})
-	for _, want := range []string{`"dryRun": true`, `"iid": 4`} {
+	for _, want := range []string{`"confirm_token"`, `"iid": 4`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in output:\n%s", want, out)
 		}
@@ -171,7 +171,7 @@ func TestIssue_Label_DryRun_JSON(t *testing.T) {
 		rootCmd.SetArgs([]string{"issue", "label", "5", "--project", "foo/bar", "--add", "bug", "--dry-run", "--json"})
 		_ = rootCmd.Execute()
 	})
-	for _, want := range []string{`"dryRun": true`, `"iid": 5`} {
+	for _, want := range []string{`"confirm_token"`, `"iid": 5`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in output:\n%s", want, out)
 		}
@@ -250,7 +250,7 @@ func TestIssueCreate_DryRun_JSON(t *testing.T) {
 		rootCmd.SetArgs([]string{"issue", "create", "--project", "42", "--title", "Test Issue", "--dry-run", "--json"})
 		_ = rootCmd.Execute()
 	})
-	for _, want := range []string{`"dryRun": true`, `"action": "create issue"`} {
+	for _, want := range []string{`"confirm_token"`, `"action": "create issue"`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in dry-run output, got:\n%s", want, out)
 		}
@@ -271,7 +271,7 @@ func TestIssueClose_DryRun_JSON(t *testing.T) {
 		rootCmd.SetArgs([]string{"issue", "close", "5", "--project", "42", "--dry-run", "--json"})
 		_ = rootCmd.Execute()
 	})
-	for _, want := range []string{`"dryRun": true`, `"action": "close issue"`} {
+	for _, want := range []string{`"confirm_token"`, `"action": "close issue"`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in dry-run output, got:\n%s", want, out)
 		}
@@ -311,7 +311,7 @@ func TestIssueCommentAdd_DryRun_JSON(t *testing.T) {
 		rootCmd.SetArgs([]string{"issue", "comment", "add", "3", "--project", "42", "--body", "hello", "--dry-run", "--json"})
 		_ = rootCmd.Execute()
 	})
-	for _, want := range []string{`"dryRun": true`, `"action": "add comment"`} {
+	for _, want := range []string{`"confirm_token"`, `"action": "add comment"`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in dry-run output, got:\n%s", want, out)
 		}
@@ -379,7 +379,9 @@ func TestIssue_Close_JSON(t *testing.T) {
 	defer func() { dryRun = origDR; jsonMode = origJM }()
 	dryRun = false
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"issue", "close", "1", "--project", "foo/bar", "--json"})
+		args := []string{"issue", "close", "1", "--project", "foo/bar", "--json"}
+		args = append(args, confirmArgsForTest(t, "close issue", map[string]any{"project": "foo/bar", "iid": 1})...)
+		rootCmd.SetArgs(args)
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, `"closed"`) {
@@ -518,7 +520,9 @@ func TestIssue_Close_PlainText(t *testing.T) {
 	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"issue", "close", "1", "--project", "foo/bar"})
+		args := []string{"issue", "close", "1", "--project", "foo/bar"}
+		args = append(args, confirmArgsForTest(t, "close issue", map[string]any{"project": "foo/bar", "iid": 1})...)
+		rootCmd.SetArgs(args)
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, "Closed") {
@@ -1170,7 +1174,9 @@ func TestIssue_Close_InvalidIID(t *testing.T) {
 }
 
 func TestIssue_Close_MissingAuth(t *testing.T) {
-	testIssueMissingAuth(t, "issue", "close", "1", "--project", "foo/bar", "--force")
+	args := []string{"issue", "close", "1", "--project", "foo/bar"}
+	args = append(args, confirmArgsForTest(t, "close issue", map[string]any{"project": "foo/bar", "iid": 1})...)
+	testIssueMissingAuth(t, args...)
 }
 
 func TestIssue_Close_APIError(t *testing.T) {
@@ -1186,7 +1192,9 @@ func TestIssue_Close_APIError(t *testing.T) {
 	defer func() { dryRun = origDR; lastExit = origExit }()
 	dryRun = false
 	lastExit = 0
-	rootCmd.SetArgs([]string{"issue", "close", "1", "--project", "foo/bar", "--force"})
+	args := []string{"issue", "close", "1", "--project", "foo/bar"}
+	args = append(args, confirmArgsForTest(t, "close issue", map[string]any{"project": "foo/bar", "iid": 1})...)
+	rootCmd.SetArgs(args)
 	_ = rootCmd.Execute()
 	if lastExit == ExitOK {
 		t.Errorf("expected non-zero exit for API error, got %d", lastExit)

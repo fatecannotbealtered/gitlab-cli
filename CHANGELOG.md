@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-06-07
+
+### Added
+
+- Unified Agent JSON envelope: successful responses include `ok`, `schema_version`, `data`, and `meta.duration_ms`; errors use the same envelope shape with stable `E_*` codes and `retryable`.
+- Confirm-token write flow: `--dry-run` returns a payload-bound `confirm_token` plus expiry; writes require `--confirm <confirm_token>` in non-interactive runs.
+
+### Changed
+
+- JSON output now follows the Agent-facing stdout contract: stdout contains one valid JSON document by default, with progress and diagnostics on stderr.
+- **README / README_zh / skills** — document the unified JSON envelope, updated exit codes, `data.confirm_token` flow, and envelope-aware `jq` examples.
+- **reference** — expose schema version, CLI version, global flags, command formats, write metadata, confirmation requirements, and the current 0-8 exit-code table.
+
+### Fixed
+
+- **MR create** — `--assignee` with unknown user returns exit 3 (`E_NOT_FOUND`) instead of silently skipping.
+
 ## [1.1.1] - 2026-06-05
 
 ### Added
@@ -42,7 +59,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **npm local publish helpers** — `scripts/npm-publish-local.ps1`, `scripts/npm-token.local.example`.
 - Expanded `.gitignore` for coverage artifacts from local `go test -coverprofile` runs.
 
-[Unreleased]: https://github.com/fatecannotbealtered/gitlab-cli/compare/v1.1.1...HEAD
+[Unreleased]: https://github.com/fatecannotbealtered/gitlab-cli/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/fatecannotbealtered/gitlab-cli/releases/tag/v1.2.0
 [1.1.1]: https://github.com/fatecannotbealtered/gitlab-cli/releases/tag/v1.1.1
 [1.1.0]: https://github.com/fatecannotbealtered/gitlab-cli/releases/tag/v1.1.0
 

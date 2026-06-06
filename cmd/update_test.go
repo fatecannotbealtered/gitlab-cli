@@ -53,6 +53,21 @@ func resetUpdateTestState(t *testing.T) {
 	updateNow = func() time.Time { return time.Unix(1700000000, 0) }
 }
 
+func updateConfirmArgsForTest(t *testing.T, serverURL, currentVersion, targetVersion string, reinstall bool) []string {
+	t.Helper()
+	assetName, err := updateArchiveName(targetVersion)
+	if err != nil {
+		t.Fatalf("update archive name: %v", err)
+	}
+	return confirmArgsForTest(t, "update gitlab-cli", map[string]any{
+		"currentVersion": currentVersion,
+		"targetVersion":  normalizeVersion(targetVersion),
+		"assetName":      assetName,
+		"assetURL":       serverURL + "/downloads/" + assetName,
+		"reinstall":      reinstall,
+	})
+}
+
 func TestUpdate_Help(t *testing.T) {
 	resetUpdateTestState(t)
 	var buf bytes.Buffer
@@ -121,7 +136,7 @@ func TestUpdate_DryRunJSON_IncludesConfirmToken(t *testing.T) {
 		rootCmd.SetArgs([]string{"update", "--dry-run", "--json"})
 		_ = rootCmd.Execute()
 	})
-	for _, want := range []string{`"status": "dry_run"`, `"dryRun": true`, `"confirm": "1.2.3"`} {
+	for _, want := range []string{`"status": "dry_run"`, `"confirm_token"`, `"confirm_token"`} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("missing %q in:\n%s", want, out)
 		}
@@ -148,7 +163,9 @@ func TestUpdate_InstallWithConfirm(t *testing.T) {
 	defer func() { lastExit = origExit }()
 	lastExit = 0
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"update", "--confirm", "1.2.3", "--json"})
+		args := []string{"update", "--json"}
+		args = append(args, updateConfirmArgsForTest(t, srv.URL, "1.0.0", "1.2.3", false)...)
+		rootCmd.SetArgs(args)
 		_ = rootCmd.Execute()
 	})
 	if lastExit != ExitOK {
@@ -172,12 +189,14 @@ func TestUpdate_ChecksumMismatch(t *testing.T) {
 	origExit := lastExit
 	defer func() { lastExit = origExit }()
 	lastExit = 0
-	errOut := captureStderr(t, func() {
-		rootCmd.SetArgs([]string{"update", "--confirm", "1.2.3", "--json"})
+	errOut := captureStdout(t, func() {
+		args := []string{"update", "--json"}
+		args = append(args, updateConfirmArgsForTest(t, srv.URL, "1.0.0", "1.2.3", false)...)
+		rootCmd.SetArgs(args)
 		_ = rootCmd.Execute()
 	})
 	if lastExit != ExitNetwork {
-		t.Fatalf("exit=%d want=%d\nstderr:\n%s", lastExit, ExitNetwork, errOut)
+		t.Fatalf("exit=%d want=%d\nstdout:\n%s", lastExit, ExitNetwork, errOut)
 	}
 	if !strings.Contains(errOut, "checksum mismatch") {
 		t.Fatalf("expected checksum error, got:\n%s", errOut)
@@ -193,12 +212,12 @@ func TestUpdate_MissingAsset(t *testing.T) {
 	origExit := lastExit
 	defer func() { lastExit = origExit }()
 	lastExit = 0
-	errOut := captureStderr(t, func() {
+	errOut := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"update", "--check", "--json"})
 		_ = rootCmd.Execute()
 	})
 	if lastExit != ExitBadArgs {
-		t.Fatalf("exit=%d want=%d\nstderr:\n%s", lastExit, ExitBadArgs, errOut)
+		t.Fatalf("exit=%d want=%d\nstdout:\n%s", lastExit, ExitBadArgs, errOut)
 	}
 	if !strings.Contains(errOut, "does not include asset") {
 		t.Fatalf("expected missing asset error, got:\n%s", errOut)

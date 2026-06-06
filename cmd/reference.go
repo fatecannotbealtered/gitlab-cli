@@ -57,29 +57,30 @@ type refCommand struct {
 
 // refTree is the root JSON document for `reference --json`.
 type refTree struct {
-	Version     string         `json:"version"`
-	GlobalFlags []refFlag      `json:"globalFlags"`
-	ExitCodes   map[int]string `json:"exitCodes"`
-	Commands    []refCommand   `json:"commands"`
+	SchemaVersion string         `json:"schema_version"`
+	Version       string         `json:"version"`
+	GlobalFlags   []refFlag      `json:"globalFlags"`
+	ExitCodes     map[int]string `json:"exitCodes"`
+	Commands      []refCommand   `json:"commands"`
 }
 
 var positionalArgRe = regexp.MustCompile(`<([^>]+)>`)
 
 func buildReferenceTree(root *cobra.Command) refTree {
 	tree := refTree{
-		Version:     root.Version,
-		GlobalFlags: collectPersistentRefFlags(root),
+		SchemaVersion: output.SchemaVersion,
+		Version:       root.Version,
+		GlobalFlags:   collectPersistentRefFlags(root),
 		ExitCodes: map[int]string{
-			0:  "success",
-			2:  "bad_args",
-			3:  "auth",
-			4:  "not_found",
-			5:  "forbidden",
-			6:  "rate_limit",
-			7:  "network",
-			8:  "timeout",
-			9:  "ci_failed",
-			10: "cancelled",
+			0: "success",
+			1: "error",
+			2: "bad_args",
+			3: "not_found",
+			4: "auth_or_permission",
+			5: "confirm_required",
+			6: "conflict",
+			7: "retryable",
+			8: "timeout",
 		},
 	}
 	children := root.Commands()
@@ -208,7 +209,7 @@ func printReference(cmd *cobra.Command, root *cobra.Command) {
 	lines = append(lines, "")
 	lines = append(lines, fmt.Sprintf("Version: %s", root.Version))
 	lines = append(lines, "")
-	lines = append(lines, "Legend: **write** = mutates GitLab state; **confirm** = prompts unless `--confirm`/`--force`; **output** = default stdout type when `--json` is absent.")
+	lines = append(lines, "Legend: **write** = mutates GitLab state; **confirm** = requires `--dry-run` then `--confirm <confirm_token>`; **output** = default stdout type.")
 	lines = append(lines, "")
 
 	walkCommands(root, &lines, "")

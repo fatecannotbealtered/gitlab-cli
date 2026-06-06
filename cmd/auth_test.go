@@ -68,7 +68,7 @@ func TestAuth_Login_DryRun(t *testing.T) {
 	if lastExit != ExitOK {
 		t.Errorf("expected exit 0, got %d", lastExit)
 	}
-	if !strings.Contains(out, `"dryRun": true`) {
+	if !strings.Contains(out, `"confirm_token"`) {
 		t.Errorf("expected dry-run JSON, got:\n%s", out)
 	}
 }
@@ -90,7 +90,7 @@ func TestAuth_Logout_DryRun(t *testing.T) {
 	if lastExit != ExitOK {
 		t.Errorf("expected exit 0, got %d", lastExit)
 	}
-	if !strings.Contains(out, `"dryRun": true`) {
+	if !strings.Contains(out, `"confirm_token"`) {
 		t.Errorf("expected dry-run JSON, got:\n%s", out)
 	}
 }
@@ -420,6 +420,7 @@ func TestAuth_Login_Interactive_Success(t *testing.T) {
 	isolateConfigHome(t)
 	clearAuthEnv(t)
 	resetAuthLoginFlags(t)
+	setTextFormatForTest(t)
 	withStdinInput(t, "my-token\n")
 
 	origExit := lastExit
@@ -446,6 +447,7 @@ func TestAuth_Login_Interactive_ReadHostFromStdin(t *testing.T) {
 	isolateConfigHome(t)
 	clearAuthEnv(t)
 	resetAuthLoginFlags(t)
+	setTextFormatForTest(t)
 	withStdinInput(t, srv.URL+"\nsecret\n")
 
 	origExit := lastExit
@@ -463,6 +465,7 @@ func TestAuth_Login_Interactive_ReadHostFromStdin(t *testing.T) {
 func TestAuth_Login_Interactive_InvalidHost(t *testing.T) {
 	resetAuthLoginFlags(t)
 	clearAuthEnv(t)
+	setTextFormatForTest(t)
 	withStdinInput(t, "bad-host\n")
 
 	origExit := lastExit
@@ -480,6 +483,7 @@ func TestAuth_Login_Interactive_InvalidHost(t *testing.T) {
 func TestAuth_Login_Interactive_EmptyToken(t *testing.T) {
 	resetAuthLoginFlags(t)
 	clearAuthEnv(t)
+	setTextFormatForTest(t)
 	withStdinInput(t, "\n")
 
 	origExit := lastExit
@@ -511,7 +515,7 @@ func TestAuth_Login_Interactive_DryRun(t *testing.T) {
 	if lastExit != ExitOK {
 		t.Errorf("expected exit 0, got %d", lastExit)
 	}
-	if !strings.Contains(out, `"dryRun": true`) {
+	if !strings.Contains(out, `"confirm_token"`) {
 		t.Errorf("expected dry-run JSON, got:\n%s", out)
 	}
 }
@@ -525,6 +529,7 @@ func TestAuth_Login_Interactive_APIError(t *testing.T) {
 
 	resetAuthLoginFlags(t)
 	clearAuthEnv(t)
+	setTextFormatForTest(t)
 	withStdinInput(t, "secret\n")
 
 	origExit := lastExit
@@ -546,6 +551,7 @@ func TestAuth_Login_Interactive_SaveError(t *testing.T) {
 	home := isolateConfigHome(t)
 	clearAuthEnv(t)
 	resetAuthLoginFlags(t)
+	setTextFormatForTest(t)
 	blockProfilesRemove(t, home)
 	withStdinInput(t, "secret\n")
 
@@ -967,6 +973,7 @@ func TestAuth_Login_Interactive_NonTTY_TokenLine(t *testing.T) {
 	isolateConfigHome(t)
 	clearAuthEnv(t)
 	resetAuthLoginFlags(t)
+	setTextFormatForTest(t)
 
 	origTTY := stdinIsTerminalForAuth
 	defer func() { stdinIsTerminalForAuth = origTTY }()
@@ -994,6 +1001,7 @@ func TestAuth_Login_Interactive_PromptHost(t *testing.T) {
 	isolateConfigHome(t)
 	clearAuthEnv(t)
 	resetAuthLoginFlags(t)
+	setTextFormatForTest(t)
 
 	origTTY := stdinIsTerminalForAuth
 	defer func() { stdinIsTerminalForAuth = origTTY }()
@@ -1011,6 +1019,7 @@ func TestAuth_Login_ReadPasswordErrorHook(t *testing.T) {
 	srv := mockUserServer(t)
 	defer srv.Close()
 	resetAuthLoginFlags(t)
+	setTextFormatForTest(t)
 
 	origTTY := stdinIsTerminalForAuth
 	origRead := readPasswordForAuth

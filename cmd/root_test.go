@@ -173,7 +173,7 @@ func TestDryRunOutput_JSONNilDetail(t *testing.T) {
 			t.Fatal("dryRunOutput should return true when dry-run is set")
 		}
 	})
-	for _, want := range []string{`"action": "noop"`, `"dryRun": true`} {
+	for _, want := range []string{`"action": "noop"`, `"confirm_token"`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in %q", want, out)
 		}

@@ -20,15 +20,18 @@ import (
 // Exit codes for machine-readable error classification.
 const (
 	ExitOK        = 0
+	ExitError     = 1
 	ExitBadArgs   = 2
-	ExitAuth      = 3
-	ExitNotFound  = 4
-	ExitForbidden = 5
-	ExitRateLimit = 6
+	ExitNotFound  = 3
+	ExitAuth      = 4
+	ExitForbidden = 4
+	ExitConfirm   = 5
+	ExitCancelled = 5
+	ExitConflict  = 6
+	ExitRateLimit = 7
 	ExitNetwork   = 7
 	ExitTimeout   = 8
-	ExitCIFailed  = 9  // pipeline/job wait finished in a non-success terminal state
-	ExitCancelled = 10 // user cancelled or confirmation not provided
+	ExitCIFailed  = 6 // pipeline/job wait finished in a non-success terminal state
 )
 
 // ErrSilent indicates the error has been printed; cobra should not print again.
@@ -114,7 +117,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&formatMode, "format", formatJSON, "Output format: json|text|raw")
 	rootCmd.PersistentFlags().BoolVar(&jsonAlias, "json", false, "Compatibility alias for --format json")
 	rootCmd.PersistentFlags().BoolVar(&compactJSON, "compact", false, "Compact JSON (no indentation; only affects --format json)")
-	rootCmd.PersistentFlags().BoolVar(&forceMode, "force", false, "Skip confirmation prompts")
+	rootCmd.PersistentFlags().BoolVar(&forceMode, "force", false, "Deprecated; use --dry-run and --confirm <confirm_token>")
 	rootCmd.PersistentFlags().BoolVar(&quietMode, "quiet", false, "Suppress non-JSON stdout output (for scripts and AI Agents)")
 	rootCmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "Show what would be done without executing")
 	initConfirmFlag()
@@ -152,7 +155,20 @@ func Execute() error {
 func ExecuteContext(ctx context.Context) error {
 	lastExit = 0
 	cmdStartTime = time.Now()
-	return rootCmd.ExecuteContext(ctx)
+	output.DurationMS = func() int64 {
+		if cmdStartTime.IsZero() {
+			return 0
+		}
+		return time.Since(cmdStartTime).Milliseconds()
+	}
+	if err := rootCmd.ExecuteContext(ctx); err != nil {
+		if errors.Is(err, ErrSilent) {
+			return err
+		}
+		emitError(err.Error(), ExitBadArgs, output.ErrValidation)
+		return ErrSilent
+	}
+	return nil
 }
 
 // handleAPIError handles API errors with JSON mode support.
@@ -188,6 +204,8 @@ func exitCodeForStatus(status int) int {
 		return ExitForbidden
 	case status == 404:
 		return ExitNotFound
+	case status == 409:
+		return ExitConflict
 	case status == 429:
 		return ExitRateLimit
 	case status >= 500:
@@ -206,9 +224,19 @@ func dryRunOutput(action string, detail map[string]any) bool {
 		if detail == nil {
 			detail = map[string]any{}
 		}
-		detail["action"] = action
-		detail["dryRun"] = true
-		output.PrintJSON(detail)
+		changes := []map[string]any{}
+		if len(detail) > 0 {
+			changes = append(changes, detail)
+		}
+		token, expires := newConfirmToken(action, detail)
+		output.PrintJSON(map[string]any{
+			"preview": map[string]any{
+				"action":  action,
+				"changes": changes,
+			},
+			"confirm_token": token,
+			"expires_at":    expires.Format(time.RFC3339),
+		})
 	} else {
 		output.Info("[dry-run] " + action)
 	}
@@ -222,8 +250,17 @@ func applyFormatFlags(cmd *cobra.Command) error {
 	}
 	formatFlag := rootCmd.PersistentFlags().Lookup("format")
 	jsonFlag := rootCmd.PersistentFlags().Lookup("json")
+	forceFlag := rootCmd.PersistentFlags().Lookup("force")
 	jsonChanged := jsonFlag != nil && jsonFlag.Changed
 	formatChanged := formatFlag != nil && formatFlag.Changed
+	forceRequested := forceMode || (forceFlag != nil && forceFlag.Changed)
+	defer func() {
+		if forceFlag != nil {
+			_ = forceFlag.Value.Set("false")
+			forceFlag.Changed = false
+		}
+		forceMode = false
+	}()
 
 	if !jsonChanged && !formatChanged && !jsonMode {
 		requested = formatText
@@ -251,6 +288,9 @@ func applyFormatFlags(cmd *cobra.Command) error {
 	}
 	if !commandSupportsFormat(cmd, formatMode) {
 		return failArg(fmt.Sprintf("%s does not support --format %s", cmd.CommandPath(), formatMode))
+	}
+	if forceRequested && isWriteCommand(cmd) {
+		return failArg("--force is not supported for write commands; use --dry-run and --confirm <confirm_token>")
 	}
 	return nil
 }

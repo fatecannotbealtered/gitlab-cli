@@ -21,21 +21,35 @@ func init() {
 }
 
 func runDoctor(_ *cobra.Command, _ []string) error {
+	type doctorCheck struct {
+		Check  string  `json:"check"`
+		Status string  `json:"status"`
+		Fix    *string `json:"fix"`
+	}
 	type doctorResult struct {
-		ConfigExists bool   `json:"configExists"`
-		AuthValid    bool   `json:"authValid"`
-		LatencyMs    int64  `json:"latencyMs"`
-		Host         string `json:"host,omitempty"`
-		Username     string `json:"username,omitempty"`
-		Name         string `json:"name,omitempty"`
-		Error        string `json:"error,omitempty"`
+		Checks       []doctorCheck `json:"checks"`
+		ConfigExists bool          `json:"configExists"`
+		AuthValid    bool          `json:"authValid"`
+		LatencyMs    int64         `json:"latencyMs"`
+		Host         string        `json:"host,omitempty"`
+		Username     string        `json:"username,omitempty"`
+		Name         string        `json:"name,omitempty"`
+		Error        string        `json:"error,omitempty"`
 	}
 
 	result := doctorResult{}
+	check := func(name, status, fix string) {
+		var fixPtr *string
+		if fix != "" {
+			fixPtr = &fix
+		}
+		result.Checks = append(result.Checks, doctorCheck{Check: name, Status: status, Fix: fixPtr})
+	}
 
 	cfg, err := config.Load()
 	if err != nil {
 		result.Error = err.Error()
+		check("config", "fail", "run gitlab-cli auth login or fix the config file")
 		if jsonMode {
 			output.PrintJSON(result)
 		} else {
@@ -48,6 +62,7 @@ func runDoctor(_ *cobra.Command, _ []string) error {
 	if cfg.Host == "" || cfg.Token == "" {
 		result.ConfigExists = false
 		result.Error = "not configured: run 'gitlab-cli auth login' or set GITLAB_HOST and GITLAB_TOKEN"
+		check("config", "fail", "run gitlab-cli auth login or set GITLAB_HOST and GITLAB_TOKEN")
 		if jsonMode {
 			output.PrintJSON(result)
 		} else {
@@ -63,6 +78,7 @@ func runDoctor(_ *cobra.Command, _ []string) error {
 	}
 	result.ConfigExists = true
 	result.Host = cfg.Host
+	check("config", "pass", "")
 
 	client := api.NewClient(cfg)
 	start := time.Now()
@@ -73,6 +89,14 @@ func runDoctor(_ *cobra.Command, _ []string) error {
 	if err != nil {
 		result.AuthValid = false
 		result.Error = err.Error()
+		var apiErr *api.APIError
+		if asAPI(err, &apiErr) && (apiErr.StatusCode == 401 || apiErr.StatusCode == 403) {
+			check("network", "pass", "")
+			check("auth", "fail", "check PAT scope and project membership")
+		} else {
+			check("network", "fail", "set HTTP_PROXY or check VPN/connectivity")
+			check("auth", "fail", "retry after network connectivity is restored")
+		}
 		if jsonMode {
 			output.PrintJSON(result)
 		} else {
@@ -84,7 +108,6 @@ func runDoctor(_ *cobra.Command, _ []string) error {
 			fmt.Println()
 		}
 		// Map status code to exit code via handleAPIError-style logic.
-		var apiErr *api.APIError
 		if asAPI(err, &apiErr) {
 			setExitCode(exitCodeForStatus(apiErr.StatusCode))
 		} else {
@@ -96,6 +119,8 @@ func runDoctor(_ *cobra.Command, _ []string) error {
 	result.AuthValid = true
 	result.Username = me.Username
 	result.Name = me.Name
+	check("network", "pass", "")
+	check("auth", "pass", "")
 
 	if jsonMode {
 		output.PrintJSON(result)

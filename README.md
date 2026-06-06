@@ -15,13 +15,13 @@ Built with Go. Single static binary. Compatible with **GitLab.com, GitLab Self-M
 
 GitLab already ships an excellent CLI called [glab](https://gitlab.com/gitlab-org/cli) — for humans. `gitlab-cli` is **purpose-built for AI Agents** and shares the design DNA of [`jira-cli`](https://github.com/fatecannotbealtered/jira-cli):
 
-- **Strict JSON contract** — JSON is the default output in flat, token-efficient form on every command.
+- **Strict JSON contract** — JSON is the default output; every response is wrapped in a stable `ok` / `schema_version` envelope.
 - **Unified output format** — global `--format json|text|raw`; use `text` for human-readable output and `raw` for unwrapped bytes/logs/diffs. `--json` remains a compatibility alias for `--format json`.
 - **`--fields key,name,state` field projection** on supported commands (opt-in per command, not global) for further token reduction.
 - **`--dry-run`** previews every write command before executing.
-- **`--confirm <token>`** for non-interactive write confirmation (preferred for Agents); **`--force`** skips prompts but is restricted in agent-safe mode (see [Agent-safe mode](#agent-safe-mode-default-on)).
-- **Machine-readable error envelope** with `errorCode`, `statusCode`, and actionable `hint`.
-- **Semantic exit codes** (`0`/`2`/`3`/`4`/`5`/`6`/`7`/`8`/`9`/`10`).
+- **`--confirm <confirm_token>`** for non-interactive write confirmation (preferred for Agents); tokens are returned by `--dry-run`.
+- **Machine-readable error envelope** with stable `E_*` codes, details, and `retryable`.
+- **Semantic exit codes** (`0` through `8`) aligned with retry behavior.
 - **JSONL audit log** of every write command at `~/.gitlab-cli/audit/`.
 - **`SKILL.md`** installable via [`npx skills`](https://github.com/vercel-labs/skills) for compatible AI coding assistants.
 
@@ -166,7 +166,7 @@ gitlab-cli mr unapprove --project <id> <iid>
 gitlab-cli mr diff      --project <id> <iid>     # JSON by default; use --format raw for unified diff bytes
 gitlab-cli mr comment add    --project <id> <iid> --body <text>
 gitlab-cli mr comment list   --project <id> <iid>
-gitlab-cli mr comment delete --project <id> <iid> --note-id <id> --confirm <note-id>
+gitlab-cli mr comment delete --project <id> <iid> --note-id <id> --confirm <confirm_token>
 ```
 
 ### Issues
@@ -182,7 +182,7 @@ gitlab-cli issue assign    <iid> <username|me> --project <id>
 gitlab-cli issue label     <iid> --project <id> --add l1,l2 --remove l3,l4
 gitlab-cli issue comment add    <iid> --project <id> --body <t>
 gitlab-cli issue comment list   <iid> --project <id>
-gitlab-cli issue comment delete <iid> --project <id> --note-id <id> --confirm <note-id>
+gitlab-cli issue comment delete <iid> --project <id> --note-id <id> --confirm <confirm_token>
 ```
 
 ### Labels & Milestones
@@ -191,13 +191,13 @@ gitlab-cli issue comment delete <iid> --project <id> --note-id <id> --confirm <n
 gitlab-cli label list   --project <id>
 gitlab-cli label create --project <id> --name <n> --color <#hex|named> [--priority N]
 gitlab-cli label update --project <id> --label-id N [--name ...] [--color ...]
-gitlab-cli label delete --project <id> --label-id N --confirm N
+gitlab-cli label delete --project <id> --label-id N --confirm <confirm_token>
 
 gitlab-cli milestone list   --project <id> [--state active|closed|all]
 gitlab-cli milestone get    --project <id> --milestone-id N
 gitlab-cli milestone create --project <id> --title <t> [--due-date YYYY-MM-DD]
 gitlab-cli milestone update --project <id> --milestone-id N [--title ...] [--state-event close|activate]
-gitlab-cli milestone close  --project <id> --milestone-id N --confirm N
+gitlab-cli milestone close  --project <id> --milestone-id N --confirm <confirm_token>
 ```
 
 ### Pipelines & Jobs
@@ -227,11 +227,11 @@ gitlab-cli job wait      --project <id> <job_id> [--timeout 300] [--interval 5]
 gitlab-cli repo file get    --project <id> --path <p> [--ref <b>] [--output <path>]
 gitlab-cli repo file create --project <id> --path <p> --branch <b> --content ... --commit-message <m>
 gitlab-cli repo file update --project <id> --path <p> --branch <b> --content ... --commit-message <m>
-gitlab-cli repo file delete --project <id> --path <p> --branch <b> --commit-message <m> --confirm <path>
+gitlab-cli repo file delete --project <id> --path <p> --branch <b> --commit-message <m> --confirm <confirm_token>
 
 gitlab-cli repo branch list   --project <id> [--search <q>]
 gitlab-cli repo branch create --project <id> --name <n> --ref <source>
-gitlab-cli repo branch delete --project <id> --name <n> --confirm <n>
+gitlab-cli repo branch delete --project <id> --name <n> --confirm <confirm_token>
 
 gitlab-cli repo commit list --project <id> [--ref-name <b>] [--since ...] [--until ...] [--path <p>]
 gitlab-cli repo commit get  --project <id> <sha>
@@ -242,7 +242,7 @@ gitlab-cli release list   --project <id>
 gitlab-cli release get    --project <id> --tag <tag>
 gitlab-cli release create --project <id> --tag <tag> --name <n> [--description <d>] [--ref <b>] [--milestone m1,m2]
 gitlab-cli release update --project <id> --tag <tag> [--name ...] [--description ...]
-gitlab-cli release delete --project <id> --tag <tag> --confirm <tag>
+gitlab-cli release delete --project <id> --tag <tag> --confirm <confirm_token>
 ```
 
 ### CI/CD Variables
@@ -252,19 +252,19 @@ gitlab-cli variable list   --project <id>                                     # 
 gitlab-cli variable get    --project <id> --key <k> [--filter env_scope=<scope>]
 gitlab-cli variable create --project <id> --key <k> --value <v> [--type env_var|file] [--protected] [--masked] [--env-scope <s>]
 gitlab-cli variable update --project <id> --key <k> [--value <v>] [--protected] [--masked]
-gitlab-cli variable delete --project <id> --key <k> [--filter env_scope=<scope>] --confirm <k>
+gitlab-cli variable delete --project <id> --key <k> [--filter env_scope=<scope>] --confirm <confirm_token>
 ```
 
 Pass `--show-values` on any `variable` subcommand to include secret values in JSON output (default: redacted).
 
 ## JSON Output
 
-JSON is the default. Use `--format text` for human-readable output and `--format raw` for unwrapped bytes/logs/diffs on commands that support raw output. `--json` is kept as a compatibility alias for `--format json`.
+JSON is the default. Stdout contains one valid JSON document for normal commands; progress, warnings, and diagnostics go to stderr. Use `--format text` for human-readable output and `--format raw` for unwrapped bytes/logs/diffs on commands that support raw output. `--json` is kept as a compatibility alias for `--format json`.
 
-Some commands also support **`--fields`** (comma-separated projection from flat JSON); it is **opt-in per command** and only works with JSON output. Run `gitlab-cli reference` and look for `supportsFields` (e.g. `mr get`, `issue list`, `project get`).
+Some commands also support **`--fields`** (comma-separated projection from the `data` payload); it is **opt-in per command** and only works with JSON output. Run `gitlab-cli reference` and look for `supportsFields` (e.g. `mr get`, `issue list`, `project get`).
 
 ```bash
-# Flat JSON (default) — minimal fields, low token cost
+# JSON envelope (default)
 gitlab-cli auth status
 gitlab-cli doctor
 
@@ -278,14 +278,34 @@ gitlab-cli doctor --quiet
 gitlab-cli doctor --compact
 ```
 
-Error responses include machine-readable error codes and actionable hints:
+Successful responses use this shape:
 
 ```json
 {
-  "error": "GitLab API error 404: 404 Project Not Found",
-  "statusCode": 404,
-  "errorCode": "NOT_FOUND",
-  "hint": "Verify the resource (project path, IID, ID) exists and you have permission to view it"
+  "ok": true,
+  "schema_version": "1.0",
+  "data": {},
+  "meta": {
+    "duration_ms": 0
+  }
+}
+```
+
+Error responses use the same envelope shape:
+
+```json
+{
+  "ok": false,
+  "schema_version": "1.0",
+  "error": {
+    "code": "E_NOT_FOUND",
+    "message": "GitLab API error 404: 404 Project Not Found",
+    "details": {
+      "status_code": 404,
+      "hint": "Verify the resource (project path, IID, ID) exists and you have permission to view it"
+    },
+    "retryable": false
+  }
 }
 ```
 
@@ -298,25 +318,24 @@ Error responses include machine-readable error codes and actionable hints:
 | `--compact` | Compact JSON without indentation (only affects `--format json`) |
 | `--quiet` | Suppress text helper output |
 | `--dry-run` | Show what would be done without executing (write commands only) |
-| `--confirm <token>` | Non-interactive confirmation for write commands (preferred; token is shown in `--dry-run` or error output) |
-| `--force` | Skip interactive confirmation prompts (disabled by default in [agent-safe mode](#agent-safe-mode-default-on); requires `GITLAB_CLI_ALLOW_FORCE=1`) |
+| `--confirm <confirm_token>` | Non-interactive confirmation for write commands; use the token returned by `--dry-run` |
+| `--force` | Deprecated for writes; blocked in agent-safe mode. Use `--dry-run` and `--confirm <confirm_token>` |
 
-> **`--fields`** is registered on individual commands that expose a flat JSON schema, not as a root persistent flag. See [JSON Output](#json-output).
+> **`--fields`** is registered on individual commands that expose a projectable `data` payload, not as a root persistent flag. See [JSON Output](#json-output).
 
 ## Exit Codes
 
 | Code | Meaning |
 |---|---|
 | 0 | Success |
+| 1 | Generic error |
 | 2 | Bad arguments / validation |
-| 3 | Authentication error (401) |
-| 4 | Resource not found |
-| 5 | Forbidden |
-| 6 | Rate limited |
-| 7 | Network / server error |
-| 8 | Timeout (`pipeline wait` / `job wait`) |
-| 9 | CI/CD failure (`pipeline wait` / `job wait` finished failed/canceled/skipped) |
-| 10 | User cancelled or confirmation not provided (use `--confirm <token>` for non-interactive writes) |
+| 3 | Resource not found |
+| 4 | Authentication / permission failure |
+| 5 | Confirmation required or cancelled |
+| 6 | Conflict / state drift / non-success CI terminal state |
+| 7 | Retryable transient error (rate limit, network, server) |
+| 8 | Timeout |
 
 ## Agent-safe mode (default ON)
 
@@ -326,15 +345,15 @@ Error responses include machine-readable error codes and actionable hints:
 |---|---|
 | Default | Agent-safe mode is **on** when `GITLAB_CLI_AGENT_SAFE` is unset |
 | Disable | Set `GITLAB_CLI_AGENT_SAFE=0` to turn off all restrictions |
-| Writes | Prefer `--dry-run` first, then `--confirm <token>` (token is usually the resource id/path/tag shown in dry-run or error output) |
-| `--force` | Blocked unless `GITLAB_CLI_ALLOW_FORCE=1` (only when the user explicitly authorizes skipping confirmation) |
+| Writes | Run `--dry-run` first, inspect `data.preview`, then retry with `--confirm <confirm_token>` from `data.confirm_token` |
+| `--force` | Deprecated for write commands; use the confirm-token flow |
 | `--show-values` | Blocked on `variable` commands unless `GITLAB_CLI_ALLOW_SHOW_VALUES=1` |
 
 Example (merge MR after dry-run):
 
 ```bash
 gitlab-cli mr merge --project group/proj 42 --dry-run
-gitlab-cli mr merge --project group/proj 42 --confirm 42
+gitlab-cli mr merge --project group/proj 42 --confirm <confirm_token>
 ```
 
 Example (self-update after dry-run):
@@ -342,7 +361,7 @@ Example (self-update after dry-run):
 ```bash
 gitlab-cli update --check
 gitlab-cli update --dry-run
-gitlab-cli update --confirm <targetVersion>
+gitlab-cli update --confirm <confirm_token>
 ```
 
 ## Multiple profiles

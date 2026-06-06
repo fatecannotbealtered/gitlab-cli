@@ -15,11 +15,11 @@
 
 | Check | Criterion | Result | Evidence |
 |-------|-----------|--------|----------|
-| Leaf command count | Enumerable via `reference --json` | **85** | §2.1 |
+| Leaf command count | Enumerable via `reference --compact` | **85** | §2.1 |
 | Unit test covers all 85 commands | `TestUnit_EveryLeafCommandHasTest` PASS | **Pass** | §2.2 |
 | All unit tests green | `go test ./...` | **Pass** | §2.3 |
 | Integration: one run per leaf command | `TestAllCommands_EveryLeaf` | **85 PASS + 0 SKIP = 85** | §2.4, §3 |
-| Local GitLab connectivity | `doctor --json` authValid | **Pass** | §2.5 |
+| Local GitLab connectivity | `doctor --compact` `data.authValid` | **Pass** | §2.5 |
 
 **Overall:** **Accepted.**  
 Includes full **pipeline / job** path; `gitlab-cli-e2e-runner` registered with `clone_url=http://gitlab:8929`; **all 85 commands exit 0**.
@@ -31,7 +31,7 @@ Includes full **pipeline / job** path; `gitlab-cli-e2e-runner` registered with `
 ### 2.1 Command tree size (85 leaf commands)
 
 ```text
-> go run ./cmd/gitlab-cli reference --json | python -c "..."
+> go run ./cmd/gitlab-cli reference --compact | python -c "..."
 leaf_commands 85
 ```
 
@@ -80,14 +80,21 @@ Full verbose log (local, not committed): `scripts/e2e-report-verbose.log`
 gitlab-cli-e2e   Up (healthy)   0.0.0.0:8929->8929/tcp
 gitlab-cli-e2e-runner   Up
 
-> go run ./cmd/gitlab-cli doctor --json
+> go run ./cmd/gitlab-cli doctor --compact
 {
-  "configExists": true,
-  "authValid": true,
-  "latencyMs": 84,
-  "host": "http://localhost:8929",
-  "username": "root",
-  "name": "Administrator"
+  "ok": true,
+  "schema_version": "1.0",
+  "data": {
+    "configExists": true,
+    "authValid": true,
+    "latencyMs": 84,
+    "host": "http://localhost:8929",
+    "username": "root",
+    "name": "Administrator"
+  },
+  "meta": {
+    "duration_ms": 84
+  }
 }
 ```
 

@@ -6,8 +6,14 @@ import (
 	"os"
 )
 
+const SchemaVersion = "1.0"
+
 // Compact controls whether JSON is emitted without indentation (set by --compact).
 var Compact bool
+
+// DurationMS returns the current command duration for response metadata.
+// The cmd package sets this hook; package-level tests and helper use default to 0.
+var DurationMS func() int64
 
 // marshalJSON encodes v according to the global Compact setting.
 func marshalJSON(v any) ([]byte, error) {
@@ -20,10 +26,62 @@ func marshalJSON(v any) ([]byte, error) {
 // emitJSONMarshal is the encoder for emitErrorPayload (overridable in tests).
 var emitJSONMarshal = marshalJSON
 
+type Meta struct {
+	DurationMS int64 `json:"duration_ms"`
+}
+
+type Envelope struct {
+	OK            bool           `json:"ok"`
+	SchemaVersion string         `json:"schema_version"`
+	Data          any            `json:"data,omitempty"`
+	Meta          Meta           `json:"meta,omitempty"`
+	Error         *EnvelopeError `json:"error,omitempty"`
+}
+
+type EnvelopeError struct {
+	Code      ErrorCode      `json:"code"`
+	Message   string         `json:"message"`
+	Details   map[string]any `json:"details"`
+	Retryable bool           `json:"retryable"`
+}
+
+func commandDurationMS() int64 {
+	if DurationMS == nil {
+		return 0
+	}
+	return DurationMS()
+}
+
+func SuccessEnvelope(v any) Envelope {
+	return Envelope{
+		OK:            true,
+		SchemaVersion: SchemaVersion,
+		Data:          v,
+		Meta:          Meta{DurationMS: commandDurationMS()},
+	}
+}
+
+func ErrorEnvelope(msg string, statusCode int, code ErrorCode) Envelope {
+	details := map[string]any{}
+	if statusCode != 0 {
+		details["status_code"] = statusCode
+	}
+	return Envelope{
+		OK:            false,
+		SchemaVersion: SchemaVersion,
+		Error: &EnvelopeError{
+			Code:      code,
+			Message:   msg,
+			Details:   details,
+			Retryable: RetryableErrorCode(code),
+		},
+	}
+}
+
 // PrintJSONErr outputs v as JSON to stdout. On marshal failure it writes
 // to stderr and returns the error (callers may map this to exit code 2).
 func PrintJSONErr(v any) error {
-	data, err := marshalJSON(v)
+	data, err := marshalJSON(SuccessEnvelope(v))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "json marshal error: %v\n", err)
 		return err
@@ -44,17 +102,19 @@ func PrintJSON(v any) {
 type ErrorCode string
 
 const (
-	ErrConfig     ErrorCode = "CONFIG_ERROR"
-	ErrAuth       ErrorCode = "AUTH_REQUIRED"
-	ErrForbidden  ErrorCode = "FORBIDDEN"
-	ErrNotFound   ErrorCode = "NOT_FOUND"
-	ErrConflict   ErrorCode = "CONFLICT"
-	ErrRateLimit  ErrorCode = "RATE_LIMITED"
-	ErrServer     ErrorCode = "SERVER_ERROR"
-	ErrValidation ErrorCode = "VALIDATION_ERROR"
-	ErrCancelled  ErrorCode = "CANCELLED"
-	ErrNetwork    ErrorCode = "NETWORK_ERROR"
-	ErrUnknown    ErrorCode = "UNKNOWN_ERROR"
+	ErrConfig          ErrorCode = "E_CONFIG"
+	ErrAuth            ErrorCode = "E_AUTH"
+	ErrForbidden       ErrorCode = "E_FORBIDDEN"
+	ErrNotFound        ErrorCode = "E_NOT_FOUND"
+	ErrConflict        ErrorCode = "E_CONFLICT"
+	ErrRateLimit       ErrorCode = "E_RATE_LIMIT"
+	ErrServer          ErrorCode = "E_SERVER"
+	ErrValidation      ErrorCode = "E_BAD_ARGS"
+	ErrConfirmRequired ErrorCode = "E_CONFIRM_REQUIRED"
+	ErrCancelled       ErrorCode = "E_CANCELLED"
+	ErrTimeout         ErrorCode = "E_TIMEOUT"
+	ErrNetwork         ErrorCode = "E_NETWORK"
+	ErrUnknown         ErrorCode = "E_UNKNOWN"
 )
 
 // ErrorCodeFromStatus maps HTTP status codes to error codes.
@@ -101,7 +161,11 @@ func HintForErrorCode(code ErrorCode) string {
 	case ErrValidation:
 		return "Check command arguments and flags"
 	case ErrCancelled:
-		return "Operation was cancelled or confirmation was not provided; use --confirm <token> for non-interactive runs"
+		return "Operation was cancelled or confirmation was not provided; use --confirm <confirm_token> for non-interactive runs"
+	case ErrConfirmRequired:
+		return "Run the same command with --dry-run, inspect the preview, then retry with --confirm <confirm_token>"
+	case ErrTimeout:
+		return "The operation timed out; retry with backoff"
 	case ErrNetwork:
 		return "Check host URL and network connectivity"
 	default:
@@ -109,14 +173,16 @@ func HintForErrorCode(code ErrorCode) string {
 	}
 }
 
-type errorPayload struct {
-	Error      string    `json:"error"`
-	StatusCode int       `json:"statusCode"`
-	ErrorCode  ErrorCode `json:"errorCode"`
-	Hint       string    `json:"hint,omitempty"`
+func RetryableErrorCode(code ErrorCode) bool {
+	switch code {
+	case ErrRateLimit, ErrServer, ErrNetwork, ErrTimeout:
+		return true
+	default:
+		return false
+	}
 }
 
-// PrintErrorJSON outputs an error message as JSON to stderr.
+// PrintErrorJSON outputs a machine-readable error envelope as JSON to stdout.
 func PrintErrorJSON(msg string, statusCode int) {
 	code := ErrorCodeFromStatus(statusCode)
 	if statusCode == 0 {
@@ -125,22 +191,20 @@ func PrintErrorJSON(msg string, statusCode int) {
 	emitErrorPayload(msg, statusCode, code)
 }
 
-// PrintErrorJSONWithCode outputs an error with an explicit error code.
+// PrintErrorJSONWithCode outputs an error envelope with an explicit error code.
 func PrintErrorJSONWithCode(msg string, statusCode int, code ErrorCode) {
 	emitErrorPayload(msg, statusCode, code)
 }
 
 func emitErrorPayload(msg string, statusCode int, code ErrorCode) {
-	payload := errorPayload{
-		Error:      msg,
-		StatusCode: statusCode,
-		ErrorCode:  code,
-		Hint:       HintForErrorCode(code),
+	payload := ErrorEnvelope(msg, statusCode, code)
+	if hint := HintForErrorCode(code); hint != "" {
+		payload.Error.Details["hint"] = hint
 	}
 	data, err := emitJSONMarshal(payload)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, `{"error": %q, "statusCode": %d, "errorCode": %q}`+"\n", msg, statusCode, code)
+		fmt.Fprintf(os.Stdout, `{"ok":false,"schema_version":%q,"error":{"code":%q,"message":%q,"details":{},"retryable":false}}`+"\n", SchemaVersion, code, msg)
 		return
 	}
-	fmt.Fprintln(os.Stderr, string(data))
+	fmt.Fprintln(os.Stdout, string(data))
 }

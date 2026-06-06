@@ -317,10 +317,11 @@ var issueCloseCmd = &cobra.Command{
 		if err != nil {
 			return failArg("iid must be a number")
 		}
-		if dryRunOutput("close issue", map[string]any{"project": project, "iid": iid}) {
+		confirmPayload := map[string]any{"project": project, "iid": iid}
+		if dryRunOutput("close issue", confirmPayload) {
 			return nil
 		}
-		if err := requireConfirm(cmd, fmt.Sprintf("close issue #%d in %s", iid, project), strconv.Itoa(iid)); err != nil {
+		if err := requireConfirm(cmd, "close issue", confirmPayload); err != nil {
 			return err
 		}
 		client, _, err := newClient()

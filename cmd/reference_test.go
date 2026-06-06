@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"encoding/json"
 	"strings"
 	"testing"
 
@@ -20,9 +19,7 @@ func TestReference_JSON_HasAgentMetadata(t *testing.T) {
 		}
 	})
 	var tree refTree
-	if err := json.Unmarshal([]byte(out), &tree); err != nil {
-		t.Fatalf("unmarshal: %v\noutput:\n%s", err, out)
-	}
+	unwrapJSONDataInto(t, out, &tree)
 	if tree.Version == "" {
 		t.Error("expected version in reference tree")
 	}

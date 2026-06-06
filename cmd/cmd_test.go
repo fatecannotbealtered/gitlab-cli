@@ -156,7 +156,7 @@ func TestDryRunOutput_JSON(t *testing.T) {
 	out := captureStdout(t, func() {
 		dryRunOutput("delete mr", map[string]any{"iid": 5})
 	})
-	for _, want := range []string{`"action": "delete mr"`, `"dryRun": true`, `"iid": 5`} {
+	for _, want := range []string{`"action": "delete mr"`, `"confirm_token"`, `"iid": 5`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in JSON dry-run, got:\n%s", want, out)
 		}
@@ -270,7 +270,7 @@ func TestFormat_JSONAliasConflictsWithText(t *testing.T) {
 	origExit := lastExit
 	defer func() { lastExit = origExit }()
 	lastExit = 0
-	errOut := captureStderr(t, func() {
+	errOut := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"reference", "--format", "text", "--json"})
 		_ = rootCmd.Execute()
 	})
@@ -330,13 +330,13 @@ func TestHandleAPIError_JSON(t *testing.T) {
 	defer func() { lastExit = origExit }()
 	lastExit = 0
 
-	// Capture stderr where PrintErrorJSONWithCode writes.
+	// Capture stdout where PrintErrorJSONWithCode writes the failure envelope.
 	r, w, err := os.Pipe()
 	if err != nil {
 		t.Fatalf("os.Pipe: %v", err)
 	}
-	origStderr := os.Stderr
-	os.Stderr = w
+	origStdout := os.Stdout
+	os.Stdout = w
 
 	var buf bytes.Buffer
 	done := make(chan struct{})
@@ -349,7 +349,7 @@ func TestHandleAPIError_JSON(t *testing.T) {
 	_ = handleAPIError(apiErr, true)
 
 	_ = w.Close()
-	os.Stderr = origStderr
+	os.Stdout = origStdout
 	<-done
 	_ = r.Close()
 

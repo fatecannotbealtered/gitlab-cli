@@ -43,7 +43,7 @@ CI mirrors `.github/workflows/ci.yml`: tidy modules, gofmt check (Linux), golang
 
 Local GitLab end-to-end tests (Docker Compose, 85 leaf commands): see [docs/E2E.md](docs/E2E.md) (**Windows / PowerShell** scripts; cross-platform notes inside). Run `go test -tags=integration ./e2e/...` after `scripts/e2e-up.ps1` on Windows.
 
-When adding commands, ensure `markWrite` / `markConfirm` / `markOutputType` annotations are set where applicable — they feed `gitlab-cli reference --json`.
+When adding commands, ensure `markWrite` / `markConfirm` / `markOutputType` annotations are set where applicable — they feed `gitlab-cli reference --compact`.
 
 ## Adding a new domain
 

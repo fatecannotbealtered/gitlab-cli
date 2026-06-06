@@ -47,7 +47,7 @@ First-time setup: ask user for GitLab URL + PAT (`api` scope), then `gitlab-cli 
 | Rule | Detail |
 |------|--------|
 | Output | JSON is default; add `--compact` for token efficiency; use `--format text` for human-readable output and `--format raw` for bytes/logs/diffs |
-| Writes | `--dry-run` first, then `--confirm <token>` (see error message for token) |
+| Writes | `--dry-run` first, inspect `data.preview`, then retry with `--confirm <confirm_token>` from `data.confirm_token` |
 | Force | Avoid `--force`; needs `GITLAB_CLI_ALLOW_FORCE=1` in agent-safe mode |
 | Secrets | Never `--show-values` unless user asks + `GITLAB_CLI_ALLOW_SHOW_VALUES=1` |
 | Discovery | `gitlab-cli reference` for `write`, `requiresConfirmation`, `riskLevel` |
@@ -74,7 +74,7 @@ Full contracts (exit codes, error JSON, list envelope, audit): **[reference/cont
 | Task | Command |
 |------|---------|
 | List open MRs | `gitlab-cli mr list --project G --compact` |
-| Merge MR | `gitlab-cli mr merge --project G 42 --confirm 42` |
+| Merge MR | `gitlab-cli mr merge --project G 42 --dry-run`, then retry with `--confirm <confirm_token>` |
 | Comment on MR | `gitlab-cli mr comment add --project G 42 --body "..."` |
 | Wait for CI | `gitlab-cli pipeline wait --project G ID --timeout 600` |
 | Job log | `gitlab-cli job log --project G JOB_ID` |
@@ -82,6 +82,6 @@ Full contracts (exit codes, error JSON, list envelope, audit): **[reference/cont
 ## vs glab
 
 - **glab** — human terminal UX
-- **gitlab-cli** — agents: flat JSON, semantic exit codes, `--dry-run`, audit log
+- **gitlab-cli** — agents: JSON envelopes, semantic exit codes, `--dry-run`, audit log
 
 Both can share `GITLAB_TOKEN`; prefer `GITLAB_CLI_*` to isolate.

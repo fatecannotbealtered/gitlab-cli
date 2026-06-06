@@ -13,10 +13,10 @@ gitlab-cli variable list --project G --show-values
 
 gitlab-cli variable create --project G --key FOO --value bar --masked
 gitlab-cli variable update --project G --key FOO --value baz
-gitlab-cli variable delete --project G --key FOO --confirm FOO
+gitlab-cli variable delete --project G --key FOO --confirm <confirm_token>
 ```
 
-## Flat Variable JSON (no value)
+## Variable data payload (no value)
 
 ```json
 {

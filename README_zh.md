@@ -13,14 +13,14 @@ Go 编写，单文件静态二进制。兼容 **GitLab.com / 自托管 GitLab / 
 
 GitLab 官方有非常优秀的 CLI [glab](https://gitlab.com/gitlab-org/cli)——但 glab 是给"人"用的。`gitlab-cli` **专为 AI Agent 而生**，沿用 [`jira-cli`](https://github.com/fatecannotbealtered/jira-cli) 的设计：
 
-- **强 JSON 契约**——所有命令默认输出扁平、token 高效的 JSON。
+- **强 JSON 契约**——所有命令默认输出 JSON，成功与失败都包在稳定的 `ok` / `schema_version` 信封中。
 - **统一输出格式**——全局 `--format json|text|raw`；`text` 给人读，`raw` 给未包装的 bytes/log/diff；`--json` 保留为 `--format json` 的兼容别名。
 - **`--fields key,name,state` 字段投影**——部分命令支持，进一步压缩 JSON 输出。
 - **`--dry-run`**——所有写命令支持执行前预览。
-- **`--confirm <token>`**——非交互写操作确认（推荐）。
-- **`--force`**——跳过确认（Agent-safe 模式下需 `GITLAB_CLI_ALLOW_FORCE=1`）。
-- **机器可读错误信封**——含 `errorCode`、`statusCode`、可执行 `hint`。
-- **语义化退出码**（`0`/`2`/`3`/`4`/`5`/`6`/`7`/`8`/`9`/`10`）。
+- **`--confirm <confirm_token>`**——非交互写操作确认（推荐；token 来自 `--dry-run`）。
+- **`--force`**——写操作中已废弃，请使用 `--dry-run` + `--confirm <confirm_token>`。
+- **机器可读错误信封**——含稳定 `E_*` 错误码、详情与 `retryable`。
+- **语义化退出码**（`0` 到 `8`），与是否可自动重试保持一致。
 - **JSONL 审计日志**——所有写命令记录到 `~/.gitlab-cli/audit/`。
 - **`SKILL.md`**——通过 [`npx skills`](https://github.com/vercel-labs/skills) 安装，供兼容的 AI 编程助手识别能力清单。
 
@@ -147,15 +147,15 @@ gitlab-cli mr current                            # 自动用 git 上下文
 gitlab-cli mr create    --project <id> --title <t> --source-branch <s> --target-branch main
 gitlab-cli mr create    --auto [--target-branch main] [--title <t>] [--draft]
 gitlab-cli mr update    --project <id> <iid> [--title ...] [--add-labels ...]
-gitlab-cli mr merge     --project <id> <iid> [--squash] [--should-remove-source-branch] [--confirm <token>]
-gitlab-cli mr close     --project <id> <iid> [--confirm <token>]
-gitlab-cli mr reopen    --project <id> <iid> [--confirm <token>]
+gitlab-cli mr merge     --project <id> <iid> [--squash] [--should-remove-source-branch] [--confirm <confirm_token>]
+gitlab-cli mr close     --project <id> <iid> [--confirm <confirm_token>]
+gitlab-cli mr reopen    --project <id> <iid> [--confirm <confirm_token>]
 gitlab-cli mr approve   --project <id> <iid>
 gitlab-cli mr unapprove --project <id> <iid>
 gitlab-cli mr diff      --project <id> <iid>      # 默认 JSON；用 --format raw 输出原始 unified diff
 gitlab-cli mr comment add    --project <id> <iid> --body <text>
 gitlab-cli mr comment list   --project <id> <iid>
-gitlab-cli mr comment delete --project <id> <iid> --note-id <id> [--confirm <token>]
+gitlab-cli mr comment delete --project <id> <iid> --note-id <id> [--confirm <confirm_token>]
 ```
 
 ### Issue
@@ -165,13 +165,13 @@ gitlab-cli issue list      --project <id> [--state ...] [--assignee <u>] [--labe
 gitlab-cli issue get       <iid> --project <id>
 gitlab-cli issue create    --project <id> --title <t> [--description <d>] [--label l1,l2]
 gitlab-cli issue update    <iid> --project <id> [--add-labels ...] [--remove-labels ...]
-gitlab-cli issue close     <iid> --project <id> [--confirm <token>]
-gitlab-cli issue reopen    <iid> --project <id> [--confirm <token>]
+gitlab-cli issue close     <iid> --project <id> [--confirm <confirm_token>]
+gitlab-cli issue reopen    <iid> --project <id> [--confirm <confirm_token>]
 gitlab-cli issue assign    <iid> <username|me> --project <id>
 gitlab-cli issue label     <iid> --project <id> --add l1,l2 --remove l3,l4
 gitlab-cli issue comment add    <iid> --project <id> --body <t>
 gitlab-cli issue comment list   <iid> --project <id>
-gitlab-cli issue comment delete <iid> --project <id> --note-id <id> [--confirm <token>]
+gitlab-cli issue comment delete <iid> --project <id> --note-id <id> [--confirm <confirm_token>]
 ```
 
 ### Label & Milestone
@@ -180,13 +180,13 @@ gitlab-cli issue comment delete <iid> --project <id> --note-id <id> [--confirm <
 gitlab-cli label list   --project <id>
 gitlab-cli label create --project <id> --name <n> --color <#hex|named> [--priority N]
 gitlab-cli label update --project <id> --label-id N [--name ...] [--color ...]
-gitlab-cli label delete --project <id> --label-id N [--confirm <token>]
+gitlab-cli label delete --project <id> --label-id N [--confirm <confirm_token>]
 
 gitlab-cli milestone list   --project <id> [--state active|closed|all]
 gitlab-cli milestone get    --project <id> --milestone-id N
 gitlab-cli milestone create --project <id> --title <t> [--due-date YYYY-MM-DD]
 gitlab-cli milestone update --project <id> --milestone-id N [--title ...] [--state-event close|activate]
-gitlab-cli milestone close  --project <id> --milestone-id N [--confirm <token>]
+gitlab-cli milestone close  --project <id> --milestone-id N [--confirm <confirm_token>]
 ```
 
 ### 工作流上下文
@@ -202,17 +202,17 @@ gitlab-cli context
 gitlab-cli pipeline list    --project <id> [--ref <b>] [--status ...]
 gitlab-cli pipeline get     --project <id> <pipeline_id>
 gitlab-cli pipeline current
-gitlab-cli pipeline create  --project <id> --ref <b> [--variable KEY=VAL]... [--confirm <token>]
-gitlab-cli pipeline retry   --project <id> <pipeline_id> [--confirm <token>]
-gitlab-cli pipeline cancel  --project <id> <pipeline_id> [--confirm <token>]
+gitlab-cli pipeline create  --project <id> --ref <b> [--variable KEY=VAL]... [--confirm <confirm_token>]
+gitlab-cli pipeline retry   --project <id> <pipeline_id> [--confirm <confirm_token>]
+gitlab-cli pipeline cancel  --project <id> <pipeline_id> [--confirm <confirm_token>]
 gitlab-cli pipeline jobs    --project <id> <pipeline_id> [--scope ...]
 gitlab-cli pipeline wait    --project <id> <pipeline_id> [--timeout 300] [--interval 10]
 
 gitlab-cli job get       --project <id> <job_id>
 gitlab-cli job log       --project <id> <job_id>           # 默认 JSON；用 --format raw 输出原始 trace
 gitlab-cli job log       --project <id> <job_id> --follow  # 默认 JSON buffer；用 --format text/raw 流式输出
-gitlab-cli job retry     --project <id> <job_id> [--confirm <token>]
-gitlab-cli job cancel    --project <id> <job_id> [--confirm <token>]
+gitlab-cli job retry     --project <id> <job_id> [--confirm <confirm_token>]
+gitlab-cli job cancel    --project <id> <job_id> [--confirm <confirm_token>]
 gitlab-cli job artifacts --project <id> <job_id> --output artifacts.zip
 gitlab-cli job wait      --project <id> <job_id> [--timeout 300] [--interval 5]
 ```
@@ -223,11 +223,11 @@ gitlab-cli job wait      --project <id> <job_id> [--timeout 300] [--interval 5]
 gitlab-cli repo file get    --project <id> --path <p> [--ref <b>] [--output <path>]
 gitlab-cli repo file create --project <id> --path <p> --branch <b> --content ... --commit-message <m>
 gitlab-cli repo file update --project <id> --path <p> --branch <b> --content ... --commit-message <m>
-gitlab-cli repo file delete --project <id> --path <p> --branch <b> --commit-message <m> [--confirm <token>]
+gitlab-cli repo file delete --project <id> --path <p> --branch <b> --commit-message <m> [--confirm <confirm_token>]
 
 gitlab-cli repo branch list   --project <id> [--search <q>]
 gitlab-cli repo branch create --project <id> --name <n> --ref <source>
-gitlab-cli repo branch delete --project <id> --name <n> [--confirm <token>]
+gitlab-cli repo branch delete --project <id> --name <n> [--confirm <confirm_token>]
 
 gitlab-cli repo commit list --project <id> [--ref-name <b>] [--since ...] [--until ...] [--path <p>]
 gitlab-cli repo commit get  --project <id> <sha>
@@ -237,7 +237,7 @@ gitlab-cli release list   --project <id>
 gitlab-cli release get    --project <id> --tag <tag>
 gitlab-cli release create --project <id> --tag <tag> --name <n> [--description <d>] [--ref <b>] [--milestone m1,m2]
 gitlab-cli release update --project <id> --tag <tag> [--name ...] [--description ...]
-gitlab-cli release delete --project <id> --tag <tag> [--confirm <token>]
+gitlab-cli release delete --project <id> --tag <tag> [--confirm <confirm_token>]
 ```
 
 ### CI/CD 变量
@@ -247,7 +247,7 @@ gitlab-cli variable list   --project <id>                                     # 
 gitlab-cli variable get    --project <id> --key <k> [--filter env_scope=<scope>]
 gitlab-cli variable create --project <id> --key <k> --value <v> [--type env_var|file] [--protected] [--masked] [--env-scope <s>]
 gitlab-cli variable update --project <id> --key <k> [--value <v>] [--protected] [--masked]
-gitlab-cli variable delete --project <id> --key <k> [--filter env_scope=<scope>] [--confirm <token>]
+gitlab-cli variable delete --project <id> --key <k> [--filter env_scope=<scope>] [--confirm <confirm_token>]
 ```
 
 `variable` 子命令可加 `--show-values` 在 JSON 输出中包含密钥明文（默认脱敏）。
@@ -256,10 +256,10 @@ gitlab-cli variable delete --project <id> --key <k> [--filter env_scope=<scope>]
 
 ## JSON 输出
 
-默认输出 JSON。需要人类可读输出时用 `--format text`；需要未包装 bytes/log/diff 时用 `--format raw`（仅部分命令支持）。`--json` 保留为 `--format json` 的兼容别名。
+默认输出 JSON。普通命令的 stdout 只包含一个合法 JSON 文档；进度、警告与诊断信息走 stderr。需要人类可读输出时用 `--format text`；需要未包装 bytes/log/diff 时用 `--format raw`（仅部分命令支持）。`--json` 保留为 `--format json` 的兼容别名。
 
 ```bash
-# 默认扁平 JSON
+# 默认 JSON 信封
 gitlab-cli auth status
 gitlab-cli doctor
 
@@ -273,14 +273,34 @@ gitlab-cli doctor --quiet
 gitlab-cli doctor --compact
 ```
 
-错误信封含错误码与可执行提示：
+成功响应信封：
 
 ```json
 {
-  "error": "GitLab API error 404: 404 Project Not Found",
-  "statusCode": 404,
-  "errorCode": "NOT_FOUND",
-  "hint": "Verify the resource (project path, IID, ID) exists and you have permission to view it"
+  "ok": true,
+  "schema_version": "1.0",
+  "data": {},
+  "meta": {
+    "duration_ms": 0
+  }
+}
+```
+
+失败响应使用同形信封：
+
+```json
+{
+  "ok": false,
+  "schema_version": "1.0",
+  "error": {
+    "code": "E_NOT_FOUND",
+    "message": "GitLab API error 404: 404 Project Not Found",
+    "details": {
+      "status_code": 404,
+      "hint": "Verify the resource (project path, IID, ID) exists and you have permission to view it"
+    },
+    "retryable": false
+  }
 }
 ```
 
@@ -292,31 +312,30 @@ gitlab-cli doctor --compact
 | `--json` | `--format json` 的兼容别名；不要和 `--format text/raw` 同时使用 |
 | `--compact` | 紧凑 JSON（无缩进，仅影响 `--format json`） |
 | `--quiet` | 抑制 text 辅助输出 |
-| `--fields a,b,c` | 从扁平 JSON 投影字段（**仅部分命令**支持，且只支持 JSON） |
+| `--fields a,b,c` | 从 `data` 载荷投影字段（**仅部分命令**支持，且只支持 JSON） |
 | `--dry-run` | 预览写命令而不执行 |
-| `--confirm <token>` | 非交互确认（写操作推荐；token 见 `--dry-run` 或错误提示） |
-| `--force` | 跳过确认（Agent-safe 模式下需 `GITLAB_CLI_ALLOW_FORCE=1`） |
+| `--confirm <confirm_token>` | 非交互确认；使用 `--dry-run` 返回的 `data.confirm_token` |
+| `--force` | 写操作中已废弃；请使用 `--dry-run` 和 `--confirm <confirm_token>` |
 
 ## 退出码
 
 | 退出码 | 含义 |
 |---|---|
 | 0 | 成功 |
-| 2 | 参数错误 |
-| 3 | 鉴权错误（401） |
-| 4 | 资源不存在 |
-| 5 | 权限不足 |
-| 6 | 限流 |
-| 7 | 网络/服务端错误 |
-| 8 | 超时（`pipeline wait` / `job wait`） |
-| 9 | CI/CD 失败（`pipeline wait` / `job wait` 以 failed/canceled/skipped 结束） |
-| 10 | 用户取消 / 缺少确认（使用 `--confirm <token>` 非交互确认） |
+| 1 | 通用错误 |
+| 2 | 参数错误 / 校验失败 |
+| 3 | 资源不存在 |
+| 4 | 鉴权 / 权限失败 |
+| 5 | 缺少确认或用户取消 |
+| 6 | 冲突 / 状态漂移 / CI 终态非成功 |
+| 7 | 可重试的瞬时错误（限流、网络、服务端） |
+| 8 | 超时 |
 
 ## Agent-safe 模式（默认开启）
 
-- `--force` 需设置 `GITLAB_CLI_ALLOW_FORCE=1`（用户明确授权后）
+- 写操作使用 `--dry-run` 预览，读取 `data.confirm_token` 后再用 `--confirm <confirm_token>` 执行
 - `--show-values` 需设置 `GITLAB_CLI_ALLOW_SHOW_VALUES=1`
-- 写操作优先使用 `--confirm <token>` 而非 `--force`
+- `--force` 在写操作中已废弃
 - 设置 `GITLAB_CLI_AGENT_SAFE=0` 可关闭全部限制
 
 自更新也遵循同样流程：
@@ -324,7 +343,7 @@ gitlab-cli doctor --compact
 ```bash
 gitlab-cli update --check
 gitlab-cli update --dry-run
-gitlab-cli update --confirm <targetVersion>
+gitlab-cli update --confirm <confirm_token>
 ```
 
 ## 多 Profile

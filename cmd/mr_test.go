@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"bytes"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,6 +11,23 @@ import (
 
 	"github.com/spf13/cobra"
 )
+
+func mrCloseConfirmArgsForTest(t *testing.T, project string, iid int) []string {
+	t.Helper()
+	return confirmArgsForTest(t, "close mr", map[string]any{"project": project, "iid": iid})
+}
+
+func mrMergeConfirmArgsForTest(t *testing.T, project string, iid int) []string {
+	t.Helper()
+	return confirmArgsForTest(t, "merge mr", map[string]any{
+		"project":                  project,
+		"iid":                      iid,
+		"squash":                   false,
+		"shouldRemoveSourceBranch": false,
+		"mergeCommitMessage":       "",
+		"sha":                      "",
+	})
+}
 
 func TestMR_Help_ListsSubcommands(t *testing.T) {
 	buf := new(bytes.Buffer)
@@ -62,7 +78,7 @@ func TestMR_Create_DryRun_JSON(t *testing.T) {
 		_ = rootCmd.Execute()
 	})
 
-	for _, want := range []string{`"dryRun": true`, `"action"`, `"project"`} {
+	for _, want := range []string{`"confirm_token"`, `"action"`, `"project"`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("dry-run JSON missing %q\noutput:\n%s", want, out)
 		}
@@ -115,7 +131,7 @@ func TestMR_Close_DryRun_JSON(t *testing.T) {
 		_ = rootCmd.Execute()
 	})
 
-	for _, want := range []string{`"dryRun": true`, `"iid": 5`} {
+	for _, want := range []string{`"confirm_token"`, `"iid": 5`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("dry-run JSON missing %q\noutput:\n%s", want, out)
 		}
@@ -136,7 +152,7 @@ func TestMR_Merge_DryRun_JSON(t *testing.T) {
 		_ = rootCmd.Execute()
 	})
 
-	for _, want := range []string{`"dryRun": true`, `"iid": 7`} {
+	for _, want := range []string{`"confirm_token"`, `"iid": 7`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("dry-run JSON missing %q\noutput:\n%s", want, out)
 		}
@@ -159,7 +175,7 @@ func TestMR_CommentAdd_DryRun_JSON(t *testing.T) {
 		_ = rootCmd.Execute()
 	})
 
-	for _, want := range []string{`"dryRun": true`, `"body": "LGTM"`} {
+	for _, want := range []string{`"confirm_token"`, `"body": "LGTM"`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("dry-run JSON missing %q\noutput:\n%s", want, out)
 		}
@@ -217,7 +233,7 @@ func TestMR_Update_DryRun_JSON(t *testing.T) {
 		rootCmd.SetArgs([]string{"mr", "update", "1", "--project", "group/proj", "--title", "new title", "--dry-run", "--json"})
 		_ = rootCmd.Execute()
 	})
-	for _, want := range []string{`"dryRun": true`, `"iid": 1`} {
+	for _, want := range []string{`"confirm_token"`, `"iid": 1`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in output:\n%s", want, out)
 		}
@@ -233,7 +249,7 @@ func TestMR_Approve_DryRun_JSON(t *testing.T) {
 		rootCmd.SetArgs([]string{"mr", "approve", "1", "--project", "group/proj", "--dry-run", "--json"})
 		_ = rootCmd.Execute()
 	})
-	for _, want := range []string{`"dryRun": true`, `"iid": 1`} {
+	for _, want := range []string{`"confirm_token"`, `"iid": 1`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in output:\n%s", want, out)
 		}
@@ -249,7 +265,7 @@ func TestMR_Unapprove_DryRun_JSON(t *testing.T) {
 		rootCmd.SetArgs([]string{"mr", "unapprove", "1", "--project", "group/proj", "--dry-run", "--json"})
 		_ = rootCmd.Execute()
 	})
-	for _, want := range []string{`"dryRun": true`, `"iid": 1`} {
+	for _, want := range []string{`"confirm_token"`, `"iid": 1`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in output:\n%s", want, out)
 		}
@@ -265,7 +281,7 @@ func TestMR_Reopen_DryRun_JSON(t *testing.T) {
 		rootCmd.SetArgs([]string{"mr", "reopen", "1", "--project", "group/proj", "--dry-run", "--json"})
 		_ = rootCmd.Execute()
 	})
-	for _, want := range []string{`"dryRun": true`, `"iid": 1`} {
+	for _, want := range []string{`"confirm_token"`, `"iid": 1`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in output:\n%s", want, out)
 		}
@@ -304,42 +320,23 @@ func TestMR_Create_AssigneeNotFound(t *testing.T) {
 	jsonMode = true
 	lastExit = 0
 
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("os.Pipe: %v", err)
-	}
-	origStderr := os.Stderr
-	os.Stderr = w
-
-	var stderrBuf bytes.Buffer
-	done := make(chan struct{})
-	go func() {
-		_, _ = io.Copy(&stderrBuf, r)
-		close(done)
-	}()
-
-	rootCmd.SetArgs([]string{
-		"mr", "create",
-		"--project", "foo/bar",
-		"--title", "feat",
-		"--source-branch", "feat",
-		"--assignee", "ghost",
-		"--json",
+	out := captureStdout(t, func() {
+		rootCmd.SetArgs([]string{
+			"mr", "create",
+			"--project", "foo/bar",
+			"--title", "feat",
+			"--source-branch", "feat",
+			"--assignee", "ghost",
+			"--json",
+		})
+		_ = rootCmd.Execute()
 	})
-	_ = rootCmd.Execute()
-
-	_ = w.Close()
-	os.Stderr = origStderr
-	<-done
-	_ = r.Close()
-
-	out := stderrBuf.String()
 
 	if lastExit != ExitNotFound {
 		t.Errorf("exit code = %d, want %d (ExitNotFound)", lastExit, ExitNotFound)
 	}
-	if !strings.Contains(out, `"NOT_FOUND"`) {
-		t.Errorf("expected NOT_FOUND error code in JSON output, got:\n%s", out)
+	if !strings.Contains(out, `"E_NOT_FOUND"`) {
+		t.Errorf("expected E_NOT_FOUND error code in JSON output, got:\n%s", out)
 	}
 	if !strings.Contains(out, "ghost") || !strings.Contains(out, "not found") {
 		t.Errorf("expected user not found message in output, got:\n%s", out)
@@ -410,7 +407,9 @@ func TestMR_Close_JSON(t *testing.T) {
 	defer func() { dryRun = origDR; jsonMode = origJM }()
 	dryRun = false
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"mr", "close", "1", "--project", "foo/bar", "--json"})
+		args := []string{"mr", "close", "1", "--project", "foo/bar", "--json"}
+		args = append(args, mrCloseConfirmArgsForTest(t, "foo/bar", 1)...)
+		rootCmd.SetArgs(args)
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, `"closed"`) {
@@ -503,7 +502,9 @@ func TestMR_Merge_JSON(t *testing.T) {
 	defer func() { dryRun = origDR; jsonMode = origJM }()
 	dryRun = false
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"mr", "merge", "1", "--project", "foo/bar", "--json"})
+		args := []string{"mr", "merge", "1", "--project", "foo/bar", "--json"}
+		args = append(args, mrMergeConfirmArgsForTest(t, "foo/bar", 1)...)
+		rootCmd.SetArgs(args)
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, `"merged"`) {
@@ -599,7 +600,9 @@ func TestMR_Close_PlainText(t *testing.T) {
 	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"mr", "close", "1", "--project", "foo/bar", "--confirm", "1"})
+		args := []string{"mr", "close", "1", "--project", "foo/bar"}
+		args = append(args, mrCloseConfirmArgsForTest(t, "foo/bar", 1)...)
+		rootCmd.SetArgs(args)
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, "Closed") {
@@ -622,7 +625,9 @@ func TestMR_Merge_PlainText(t *testing.T) {
 	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"mr", "merge", "1", "--project", "foo/bar", "--confirm", "1"})
+		args := []string{"mr", "merge", "1", "--project", "foo/bar"}
+		args = append(args, mrMergeConfirmArgsForTest(t, "foo/bar", 1)...)
+		rootCmd.SetArgs(args)
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, "Merged") {
@@ -1233,8 +1238,8 @@ func TestMR_Current_NoOpenMR(t *testing.T) {
 	if lastExit != ExitNotFound {
 		t.Errorf("exit = %d, want %d", lastExit, ExitNotFound)
 	}
-	if !strings.Contains(out, "No open MR") {
-		t.Errorf("expected no MR message, got:\n%s", out)
+	if !strings.Contains(out, `"E_NOT_FOUND"`) || !strings.Contains(out, "no open MR") {
+		t.Errorf("expected no MR JSON error, got:\n%s", out)
 	}
 }
 
@@ -1511,7 +1516,9 @@ func TestMR_Merge_WithConfirm(t *testing.T) {
 	t.Setenv("GITLAB_CLI_HOST", srv.URL)
 	t.Setenv("GITLAB_CLI_TOKEN", "tok")
 	out := captureCombinedOutput(t, func() {
-		rootCmd.SetArgs([]string{"mr", "merge", "1", "--project", "g/p", "--confirm", "1"})
+		args := []string{"mr", "merge", "1", "--project", "g/p"}
+		args = append(args, mrMergeConfirmArgsForTest(t, "g/p", 1)...)
+		rootCmd.SetArgs(args)
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, "Merged") {
@@ -1524,7 +1531,9 @@ func TestMR_Merge_NewClientError(t *testing.T) {
 	origExit := lastExit
 	defer func() { lastExit = origExit }()
 	lastExit = 0
-	rootCmd.SetArgs([]string{"mr", "merge", "1", "--project", "g/p", "--confirm", "1"})
+	args := []string{"mr", "merge", "1", "--project", "g/p"}
+	args = append(args, mrMergeConfirmArgsForTest(t, "g/p", 1)...)
+	rootCmd.SetArgs(args)
 	_ = rootCmd.Execute()
 	if lastExit != ExitAuth {
 		t.Errorf("exit = %d, want %d", lastExit, ExitAuth)
@@ -1543,7 +1552,9 @@ func TestMR_Close_WithConfirm(t *testing.T) {
 	t.Setenv("GITLAB_CLI_HOST", srv.URL)
 	t.Setenv("GITLAB_CLI_TOKEN", "tok")
 	out := captureCombinedOutput(t, func() {
-		rootCmd.SetArgs([]string{"mr", "close", "1", "--project", "g/p", "--confirm", "1"})
+		args := []string{"mr", "close", "1", "--project", "g/p"}
+		args = append(args, mrCloseConfirmArgsForTest(t, "g/p", 1)...)
+		rootCmd.SetArgs(args)
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, "Closed") {
@@ -1556,7 +1567,9 @@ func TestMR_Close_NewClientError(t *testing.T) {
 	origExit := lastExit
 	defer func() { lastExit = origExit }()
 	lastExit = 0
-	rootCmd.SetArgs([]string{"mr", "close", "1", "--project", "g/p", "--confirm", "1"})
+	args := []string{"mr", "close", "1", "--project", "g/p"}
+	args = append(args, mrCloseConfirmArgsForTest(t, "g/p", 1)...)
+	rootCmd.SetArgs(args)
 	_ = rootCmd.Execute()
 	if lastExit != ExitAuth {
 		t.Errorf("exit = %d, want %d", lastExit, ExitAuth)
@@ -1576,7 +1589,9 @@ func TestMR_Close_APIError_JSON(t *testing.T) {
 	origExit := lastExit
 	defer func() { lastExit = origExit }()
 	lastExit = 0
-	rootCmd.SetArgs([]string{"mr", "close", "1", "--project", "g/p", "--confirm", "1", "--json"})
+	args := []string{"mr", "close", "1", "--project", "g/p", "--json"}
+	args = append(args, mrCloseConfirmArgsForTest(t, "g/p", 1)...)
+	rootCmd.SetArgs(args)
 	_ = rootCmd.Execute()
 	if lastExit == ExitOK {
 		t.Errorf("expected non-zero exit, got %d", lastExit)
@@ -1842,8 +1857,8 @@ func TestMR_Merge_ConfirmRejected(t *testing.T) {
 	lastExit = 0
 	rootCmd.SetArgs([]string{"mr", "merge", "1", "--project", "g/p", "--confirm", "wrong"})
 	_ = rootCmd.Execute()
-	if lastExit != ExitCancelled {
-		t.Errorf("exit = %d, want %d", lastExit, ExitCancelled)
+	if lastExit != ExitConflict {
+		t.Errorf("exit = %d, want %d", lastExit, ExitConflict)
 	}
 }
 
@@ -1873,8 +1888,8 @@ func TestMR_Close_ConfirmRejected(t *testing.T) {
 	lastExit = 0
 	rootCmd.SetArgs([]string{"mr", "close", "1", "--project", "g/p", "--confirm", "wrong"})
 	_ = rootCmd.Execute()
-	if lastExit != ExitCancelled {
-		t.Errorf("exit = %d, want %d", lastExit, ExitCancelled)
+	if lastExit != ExitConflict {
+		t.Errorf("exit = %d, want %d", lastExit, ExitConflict)
 	}
 }
 

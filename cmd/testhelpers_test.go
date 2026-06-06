@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -120,6 +121,12 @@ func clearFieldsFlagsForTest(t *testing.T, cmd *cobra.Command) {
 	}
 }
 
+func confirmArgsForTest(t *testing.T, action string, payload any) []string {
+	t.Helper()
+	token, _ := newConfirmToken(action, payload)
+	return []string{"--confirm", token}
+}
+
 func resetCommandFlagForTest(t *testing.T, cmd *cobra.Command, name, value string) {
 	t.Helper()
 	if err := cmd.Flags().Set(name, value); err != nil {
@@ -144,13 +151,35 @@ func resetVariableFlags(t *testing.T) {
 		{variableGetCmd, "key", ""},
 		{variableGetCmd, "filter", ""},
 		{variableGetCmd, "fields", ""},
+		{variableCreateCmd, "project", ""},
+		{variableCreateCmd, "key", ""},
+		{variableCreateCmd, "value", ""},
+		{variableCreateCmd, "type", "env_var"},
+		{variableCreateCmd, "protected", "false"},
+		{variableCreateCmd, "masked", "false"},
+		{variableCreateCmd, "raw", "false"},
+		{variableCreateCmd, "env-scope", "*"},
+		{variableCreateCmd, "description", ""},
+		{variableUpdateCmd, "project", ""},
+		{variableUpdateCmd, "key", ""},
+		{variableUpdateCmd, "value", ""},
+		{variableUpdateCmd, "type", ""},
+		{variableUpdateCmd, "protected", ""},
+		{variableUpdateCmd, "masked", ""},
+		{variableUpdateCmd, "raw", ""},
+		{variableUpdateCmd, "env-scope", ""},
+		{variableUpdateCmd, "description", ""},
+		{variableDeleteCmd, "project", ""},
+		{variableDeleteCmd, "key", ""},
+		{variableDeleteCmd, "filter", ""},
 	} {
-		if err := kv.cmd.Flags().Set(kv.name, kv.value); err != nil {
-			t.Fatalf("reset variable flag %q: %v", kv.name, err)
-		}
+		resetCommandFlagForTest(t, kv.cmd, kv.name, kv.value)
 	}
 	if err := variableCmd.PersistentFlags().Set("show-values", "false"); err != nil {
 		t.Fatalf("reset show-values: %v", err)
+	}
+	if flag := variableCmd.PersistentFlags().Lookup("show-values"); flag != nil {
+		flag.Changed = false
 	}
 }
 
@@ -354,4 +383,58 @@ func captureStderr(t *testing.T, fn func()) string {
 	<-done
 	_ = r.Close()
 	return buf.String()
+}
+
+func unwrapJSONDataMap(t *testing.T, out string) map[string]any {
+	t.Helper()
+	data := unwrapJSONData(t, out)
+	m, ok := data.(map[string]any)
+	if !ok {
+		t.Fatalf("data is %T, want object\noutput:\n%s", data, out)
+	}
+	return m
+}
+
+func unwrapJSONDataInto(t *testing.T, out string, target any) {
+	t.Helper()
+	data := unwrapJSONData(t, out)
+	raw, err := json.Marshal(data)
+	if err != nil {
+		t.Fatalf("marshal data: %v\noutput:\n%s", err, out)
+	}
+	if err := json.Unmarshal(raw, target); err != nil {
+		t.Fatalf("unmarshal data: %v\noutput:\n%s", err, out)
+	}
+}
+
+func unwrapJSONData(t *testing.T, out string) any {
+	t.Helper()
+	var env map[string]any
+	if err := json.Unmarshal([]byte(out), &env); err != nil {
+		t.Fatalf("output is not valid JSON: %v\noutput:\n%s", err, out)
+	}
+	if ok, _ := env["ok"].(bool); !ok {
+		t.Fatalf("expected ok=true envelope, got:\n%s", out)
+	}
+	data, ok := env["data"]
+	if !ok {
+		t.Fatalf("missing data in envelope:\n%s", out)
+	}
+	return data
+}
+
+func unwrapJSONErrorMap(t *testing.T, out string) map[string]any {
+	t.Helper()
+	var env map[string]any
+	if err := json.Unmarshal([]byte(out), &env); err != nil {
+		t.Fatalf("output is not valid JSON: %v\noutput:\n%s", err, out)
+	}
+	if ok, _ := env["ok"].(bool); ok {
+		t.Fatalf("expected ok=false envelope, got:\n%s", out)
+	}
+	errObj, ok := env["error"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing error object in envelope:\n%s", out)
+	}
+	return errObj
 }

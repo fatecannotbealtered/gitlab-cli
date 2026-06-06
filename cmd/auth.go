@@ -167,9 +167,7 @@ func runAuthLogin(_ *cobra.Command, _ []string) error {
 	if authLoginHostFlag != "" && authLoginTokenFlag != "" {
 		host := strings.TrimSpace(authLoginHostFlag)
 		if !strings.HasPrefix(host, "https://") && !strings.HasPrefix(host, "http://") {
-			output.Error("host must start with https:// (or http:// for local development)")
-			setExitCode(ExitBadArgs)
-			return ErrSilent
+			return failArg("host must start with https:// (or http:// for local development)")
 		}
 		token := strings.TrimSpace(authLoginTokenFlag)
 		if token == "" {
@@ -206,6 +204,20 @@ func runAuthLogin(_ *cobra.Command, _ []string) error {
 		return nil
 	}
 
+	if dryRun && authLoginHostFlag != "" {
+		host := strings.TrimSpace(authLoginHostFlag)
+		if !strings.HasPrefix(host, "https://") && !strings.HasPrefix(host, "http://") {
+			return failArg("host must start with https:// (or http:// for local development)")
+		}
+		if dryRunOutput("save credentials", map[string]any{"host": host}) {
+			return nil
+		}
+	}
+
+	if jsonMode {
+		return failArg("auth login requires --host and --token in json mode; use --format text for interactive login")
+	}
+
 	// Interactive mode
 	reader := bufio.NewReader(os.Stdin)
 
@@ -221,9 +233,7 @@ func runAuthLogin(_ *cobra.Command, _ []string) error {
 		host = strings.TrimSpace(host)
 	}
 	if !strings.HasPrefix(host, "https://") && !strings.HasPrefix(host, "http://") {
-		output.Error("host must start with https:// (or http:// for local development)")
-		setExitCode(ExitBadArgs)
-		return ErrSilent
+		return failArg("host must start with https:// (or http:// for local development)")
 	}
 
 	token := authLoginTokenFlag
@@ -235,9 +245,7 @@ func runAuthLogin(_ *cobra.Command, _ []string) error {
 			tokenBytes, err = readPasswordForAuth()
 			fmt.Println()
 			if err != nil {
-				output.Error("failed to read token: " + err.Error())
-				setExitCode(ExitNetwork)
-				return ErrSilent
+				return failWithCode("failed to read token: "+err.Error(), ExitNetwork, output.ErrNetwork)
 			}
 		} else {
 			line, _ := reader.ReadString('\n')
@@ -278,9 +286,7 @@ func runAuthLogout(_ *cobra.Command, _ []string) error {
 		return nil
 	}
 	if err := config.ClearStoredCredentials(); err != nil {
-		output.Error("failed to remove credentials: " + err.Error())
-		setExitCode(ExitNetwork)
-		return ErrSilent
+		return failWithCode("failed to remove credentials: "+err.Error(), ExitNetwork, output.ErrNetwork)
 	}
 	if jsonMode {
 		output.PrintJSON(map[string]string{"status": "logged_out"})
@@ -327,9 +333,7 @@ func authStatusSource() (string, error) {
 func runAuthStatus(_ *cobra.Command, _ []string) error {
 	cfg, err := config.Load()
 	if err != nil {
-		output.Error("reading config: " + err.Error())
-		setExitCode(ExitNetwork)
-		return ErrSilent
+		return failWithCode("reading config: "+err.Error(), ExitNetwork, output.ErrNetwork)
 	}
 
 	type statusResult struct {
@@ -341,9 +345,7 @@ func runAuthStatus(_ *cobra.Command, _ []string) error {
 
 	source, err := authStatusSourceHook()
 	if err != nil {
-		output.Error("reading config: " + err.Error())
-		setExitCode(ExitNetwork)
-		return ErrSilent
+		return failWithCode("reading config: "+err.Error(), ExitNetwork, output.ErrNetwork)
 	}
 
 	result := statusResult{

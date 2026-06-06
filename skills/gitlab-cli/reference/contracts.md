@@ -8,10 +8,10 @@
 | `--json` | Compatibility alias for `--format json`; do not combine with `--format text/raw` |
 | `--compact` | Minified JSON (only affects `--format json`) |
 | `--quiet` | Suppress text helper output |
-| `--fields a,b,c` | Project fields from flat JSON (case-insensitive; JSON only) |
+| `--fields a,b,c` | Project fields from the `data` payload (case-insensitive; JSON only) |
 | `--dry-run` | Preview writes without executing |
-| `--confirm <token>` | Non-interactive confirmation (preferred) |
-| `--force` | Skip confirmation (needs `GITLAB_CLI_ALLOW_FORCE=1` in agent-safe mode) |
+| `--confirm <confirm_token>` | Non-interactive confirmation using the token returned by `--dry-run` |
+| `--force` | Deprecated for writes; use dry-run + confirm-token |
 
 List commands also support `--limit` (1–100) and `--all` (up to 10000 items).
 
@@ -23,63 +23,92 @@ List commands also support `--limit` (1–100) and `--all` (up to 10000 items).
 | `GITLAB_CLI_ALLOW_FORCE=1` | Allow `--force` |
 | `GITLAB_CLI_ALLOW_SHOW_VALUES=1` | Allow `variable --show-values` |
 
-## List JSON envelope
+## Success envelope
 
 ```json
 {
-  "items": [],
-  "count": 0,
-  "limit": 20,
-  "page": 1,
-  "total": 0,
-  "hasMore": false,
-  "all": false
+  "ok": true,
+  "schema_version": "1.0",
+  "data": {},
+  "meta": {
+    "duration_ms": 0
+  }
 }
 ```
 
-Not all list commands migrated yet; `mr list` uses this shape. Others may still return a bare array — check `reference` or prefer `mr`-style commands as reference.
-
-## Error envelope (stderr, JSON)
+## List payload
 
 ```json
 {
-  "error": "GitLab API error 404: ...",
-  "statusCode": 404,
-  "errorCode": "NOT_FOUND",
-  "hint": "Verify the resource exists..."
+  "ok": true,
+  "schema_version": "1.0",
+  "data": {
+    "items": [],
+    "count": 0,
+    "limit": 20,
+    "page": 1,
+    "total": 0,
+    "hasMore": false,
+    "all": false
+  },
+  "meta": {
+    "duration_ms": 0
+  }
 }
 ```
 
-| errorCode | Typical cause |
+List command payloads live under `data`; use `gitlab-cli reference --compact` to check command-specific fields.
+
+## Error envelope
+
+```json
+{
+  "ok": false,
+  "schema_version": "1.0",
+  "error": {
+    "code": "E_NOT_FOUND",
+    "message": "GitLab API error 404: ...",
+    "details": {
+      "status_code": 404,
+      "hint": "Verify the resource exists..."
+    },
+    "retryable": false
+  }
+}
+```
+
+Errors are printed as JSON to stdout in `--format json`; progress and diagnostics go to stderr.
+
+| error.code | Typical cause |
 |-----------|----------------|
-| `AUTH_REQUIRED` | 401 / not logged in |
-| `FORBIDDEN` | 403 / PAT scope |
-| `NOT_FOUND` | 404 |
-| `VALIDATION_ERROR` | Bad flags |
-| `CANCELLED` | Missing/wrong `--confirm` |
-| `RATE_LIMITED` | 429 |
-| `NETWORK_ERROR` | Connection / DNS |
+| `E_AUTH` | 401 / not logged in |
+| `E_FORBIDDEN` | 403 / PAT scope |
+| `E_NOT_FOUND` | 404 |
+| `E_BAD_ARGS` | Bad flags |
+| `E_CONFIRM_REQUIRED` | Missing `--confirm <confirm_token>` |
+| `E_CONFLICT` | Token mismatch, expiry, or state drift |
+| `E_RATE_LIMIT` | 429 |
+| `E_NETWORK` | Connection / DNS |
 
 ## Exit codes
 
 | Code | Meaning |
 |------|---------|
 | 0 | Success |
+| 1 | Generic error |
 | 2 | Bad arguments |
-| 3 | Auth required |
-| 4 | Not found |
-| 5 | Forbidden |
-| 6 | Rate limited |
-| 7 | Network / server |
-| 8 | Timeout (wait commands) |
-| 9 | CI failed (wait commands) |
-| 10 | Cancelled / confirmation missing |
+| 3 | Not found |
+| 4 | Auth / permission |
+| 5 | Confirm required / cancelled |
+| 6 | Conflict / state drift / CI non-success |
+| 7 | Retryable transient error |
+| 8 | Timeout |
 
 ## Auth / doctor JSON (excerpt)
 
 ```json
-{"configured":true,"host":"https://gitlab.example.com","source":"env-cli"}
-{"authValid":true,"latencyMs":120,"username":"alice"}
+{"ok":true,"schema_version":"1.0","data":{"configured":true,"host":"https://gitlab.example.com","source":"env-cli"},"meta":{"duration_ms":0}}
+{"ok":true,"schema_version":"1.0","data":{"authValid":true,"latencyMs":120,"username":"alice"},"meta":{"duration_ms":120}}
 ```
 
 ## Audit
