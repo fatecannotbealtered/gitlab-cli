@@ -131,7 +131,7 @@ func TestMR_Close_DryRun_JSON(t *testing.T) {
 		_ = rootCmd.Execute()
 	})
 
-	for _, want := range []string{`"confirm_token"`, `"iid": 5`} {
+	for _, want := range []string{`"confirm_token"`, `"iid": "5"`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("dry-run JSON missing %q\noutput:\n%s", want, out)
 		}
@@ -152,7 +152,7 @@ func TestMR_Merge_DryRun_JSON(t *testing.T) {
 		_ = rootCmd.Execute()
 	})
 
-	for _, want := range []string{`"confirm_token"`, `"iid": 7`} {
+	for _, want := range []string{`"confirm_token"`, `"iid": "7"`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("dry-run JSON missing %q\noutput:\n%s", want, out)
 		}
@@ -233,7 +233,7 @@ func TestMR_Update_DryRun_JSON(t *testing.T) {
 		rootCmd.SetArgs([]string{"mr", "update", "1", "--project", "group/proj", "--title", "new title", "--dry-run", "--json"})
 		_ = rootCmd.Execute()
 	})
-	for _, want := range []string{`"confirm_token"`, `"iid": 1`} {
+	for _, want := range []string{`"confirm_token"`, `"iid": "1"`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in output:\n%s", want, out)
 		}
@@ -249,7 +249,7 @@ func TestMR_Approve_DryRun_JSON(t *testing.T) {
 		rootCmd.SetArgs([]string{"mr", "approve", "1", "--project", "group/proj", "--dry-run", "--json"})
 		_ = rootCmd.Execute()
 	})
-	for _, want := range []string{`"confirm_token"`, `"iid": 1`} {
+	for _, want := range []string{`"confirm_token"`, `"iid": "1"`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in output:\n%s", want, out)
 		}
@@ -265,7 +265,7 @@ func TestMR_Unapprove_DryRun_JSON(t *testing.T) {
 		rootCmd.SetArgs([]string{"mr", "unapprove", "1", "--project", "group/proj", "--dry-run", "--json"})
 		_ = rootCmd.Execute()
 	})
-	for _, want := range []string{`"confirm_token"`, `"iid": 1`} {
+	for _, want := range []string{`"confirm_token"`, `"iid": "1"`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in output:\n%s", want, out)
 		}
@@ -281,7 +281,7 @@ func TestMR_Reopen_DryRun_JSON(t *testing.T) {
 		rootCmd.SetArgs([]string{"mr", "reopen", "1", "--project", "group/proj", "--dry-run", "--json"})
 		_ = rootCmd.Execute()
 	})
-	for _, want := range []string{`"confirm_token"`, `"iid": 1`} {
+	for _, want := range []string{`"confirm_token"`, `"iid": "1"`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in output:\n%s", want, out)
 		}
@@ -320,15 +320,15 @@ func TestMR_Create_AssigneeNotFound(t *testing.T) {
 	jsonMode = true
 	lastExit = 0
 
-	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{
+	out := captureStderr(t, func() {
+		rootCmd.SetArgs(withConfirmForTest(t, []string{
 			"mr", "create",
 			"--project", "foo/bar",
 			"--title", "feat",
 			"--source-branch", "feat",
 			"--assignee", "ghost",
 			"--json",
-		})
+		}))
 		_ = rootCmd.Execute()
 	})
 
@@ -365,7 +365,7 @@ func TestMR_Create_JSON(t *testing.T) {
 	defer func() { dryRun = origDR; jsonMode = origJM }()
 	dryRun = false
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"mr", "create", "--project", "foo/bar", "--title", "feat", "--source-branch", "feat", "--json"})
+		rootCmd.SetArgs(withConfirmForTest(t, []string{"mr", "create", "--project", "foo/bar", "--title", "feat", "--source-branch", "feat", "--json"}))
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, `"title": "feat"`) {
@@ -386,7 +386,7 @@ func TestMR_Update_JSON(t *testing.T) {
 	defer func() { dryRun = origDR; jsonMode = origJM }()
 	dryRun = false
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"mr", "update", "1", "--project", "foo/bar", "--title", "updated", "--json"})
+		rootCmd.SetArgs(withConfirmForTest(t, []string{"mr", "update", "1", "--project", "foo/bar", "--title", "updated", "--json"}))
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, `"title": "updated"`) {
@@ -436,7 +436,7 @@ func TestMR_Approve_JSON(t *testing.T) {
 	dryRun = false
 	lastExit = 0
 	captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"mr", "approve", "1", "--project", "foo/bar", "--json"})
+		rootCmd.SetArgs(withConfirmForTest(t, []string{"mr", "approve", "1", "--project", "foo/bar", "--json"}))
 		_ = rootCmd.Execute()
 	})
 	if lastExit != ExitOK {
@@ -525,7 +525,7 @@ func TestMR_Reopen_JSON(t *testing.T) {
 	defer func() { dryRun = origDR; jsonMode = origJM }()
 	dryRun = false
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"mr", "reopen", "1", "--project", "foo/bar", "--json"})
+		rootCmd.SetArgs(withConfirmForTest(t, []string{"mr", "reopen", "1", "--project", "foo/bar", "--json"}))
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, `"opened"`) {
@@ -554,7 +554,7 @@ func TestMR_Create_PlainText(t *testing.T) {
 	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"mr", "create", "--project", "foo/bar", "--title", "feat", "--source-branch", "feat"})
+		rootCmd.SetArgs(withConfirmForTest(t, []string{"mr", "create", "--project", "foo/bar", "--title", "feat", "--source-branch", "feat"}))
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, "Created") {
@@ -577,7 +577,7 @@ func TestMR_Update_PlainText(t *testing.T) {
 	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"mr", "update", "1", "--project", "foo/bar", "--title", "updated"})
+		rootCmd.SetArgs(withConfirmForTest(t, []string{"mr", "update", "1", "--project", "foo/bar", "--title", "updated"}))
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, "Updated") {
@@ -650,7 +650,7 @@ func TestMR_Reopen_PlainText(t *testing.T) {
 	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"mr", "reopen", "1", "--project", "foo/bar"})
+		rootCmd.SetArgs(withConfirmForTest(t, []string{"mr", "reopen", "1", "--project", "foo/bar"}))
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, "Reopened") {
@@ -684,7 +684,7 @@ func TestMR_Approve_PlainText(t *testing.T) {
 	lastExit = 0
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"mr", "approve", "1", "--project", "foo/bar"})
+		rootCmd.SetArgs(withConfirmForTest(t, []string{"mr", "approve", "1", "--project", "foo/bar"}))
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, "Approved") {
@@ -717,7 +717,7 @@ func TestMR_Unapprove_PlainText(t *testing.T) {
 	lastExit = 0
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"mr", "unapprove", "1", "--project", "foo/bar"})
+		rootCmd.SetArgs(withConfirmForTest(t, []string{"mr", "unapprove", "1", "--project", "foo/bar"}))
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, "approval") {
@@ -1189,7 +1189,7 @@ func TestMR_Current_Success_JSON(t *testing.T) {
 		rootCmd.SetArgs([]string{"mr", "current", "--json"})
 		_ = rootCmd.Execute()
 	})
-	if !strings.Contains(out, `"iid": 3`) {
+	if !strings.Contains(out, `"iid": "3"`) {
 		t.Errorf("expected MR JSON, got:\n%s", out)
 	}
 }
@@ -1280,7 +1280,7 @@ func TestMR_Create_Auto_Success(t *testing.T) {
 	repo := mrInitRepo(t, srv.URL+"/group/proj.git", "feat/x")
 	defer mrChdir(t, repo)()
 	out := captureCombinedOutput(t, func() {
-		rootCmd.SetArgs([]string{"mr", "create", "--auto"})
+		rootCmd.SetArgs(withConfirmForTest(t, []string{"mr", "create", "--auto"}))
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, "Created") {
@@ -1346,10 +1346,10 @@ func TestMR_Create_FindExisting_JSON(t *testing.T) {
 	t.Setenv("GITLAB_CLI_HOST", srv.URL)
 	t.Setenv("GITLAB_CLI_TOKEN", "tok")
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{
+		rootCmd.SetArgs(withConfirmForTest(t, []string{
 			"mr", "create", "--find-existing", "--json",
 			"--project", "g/p", "--title", "t", "--source-branch", "feat",
-		})
+		}))
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, `"existing": true`) {
@@ -1369,10 +1369,10 @@ func TestMR_Create_FindExisting_PlainText(t *testing.T) {
 	t.Setenv("GITLAB_CLI_HOST", srv.URL)
 	t.Setenv("GITLAB_CLI_TOKEN", "tok")
 	out := captureCombinedOutput(t, func() {
-		rootCmd.SetArgs([]string{
+		rootCmd.SetArgs(withConfirmForTest(t, []string{
 			"mr", "create", "--find-existing",
 			"--project", "g/p", "--title", "t", "--source-branch", "feat",
-		})
+		}))
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, "Existing MR !5") {
@@ -1397,10 +1397,10 @@ func TestMR_Create_WithAssignee(t *testing.T) {
 	t.Setenv("GITLAB_CLI_HOST", srv.URL)
 	t.Setenv("GITLAB_CLI_TOKEN", "tok")
 	out := captureCombinedOutput(t, func() {
-		rootCmd.SetArgs([]string{
+		rootCmd.SetArgs(withConfirmForTest(t, []string{
 			"mr", "create",
 			"--project", "g/p", "--title", "feat", "--source-branch", "feat", "--assignee", "alice",
-		})
+		}))
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, "Created") {
@@ -1421,7 +1421,7 @@ func TestMR_Create_APIError(t *testing.T) {
 	origExit := lastExit
 	defer func() { lastExit = origExit }()
 	lastExit = 0
-	rootCmd.SetArgs([]string{"mr", "create", "--project", "g/p", "--title", "t", "--source-branch", "b"})
+	rootCmd.SetArgs(withConfirmForTest(t, []string{"mr", "create", "--project", "g/p", "--title", "t", "--source-branch", "b"}))
 	_ = rootCmd.Execute()
 	if lastExit == ExitOK {
 		t.Errorf("expected non-zero exit, got %d", lastExit)
@@ -1433,7 +1433,7 @@ func TestMR_Update_NewClientError(t *testing.T) {
 	origExit := lastExit
 	defer func() { lastExit = origExit }()
 	lastExit = 0
-	rootCmd.SetArgs([]string{"mr", "update", "1", "--project", "g/p", "--title", "x"})
+	rootCmd.SetArgs(withConfirmForTest(t, []string{"mr", "update", "1", "--project", "g/p", "--title", "x"}))
 	_ = rootCmd.Execute()
 	if lastExit != ExitAuth {
 		t.Errorf("exit = %d, want %d", lastExit, ExitAuth)
@@ -1456,7 +1456,7 @@ func TestMR_Update_WithAssignee(t *testing.T) {
 	t.Setenv("GITLAB_CLI_HOST", srv.URL)
 	t.Setenv("GITLAB_CLI_TOKEN", "tok")
 	out := captureCombinedOutput(t, func() {
-		rootCmd.SetArgs([]string{"mr", "update", "1", "--project", "g/p", "--assignee", "alice"})
+		rootCmd.SetArgs(withConfirmForTest(t, []string{"mr", "update", "1", "--project", "g/p", "--assignee", "alice"}))
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, "Updated") {
@@ -1477,7 +1477,7 @@ func TestMR_Update_AssigneeAPIError(t *testing.T) {
 	origExit := lastExit
 	defer func() { lastExit = origExit }()
 	lastExit = 0
-	rootCmd.SetArgs([]string{"mr", "update", "1", "--project", "g/p", "--assignee", "ghost"})
+	rootCmd.SetArgs(withConfirmForTest(t, []string{"mr", "update", "1", "--project", "g/p", "--assignee", "ghost"}))
 	_ = rootCmd.Execute()
 	if lastExit == ExitOK {
 		t.Errorf("expected non-zero exit, got %d", lastExit)
@@ -1497,7 +1497,7 @@ func TestMR_Update_APIError(t *testing.T) {
 	origExit := lastExit
 	defer func() { lastExit = origExit }()
 	lastExit = 0
-	rootCmd.SetArgs([]string{"mr", "update", "1", "--project", "g/p", "--title", "x"})
+	rootCmd.SetArgs(withConfirmForTest(t, []string{"mr", "update", "1", "--project", "g/p", "--title", "x"}))
 	_ = rootCmd.Execute()
 	if lastExit == ExitOK {
 		t.Errorf("expected non-zero exit, got %d", lastExit)
@@ -1603,7 +1603,7 @@ func TestMR_Reopen_NewClientError(t *testing.T) {
 	origExit := lastExit
 	defer func() { lastExit = origExit }()
 	lastExit = 0
-	rootCmd.SetArgs([]string{"mr", "reopen", "1", "--project", "g/p"})
+	rootCmd.SetArgs(withConfirmForTest(t, []string{"mr", "reopen", "1", "--project", "g/p"}))
 	_ = rootCmd.Execute()
 	if lastExit != ExitAuth {
 		t.Errorf("exit = %d, want %d", lastExit, ExitAuth)
@@ -1623,7 +1623,7 @@ func TestMR_Reopen_APIError(t *testing.T) {
 	origExit := lastExit
 	defer func() { lastExit = origExit }()
 	lastExit = 0
-	rootCmd.SetArgs([]string{"mr", "reopen", "1", "--project", "g/p"})
+	rootCmd.SetArgs(withConfirmForTest(t, []string{"mr", "reopen", "1", "--project", "g/p"}))
 	_ = rootCmd.Execute()
 	if lastExit == ExitOK {
 		t.Errorf("expected non-zero exit, got %d", lastExit)
@@ -1635,7 +1635,7 @@ func TestMR_Approve_NewClientError(t *testing.T) {
 	origExit := lastExit
 	defer func() { lastExit = origExit }()
 	lastExit = 0
-	rootCmd.SetArgs([]string{"mr", "approve", "1", "--project", "g/p"})
+	rootCmd.SetArgs(withConfirmForTest(t, []string{"mr", "approve", "1", "--project", "g/p"}))
 	_ = rootCmd.Execute()
 	if lastExit != ExitAuth {
 		t.Errorf("exit = %d, want %d", lastExit, ExitAuth)
@@ -1655,7 +1655,7 @@ func TestMR_Approve_APIError_JSON(t *testing.T) {
 	origExit := lastExit
 	defer func() { lastExit = origExit }()
 	lastExit = 0
-	rootCmd.SetArgs([]string{"mr", "approve", "1", "--project", "g/p", "--json"})
+	rootCmd.SetArgs(withConfirmForTest(t, []string{"mr", "approve", "1", "--project", "g/p", "--json"}))
 	_ = rootCmd.Execute()
 	if lastExit == ExitOK {
 		t.Errorf("expected non-zero exit, got %d", lastExit)
@@ -1672,7 +1672,7 @@ func TestMR_Unapprove_JSON(t *testing.T) {
 	t.Setenv("GITLAB_CLI_HOST", srv.URL)
 	t.Setenv("GITLAB_CLI_TOKEN", "tok")
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"mr", "unapprove", "1", "--project", "g/p", "--json"})
+		rootCmd.SetArgs(withConfirmForTest(t, []string{"mr", "unapprove", "1", "--project", "g/p", "--json"}))
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, `"approved": false`) {
@@ -1685,7 +1685,7 @@ func TestMR_Unapprove_NewClientError(t *testing.T) {
 	origExit := lastExit
 	defer func() { lastExit = origExit }()
 	lastExit = 0
-	rootCmd.SetArgs([]string{"mr", "unapprove", "1", "--project", "g/p"})
+	rootCmd.SetArgs(withConfirmForTest(t, []string{"mr", "unapprove", "1", "--project", "g/p"}))
 	_ = rootCmd.Execute()
 	if lastExit != ExitAuth {
 		t.Errorf("exit = %d, want %d", lastExit, ExitAuth)
@@ -1705,7 +1705,7 @@ func TestMR_Unapprove_APIError(t *testing.T) {
 	origExit := lastExit
 	defer func() { lastExit = origExit }()
 	lastExit = 0
-	rootCmd.SetArgs([]string{"mr", "unapprove", "1", "--project", "g/p"})
+	rootCmd.SetArgs(withConfirmForTest(t, []string{"mr", "unapprove", "1", "--project", "g/p"}))
 	_ = rootCmd.Execute()
 	if lastExit == ExitOK {
 		t.Errorf("expected non-zero exit, got %d", lastExit)
@@ -1804,7 +1804,7 @@ func TestMR_Create_NewClientError(t *testing.T) {
 	origExit := lastExit
 	defer func() { lastExit = origExit }()
 	lastExit = 0
-	rootCmd.SetArgs([]string{"mr", "create", "--project", "g/p", "--title", "t", "--source-branch", "b"})
+	rootCmd.SetArgs(withConfirmForTest(t, []string{"mr", "create", "--project", "g/p", "--title", "t", "--source-branch", "b"}))
 	_ = rootCmd.Execute()
 	if lastExit != ExitAuth {
 		t.Errorf("exit = %d, want %d", lastExit, ExitAuth)
@@ -1824,7 +1824,7 @@ func TestMR_Create_FindExisting_ListError(t *testing.T) {
 	origExit := lastExit
 	defer func() { lastExit = origExit }()
 	lastExit = 0
-	rootCmd.SetArgs([]string{"mr", "create", "--find-existing", "--project", "g/p", "--title", "t", "--source-branch", "b"})
+	rootCmd.SetArgs(withConfirmForTest(t, []string{"mr", "create", "--find-existing", "--project", "g/p", "--title", "t", "--source-branch", "b"}))
 	_ = rootCmd.Execute()
 	if lastExit == ExitOK {
 		t.Errorf("expected non-zero exit, got %d", lastExit)

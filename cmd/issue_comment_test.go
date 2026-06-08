@@ -85,7 +85,7 @@ func TestIssueComment_Delete_DryRun_JSON(t *testing.T) {
 		})
 		_ = rootCmd.Execute()
 	})
-	for _, want := range []string{`"confirm_token"`, `"noteId": 42`} {
+	for _, want := range []string{`"confirm_token"`, `"noteId": "42"`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in output:\n%s", want, out)
 		}
@@ -106,7 +106,9 @@ func TestIssueComment_Add_JSON(t *testing.T) {
 	defer func() { dryRun = origDR; jsonMode = origJM }()
 	dryRun = false
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"issue", "comment", "add", "1", "--project", "foo/bar", "--body", "hello", "--json"})
+		args := []string{"issue", "comment", "add", "1", "--project", "foo/bar", "--body", "hello", "--json"}
+		args = append(args, confirmArgsForTest(t, "add comment", map[string]any{"project": "foo/bar", "iid": 1, "body": "hello"})...)
+		rootCmd.SetArgs(args)
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, `"hello"`) {
@@ -130,7 +132,9 @@ func TestIssueComment_Add_PlainText(t *testing.T) {
 	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"issue", "comment", "add", "1", "--project", "foo/bar", "--body", "hello"})
+		args := []string{"issue", "comment", "add", "1", "--project", "foo/bar", "--body", "hello"}
+		args = append(args, confirmArgsForTest(t, "add comment", map[string]any{"project": "foo/bar", "iid": 1, "body": "hello"})...)
+		rootCmd.SetArgs(args)
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, "Added") {
@@ -321,7 +325,9 @@ func TestIssueComment_Add_BodyFile(t *testing.T) {
 	dryRun = false
 	setTextFormatForTest(t)
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"issue", "comment", "add", "1", "--project", "foo/bar", "--body-file", path})
+		args := []string{"issue", "comment", "add", "1", "--project", "foo/bar", "--body-file", path}
+		args = append(args, confirmArgsForTest(t, "add comment", map[string]any{"project": "foo/bar", "iid": 1, "body": "from file"})...)
+		rootCmd.SetArgs(args)
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, "Added") {
@@ -360,7 +366,9 @@ func TestIssueComment_Add_MissingAuth(t *testing.T) {
 	dryRun = false
 	_ = issueCommentAddCmd.Flags().Set("body-file", "")
 	_ = issueCommentAddCmd.Flags().Set("body", "")
-	rootCmd.SetArgs([]string{"issue", "comment", "add", "1", "--project", "foo/bar", "--body", "hi"})
+	args := []string{"issue", "comment", "add", "1", "--project", "foo/bar", "--body", "hi"}
+	args = append(args, confirmArgsForTest(t, "add comment", map[string]any{"project": "foo/bar", "iid": 1, "body": "hi"})...)
+	rootCmd.SetArgs(args)
 	_ = rootCmd.Execute()
 	if lastExit != ExitAuth {
 		t.Errorf("exit code = %d, want %d", lastExit, ExitAuth)
@@ -380,7 +388,9 @@ func TestIssueComment_Add_APIError(t *testing.T) {
 	defer func() { dryRun = origDR; lastExit = origExit }()
 	dryRun = false
 	lastExit = 0
-	rootCmd.SetArgs([]string{"issue", "comment", "add", "1", "--project", "foo/bar", "--body", "hi"})
+	args := []string{"issue", "comment", "add", "1", "--project", "foo/bar", "--body", "hi"}
+	args = append(args, confirmArgsForTest(t, "add comment", map[string]any{"project": "foo/bar", "iid": 1, "body": "hi"})...)
+	rootCmd.SetArgs(args)
 	_ = rootCmd.Execute()
 	if lastExit == ExitOK {
 		t.Errorf("expected non-zero exit for API error, got %d", lastExit)

@@ -306,13 +306,13 @@ var mrCreateCmd = &cobra.Command{
 
 		findExisting, _ := cmd.Flags().GetBool("find-existing")
 
-		if dryRunOutput("create mr", map[string]any{
+		if done, err := prepareWrite(cmd, "create mr", map[string]any{
 			"project":      project,
 			"title":        title,
 			"sourceBranch": srcBranch,
 			"targetBranch": tgtBranch,
-		}) {
-			return nil
+		}); done || err != nil {
+			return err
 		}
 
 		client, _, err := newClient()
@@ -408,8 +408,8 @@ var mrUpdateCmd = &cobra.Command{
 		removeLabels, _ := cmd.Flags().GetString("remove-labels")
 		tgtBranch, _ := cmd.Flags().GetString("target-branch")
 
-		if dryRunOutput("update mr", map[string]any{"project": project, "iid": iid}) {
-			return nil
+		if done, err := prepareWrite(cmd, "update mr", map[string]any{"project": project, "iid": iid}); done || err != nil {
+			return err
 		}
 
 		client, _, err := newClient()
@@ -475,10 +475,7 @@ var mrMergeCmd = &cobra.Command{
 			"mergeCommitMessage":       msg,
 			"sha":                      sha,
 		}
-		if dryRunOutput("merge mr", confirmPayload) {
-			return nil
-		}
-		if err := requireConfirm(cmd, "merge mr", confirmPayload); err != nil {
+		if done, err := prepareWrite(cmd, "merge mr", confirmPayload); done || err != nil {
 			return err
 		}
 
@@ -520,10 +517,7 @@ var mrCloseCmd = &cobra.Command{
 			return failArg("iid must be an integer")
 		}
 		confirmPayload := map[string]any{"project": project, "iid": iid}
-		if dryRunOutput("close mr", confirmPayload) {
-			return nil
-		}
-		if err := requireConfirm(cmd, "close mr", confirmPayload); err != nil {
+		if done, err := prepareWrite(cmd, "close mr", confirmPayload); done || err != nil {
 			return err
 		}
 		client, _, err := newClient()
@@ -558,8 +552,8 @@ var mrReopenCmd = &cobra.Command{
 		if err != nil {
 			return failArg("iid must be an integer")
 		}
-		if dryRunOutput("reopen mr", map[string]any{"project": project, "iid": iid}) {
-			return nil
+		if done, err := prepareWrite(cmd, "reopen mr", map[string]any{"project": project, "iid": iid}); done || err != nil {
+			return err
 		}
 		client, _, err := newClient()
 		if err != nil {
@@ -593,8 +587,8 @@ var mrApproveCmd = &cobra.Command{
 		if err != nil {
 			return failArg("iid must be an integer")
 		}
-		if dryRunOutput("approve mr", map[string]any{"project": project, "iid": iid}) {
-			return nil
+		if done, err := prepareWrite(cmd, "approve mr", map[string]any{"project": project, "iid": iid}); done || err != nil {
+			return err
 		}
 		client, _, err := newClient()
 		if err != nil {
@@ -604,7 +598,7 @@ var mrApproveCmd = &cobra.Command{
 			return handleAPIError(err, jsonMode)
 		}
 		if jsonMode {
-			output.PrintJSON(map[string]any{"iid": iid, "approved": true})
+			output.PrintJSON(map[string]any{"iid": output.ID(iid), "approved": true})
 			return nil
 		}
 		output.Success(fmt.Sprintf("Approved MR !%d", iid))
@@ -627,8 +621,8 @@ var mrUnapproveCmd = &cobra.Command{
 		if err != nil {
 			return failArg("iid must be an integer")
 		}
-		if dryRunOutput("unapprove mr", map[string]any{"project": project, "iid": iid}) {
-			return nil
+		if done, err := prepareWrite(cmd, "unapprove mr", map[string]any{"project": project, "iid": iid}); done || err != nil {
+			return err
 		}
 		client, _, err := newClient()
 		if err != nil {
@@ -638,7 +632,7 @@ var mrUnapproveCmd = &cobra.Command{
 			return handleAPIError(err, jsonMode)
 		}
 		if jsonMode {
-			output.PrintJSON(map[string]any{"iid": iid, "approved": false})
+			output.PrintJSON(map[string]any{"iid": output.ID(iid), "approved": false})
 			return nil
 		}
 		output.Success(fmt.Sprintf("Removed approval from MR !%d", iid))
@@ -670,7 +664,7 @@ var mrDiffCmd = &cobra.Command{
 			return handleAPIError(err, jsonMode)
 		}
 		if jsonMode {
-			output.PrintJSON(map[string]any{"diff": diff})
+			output.PrintJSON(output.MarkUntrusted(map[string]any{"diff": diff}, "diff"))
 			return nil
 		}
 		if formatMode == formatRaw {

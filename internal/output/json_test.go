@@ -277,14 +277,17 @@ func TestPrintErrorJSON(t *testing.T) {
 		PrintErrorJSON("not found", 404)
 		PrintErrorJSON("local", 0)
 	})
-	if stderr != "" {
-		t.Errorf("stderr = %q", stderr)
-	}
-	if !strings.Contains(stdout, `"ok": false`) || !strings.Contains(stdout, `"code": "E_NOT_FOUND"`) {
+	if stdout != "" {
 		t.Errorf("stdout = %q", stdout)
 	}
-	if !strings.Contains(stdout, `"code": "E_UNKNOWN"`) {
-		t.Errorf("status 0 stdout = %q", stdout)
+	if !strings.Contains(stderr, `"ok": false`) || !strings.Contains(stderr, `"code": "E_NOT_FOUND"`) {
+		t.Errorf("stderr = %q", stderr)
+	}
+	if !strings.Contains(stderr, `"duration_ms": 0`) {
+		t.Errorf("expected duration_ms in stderr = %q", stderr)
+	}
+	if !strings.Contains(stderr, `"code": "E_UNKNOWN"`) {
+		t.Errorf("status 0 stderr = %q", stderr)
 	}
 }
 
@@ -292,14 +295,14 @@ func TestPrintErrorJSONWithCode(t *testing.T) {
 	stdout, stderr := captureStdoutStderr(func() {
 		PrintErrorJSONWithCode("cancelled", 0, ErrCancelled)
 	})
-	if stderr != "" {
-		t.Errorf("stderr = %q", stderr)
-	}
-	if !strings.Contains(stdout, `"code": "E_CANCELLED"`) {
+	if stdout != "" {
 		t.Errorf("stdout = %q", stdout)
 	}
-	if !strings.Contains(stdout, "confirmation") {
-		t.Errorf("expected cancelled hint in %q", stdout)
+	if !strings.Contains(stderr, `"code": "E_CANCELLED"`) {
+		t.Errorf("stderr = %q", stderr)
+	}
+	if !strings.Contains(stderr, "confirmation") {
+		t.Errorf("expected cancelled hint in %q", stderr)
 	}
 }
 
@@ -320,11 +323,14 @@ func TestEmitErrorPayload_Fallback(t *testing.T) {
 	stdout, stderr := captureStdoutStderr(func() {
 		emitErrorPayload("fail", 500, ErrServer)
 	})
-	if stderr != "" {
-		t.Errorf("stderr = %q", stderr)
+	if stdout != "" {
+		t.Errorf("stdout = %q", stdout)
 	}
-	if !strings.Contains(stdout, `"code":"E_SERVER"`) {
-		t.Errorf("fallback stdout = %q", stdout)
+	if !strings.Contains(stderr, `"code":"E_SERVER"`) {
+		t.Errorf("fallback stderr = %q", stderr)
+	}
+	if !strings.Contains(stderr, `"duration_ms":0`) {
+		t.Errorf("fallback stderr missing duration_ms = %q", stderr)
 	}
 }
 

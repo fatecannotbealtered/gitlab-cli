@@ -182,6 +182,9 @@ func runUpdate(cmd *cobra.Command, _ []string) error {
 
 	result = updateResultMap(plan, applied.Status)
 	result["path"] = applied.Path
+	result["previous_version"] = plan.CurrentVersion
+	result["current_version"] = plan.TargetVersion
+	result["hint"] = fmt.Sprintf("run \"gitlab-cli changelog --since %s\" to see what changed", normalizeVersion(plan.CurrentVersion))
 	if applied.PendingPath != "" {
 		result["pendingPath"] = applied.PendingPath
 	}

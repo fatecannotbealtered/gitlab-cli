@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `changelog [--since <version>]`, derived from `CHANGELOG.md`, so agents can refresh knowledge after an update.
+- Root `AGENTS.md`, `NOTICE.md`, `CODE_OF_CONDUCT.md`, `docs/COMPATIBILITY.md`, and `docs/OPEN_SOURCE_CHECKLIST.md` to align the open-source repo layout.
+- `context`, `doctor`, and `reference` now report tool version, risk tier, security metadata, and Skill minimum-version expectations.
+
+### Changed
+
+- List-style JSON commands now use a consistent `items` / `count` / `hasMore` list envelope.
+- JSON IDs are emitted as strings across flattened GitLab resources.
+- GitLab-controlled text fields are marked with `_untrusted` so agents treat returned content as data.
+- Error envelopes are emitted on stderr and include `meta.duration_ms`; stdout stays empty on failures.
+- Confirm tokens now bind command path, normalized operation payload, configured host/source context, and expiry.
+
+### Security
+
+- Saved `config.json` and `profiles.json` credentials are encrypted at rest with AES-256-GCM and a machine-bound PBKDF2-SHA256 key.
+- The npm install script now hard-fails if checksum verification cannot be completed.
+
 ## [1.2.0] - 2026-06-07
 
 ### Added

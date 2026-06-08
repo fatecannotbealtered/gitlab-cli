@@ -133,7 +133,7 @@ func TestMilestone_Get_JSON(t *testing.T) {
 		rootCmd.SetArgs([]string{"milestone", "get", "--project", "foo/bar", "--milestone-id", "1", "--json"})
 		_ = rootCmd.Execute()
 	})
-	if !strings.Contains(out, `"id": 1`) {
+	if !strings.Contains(out, `"id": "1"`) {
 		t.Errorf("expected id in output, got: %s", out)
 	}
 }
@@ -199,7 +199,7 @@ func TestMilestone_Create_JSON(t *testing.T) {
 	defer func() { dryRun = origDR; jsonMode = origJM }()
 	dryRun = false
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"milestone", "create", "--project", "foo/bar", "--title", "v1", "--json"})
+		rootCmd.SetArgs(withConfirmForTest(t, []string{"milestone", "create", "--project", "foo/bar", "--title", "v1", "--json"}))
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, `"title": "v1"`) {
@@ -220,7 +220,7 @@ func TestMilestone_Update_JSON(t *testing.T) {
 	defer func() { dryRun = origDR; jsonMode = origJM }()
 	dryRun = false
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"milestone", "update", "--project", "foo/bar", "--milestone-id", "1", "--title", "v2", "--json"})
+		rootCmd.SetArgs(withConfirmForTest(t, []string{"milestone", "update", "--project", "foo/bar", "--milestone-id", "1", "--title", "v2", "--json"}))
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, `"title": "v2"`) {
@@ -333,7 +333,7 @@ func TestMilestone_Create_PlainText(t *testing.T) {
 	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"milestone", "create", "--project", "foo/bar", "--title", "v1"})
+		rootCmd.SetArgs(withConfirmForTest(t, []string{"milestone", "create", "--project", "foo/bar", "--title", "v1"}))
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, "Created") {
@@ -356,7 +356,7 @@ func TestMilestone_Update_PlainText(t *testing.T) {
 	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"milestone", "update", "--project", "foo/bar", "--milestone-id", "1", "--title", "v2"})
+		rootCmd.SetArgs(withConfirmForTest(t, []string{"milestone", "update", "--project", "foo/bar", "--milestone-id", "1", "--title", "v2"}))
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, "Updated") {
@@ -557,7 +557,7 @@ func TestMilestone_Create_MissingAuth(t *testing.T) {
 	defer func() { lastExit = origExit; dryRun = origDR }()
 	lastExit = 0
 	dryRun = false
-	rootCmd.SetArgs([]string{"milestone", "create", "--project", "foo/bar", "--title", "v1"})
+	rootCmd.SetArgs(withConfirmForTest(t, []string{"milestone", "create", "--project", "foo/bar", "--title", "v1"}))
 	_ = rootCmd.Execute()
 	if lastExit != ExitAuth {
 		t.Errorf("exit code = %d, want %d", lastExit, ExitAuth)
@@ -577,7 +577,7 @@ func TestMilestone_Create_APIError(t *testing.T) {
 	defer func() { dryRun = origDR; lastExit = origExit }()
 	dryRun = false
 	lastExit = 0
-	rootCmd.SetArgs([]string{"milestone", "create", "--project", "foo/bar", "--title", "v1"})
+	rootCmd.SetArgs(withConfirmForTest(t, []string{"milestone", "create", "--project", "foo/bar", "--title", "v1"}))
 	_ = rootCmd.Execute()
 	if lastExit == ExitOK {
 		t.Errorf("expected non-zero exit for API error, got %d", lastExit)
@@ -625,7 +625,7 @@ func TestMilestone_Update_MissingAuth(t *testing.T) {
 	defer func() { lastExit = origExit; dryRun = origDR }()
 	lastExit = 0
 	dryRun = false
-	rootCmd.SetArgs([]string{"milestone", "update", "--project", "foo/bar", "--milestone-id", "1", "--title", "v2"})
+	rootCmd.SetArgs(withConfirmForTest(t, []string{"milestone", "update", "--project", "foo/bar", "--milestone-id", "1", "--title", "v2"}))
 	_ = rootCmd.Execute()
 	if lastExit != ExitAuth {
 		t.Errorf("exit code = %d, want %d", lastExit, ExitAuth)
@@ -645,7 +645,7 @@ func TestMilestone_Update_APIError(t *testing.T) {
 	defer func() { dryRun = origDR; lastExit = origExit }()
 	dryRun = false
 	lastExit = 0
-	rootCmd.SetArgs([]string{"milestone", "update", "--project", "foo/bar", "--milestone-id", "1", "--title", "v2"})
+	rootCmd.SetArgs(withConfirmForTest(t, []string{"milestone", "update", "--project", "foo/bar", "--milestone-id", "1", "--title", "v2"}))
 	_ = rootCmd.Execute()
 	if lastExit == ExitOK {
 		t.Errorf("expected non-zero exit for API error, got %d", lastExit)

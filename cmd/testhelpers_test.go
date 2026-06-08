@@ -18,6 +18,67 @@ func init() {
 
 var preserveTextFormatForReset bool
 
+type rootPersistentFlagStateForTest struct {
+	values             map[string]string
+	changed            map[string]bool
+	forceMode          bool
+	confirmFlag        string
+	dryRun             bool
+	formatMode         string
+	jsonAlias          bool
+	jsonMode           bool
+	quietMode          bool
+	compactJSON        bool
+	activeCmd          *cobra.Command
+	preserveTextFormat bool
+}
+
+func snapshotRootPersistentFlagsForTest() rootPersistentFlagStateForTest {
+	state := rootPersistentFlagStateForTest{
+		values:             map[string]string{},
+		changed:            map[string]bool{},
+		forceMode:          forceMode,
+		confirmFlag:        confirmFlag,
+		dryRun:             dryRun,
+		formatMode:         formatMode,
+		jsonAlias:          jsonAlias,
+		jsonMode:           jsonMode,
+		quietMode:          quietMode,
+		compactJSON:        compactJSON,
+		activeCmd:          activeCmd,
+		preserveTextFormat: preserveTextFormatForReset,
+	}
+	for _, name := range []string{"json", "format", "force", "dry-run", "confirm", "quiet", "compact"} {
+		if flag := rootCmd.PersistentFlags().Lookup(name); flag != nil {
+			state.values[name] = flag.Value.String()
+			state.changed[name] = flag.Changed
+		}
+	}
+	return state
+}
+
+func restoreRootPersistentFlagsForTest(t *testing.T, state rootPersistentFlagStateForTest) {
+	t.Helper()
+	for name, value := range state.values {
+		if flag := rootCmd.PersistentFlags().Lookup(name); flag != nil {
+			if err := flag.Value.Set(value); err != nil {
+				t.Fatalf("restore flag %q: %v", name, err)
+			}
+			flag.Changed = state.changed[name]
+		}
+	}
+	forceMode = state.forceMode
+	confirmFlag = state.confirmFlag
+	dryRun = state.dryRun
+	formatMode = state.formatMode
+	jsonAlias = state.jsonAlias
+	jsonMode = state.jsonMode
+	quietMode = state.quietMode
+	compactJSON = state.compactJSON
+	activeCmd = state.activeCmd
+	preserveTextFormatForReset = state.preserveTextFormat
+}
+
 // withAgentSafe enables default agent-safe restrictions for the duration of the test.
 func withAgentSafe(t *testing.T) {
 	t.Helper()
@@ -54,6 +115,7 @@ func resetRootPersistentFlags(t *testing.T) {
 	jsonMode = true
 	quietMode = false
 	compactJSON = false
+	activeCmd = nil
 	if preserveTextFormat {
 		if err := rootCmd.PersistentFlags().Set("format", formatText); err != nil {
 			t.Fatalf("preserve text format: %v", err)
@@ -123,8 +185,46 @@ func clearFieldsFlagsForTest(t *testing.T, cmd *cobra.Command) {
 
 func confirmArgsForTest(t *testing.T, action string, payload any) []string {
 	t.Helper()
+	prevActive := activeCmd
+	activeCmd = nil
+	defer func() { activeCmd = prevActive }()
 	token, _ := newConfirmToken(action, payload)
 	return []string{"--confirm", token}
+}
+
+func withConfirmForTest(t *testing.T, args []string) []string {
+	t.Helper()
+	state := snapshotRootPersistentFlagsForTest()
+	preserveTextFormatForReset = false
+	resetRootPersistentFlags(t)
+	defer restoreRootPersistentFlagsForTest(t, state)
+
+	previewArgs := append([]string{}, args...)
+	previewArgs = append(previewArgs, "--dry-run", "--json")
+	out := captureStdout(t, func() {
+		rootCmd.SetArgs(previewArgs)
+		_ = rootCmd.Execute()
+	})
+
+	var env struct {
+		OK   bool `json:"ok"`
+		Data struct {
+			ConfirmToken string `json:"confirm_token"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(out), &env); err != nil {
+		t.Fatalf("parse dry-run confirm token: %v\noutput:\n%s", err, out)
+	}
+	if !env.OK || env.Data.ConfirmToken == "" {
+		t.Fatalf("dry-run did not return confirm token:\n%s", out)
+	}
+	confirmed := append([]string{}, args...)
+	return append(confirmed, "--confirm", env.Data.ConfirmToken)
+}
+
+func argsTargetWriteCommandForTest(args []string) bool {
+	cmd, _, err := rootCmd.Find(args)
+	return err == nil && cmd != nil && isWriteCommand(cmd)
 }
 
 func resetCommandFlagForTest(t *testing.T, cmd *cobra.Command, name, value string) {

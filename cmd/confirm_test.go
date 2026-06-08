@@ -167,7 +167,7 @@ func TestRequireConfirm_NonTTY_ExitCancelled(t *testing.T) {
 	lastExit = 0
 	jsonMode = true
 
-	stdout := captureStdout(t, func() {
+	stderr := captureStderr(t, func() {
 		rootCmd.SetArgs([]string{"issue", "close", "5", "--project", "group/proj", "--json"})
 		_ = rootCmd.Execute()
 	})
@@ -175,9 +175,9 @@ func TestRequireConfirm_NonTTY_ExitCancelled(t *testing.T) {
 	if lastExit != ExitConfirm {
 		t.Errorf("exit code = %d, want %d (ExitConfirm)", lastExit, ExitConfirm)
 	}
-	for _, want := range []string{`"code": "E_CONFIRM_REQUIRED"`, "confirmation required", `--confirm`} {
-		if !strings.Contains(stdout, want) {
-			t.Errorf("stdout missing %q, got:\n%s", want, stdout)
+	for _, want := range []string{`"code": "E_CONFIRMATION_REQUIRED"`, "confirmation required", `--confirm`} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("stderr missing %q, got:\n%s", want, stderr)
 		}
 	}
 }

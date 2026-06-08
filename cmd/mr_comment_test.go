@@ -25,7 +25,7 @@ func TestMRComment_Add_JSON(t *testing.T) {
 	defer func() { dryRun = origDR; jsonMode = origJM }()
 	dryRun = false
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"mr", "comment", "add", "--project", "foo/bar", "1", "--body", "LGTM", "--json"})
+		rootCmd.SetArgs(withConfirmForTest(t, []string{"mr", "comment", "add", "--project", "foo/bar", "1", "--body", "LGTM", "--json"}))
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, `"LGTM"`) {
@@ -49,7 +49,7 @@ func TestMRComment_Add_PlainText(t *testing.T) {
 	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"mr", "comment", "add", "--project", "foo/bar", "1", "--body", "LGTM"})
+		rootCmd.SetArgs(withConfirmForTest(t, []string{"mr", "comment", "add", "--project", "foo/bar", "1", "--body", "LGTM"}))
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, "Added") {
@@ -376,7 +376,7 @@ func TestMRComment_Add_BodyFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := captureCombinedOutput(t, func() {
-		rootCmd.SetArgs([]string{"mr", "comment", "add", "--project", "g/p", "1", "--body-file", bodyFile})
+		rootCmd.SetArgs(withConfirmForTest(t, []string{"mr", "comment", "add", "--project", "g/p", "1", "--body-file", bodyFile}))
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, "Added") {
@@ -406,7 +406,7 @@ func TestMRComment_Add_NewClientError(t *testing.T) {
 	origExit := lastExit
 	defer func() { lastExit = origExit }()
 	lastExit = 0
-	rootCmd.SetArgs([]string{"mr", "comment", "add", "--project", "g/p", "1", "--body", "hi"})
+	rootCmd.SetArgs(withConfirmForTest(t, []string{"mr", "comment", "add", "--project", "g/p", "1", "--body", "hi"}))
 	_ = rootCmd.Execute()
 	if lastExit != ExitAuth {
 		t.Errorf("exit = %d, want %d", lastExit, ExitAuth)
@@ -425,7 +425,7 @@ func TestMRComment_Add_APIError(t *testing.T) {
 	origExit := lastExit
 	defer func() { lastExit = origExit }()
 	lastExit = 0
-	rootCmd.SetArgs([]string{"mr", "comment", "add", "--project", "g/p", "1", "--body", "hi"})
+	rootCmd.SetArgs(withConfirmForTest(t, []string{"mr", "comment", "add", "--project", "g/p", "1", "--body", "hi"}))
 	_ = rootCmd.Execute()
 	if lastExit == ExitOK {
 		t.Errorf("expected non-zero exit, got %d", lastExit)

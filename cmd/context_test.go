@@ -390,7 +390,7 @@ func TestRenderContext_Direct_PlainText_AuthenticatedWithProject(t *testing.T) {
 				Username:      "alice",
 				Name:          "Alice",
 				Project: &contextProject{
-					ID:                42,
+					ID:                "42",
 					PathWithNamespace: "team/svc",
 					DefaultBranch:     "main",
 					Visibility:        "private",

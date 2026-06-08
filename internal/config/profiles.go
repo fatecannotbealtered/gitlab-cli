@@ -1,7 +1,6 @@
 package config
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -29,7 +28,7 @@ func LoadProfiles() (*ProfilesFile, error) {
 		return nil, fmt.Errorf("reading profiles: %w", err)
 	}
 	var pf ProfilesFile
-	if err := json.Unmarshal(data, &pf); err != nil {
+	if err := decodeMaybeEncryptedJSON(data, &pf); err != nil {
 		return nil, fmt.Errorf("parsing profiles: %w", err)
 	}
 	if pf.Profiles == nil {
@@ -43,7 +42,7 @@ func SaveProfiles(pf *ProfilesFile) error {
 	if err := os.MkdirAll(Dir(), 0700); err != nil {
 		return fmt.Errorf("creating config dir: %w", err)
 	}
-	data, err := jsonMarshalIndent(pf, "", "  ")
+	data, err := encodeEncryptedJSON(pf)
 	if err != nil {
 		return fmt.Errorf("encoding profiles: %w", err)
 	}

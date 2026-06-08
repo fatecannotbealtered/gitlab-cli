@@ -168,7 +168,7 @@ func TestProject_Members_JSON(t *testing.T) {
 		rootCmd.SetArgs([]string{"project", "members", "1", "--json"})
 		_ = rootCmd.Execute()
 	})
-	if !strings.Contains(out, `"accessLevel": 40`) {
+	if !strings.Contains(out, `"accessLevel": "40"`) {
 		t.Errorf("expected JSON with accessLevel 40, got:\n%s", out)
 	}
 }

@@ -102,7 +102,7 @@ var variableListCmd = &cobra.Command{
 				for i := range vars {
 					out[i] = output.FilterMap(output.VariableWithValueToMap(output.ToFlatVariableWithValue(&vars[i])), fields)
 				}
-				output.PrintJSON(out)
+				printSimpleListJSON(cmd, out, limit)
 				return nil
 			}
 			// Default: redact secret values
@@ -110,7 +110,7 @@ var variableListCmd = &cobra.Command{
 			for i := range vars {
 				out[i] = output.FilterMap(output.VariableToMap(output.ToFlatVariable(&vars[i])), fields)
 			}
-			output.PrintJSON(out)
+			printSimpleListJSON(cmd, out, limit)
 			return nil
 		}
 		if len(vars) == 0 {
@@ -208,13 +208,13 @@ var variableCreateCmd = &cobra.Command{
 		envScope, _ := cmd.Flags().GetString("env-scope")
 		description, _ := cmd.Flags().GetString("description")
 
-		if dryRunOutput("create variable", map[string]any{
+		if done, err := prepareWrite(cmd, "create variable", map[string]any{
 			"project":  project,
 			"key":      key,
 			"type":     varType,
 			"envScope": envScope,
-		}) {
-			return nil
+		}); done || err != nil {
+			return err
 		}
 
 		client, _, err := newClient()
@@ -239,9 +239,9 @@ var variableCreateCmd = &cobra.Command{
 		if jsonMode {
 			showValues, _ := cmd.Flags().GetBool("show-values")
 			if showValues {
-				output.PrintJSON(output.ToFlatVariableWithValue(v))
+				output.PrintJSON(output.VariableWithValueToMap(output.ToFlatVariableWithValue(v)))
 			} else {
-				output.PrintJSON(output.ToFlatVariable(v))
+				output.PrintJSON(output.VariableToMap(output.ToFlatVariable(v)))
 			}
 			return nil
 		}
@@ -290,12 +290,12 @@ var variableUpdateCmd = &cobra.Command{
 			opts.EnvironmentScope = envScope
 		}
 
-		if dryRunOutput("update variable", map[string]any{
+		if done, err := prepareWrite(cmd, "update variable", map[string]any{
 			"project":  project,
 			"key":      key,
 			"envScope": envScope,
-		}) {
-			return nil
+		}); done || err != nil {
+			return err
 		}
 
 		client, _, err := newClient()
@@ -311,9 +311,9 @@ var variableUpdateCmd = &cobra.Command{
 		if jsonMode {
 			showValues, _ := cmd.Flags().GetBool("show-values")
 			if showValues {
-				output.PrintJSON(output.ToFlatVariableWithValue(v))
+				output.PrintJSON(output.VariableWithValueToMap(output.ToFlatVariableWithValue(v)))
 			} else {
-				output.PrintJSON(output.ToFlatVariable(v))
+				output.PrintJSON(output.VariableToMap(output.ToFlatVariable(v)))
 			}
 			return nil
 		}
@@ -341,16 +341,11 @@ var variableDeleteCmd = &cobra.Command{
 			"key":      key,
 			"envScope": envScope,
 		}
-		if dryRunOutput("delete variable", confirmPayload) {
-			return nil
-		}
-
-		client, _, err := newClient()
-		if err != nil {
+		if done, err := prepareWrite(cmd, "delete variable", confirmPayload); done || err != nil {
 			return err
 		}
-
-		if err := requireConfirm(cmd, "delete variable", confirmPayload); err != nil {
+		client, _, err := newClient()
+		if err != nil {
 			return err
 		}
 
@@ -359,7 +354,7 @@ var variableDeleteCmd = &cobra.Command{
 		}
 
 		if jsonMode {
-			output.PrintJSON(map[string]any{"deleted": true, "key": key})
+			output.PrintJSON(output.MarkUntrusted(map[string]any{"deleted": true, "key": key}, "key"))
 			return nil
 		}
 		output.Success(fmt.Sprintf("Variable %q deleted", key))

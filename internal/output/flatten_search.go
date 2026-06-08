@@ -13,13 +13,13 @@ type FlatSearchProject struct {
 
 // SearchProjectToMap converts FlatSearchProject to a map for field filtering.
 func SearchProjectToMap(p FlatSearchProject) map[string]any {
-	return map[string]any{
-		"id":                p.ID,
+	return MarkUntrusted(map[string]any{
+		"id":                ID(p.ID),
 		"name":              p.Name,
 		"pathWithNamespace": p.PathWithNamespace,
 		"webUrl":            p.WebURL,
 		"visibility":        p.Visibility,
-	}
+	}, "name", "pathWithNamespace")
 }
 
 // ToFlatSearchProject converts api.SearchProject to FlatSearchProject.
@@ -45,14 +45,14 @@ type FlatSearchIssue struct {
 
 // SearchIssueToMap converts FlatSearchIssue to a map for field filtering.
 func SearchIssueToMap(i FlatSearchIssue) map[string]any {
-	return map[string]any{
-		"id":        i.ID,
-		"iid":       i.IID,
+	return MarkUntrusted(map[string]any{
+		"id":        ID(i.ID),
+		"iid":       ID(i.IID),
 		"title":     i.Title,
 		"state":     i.State,
 		"webUrl":    i.WebURL,
-		"projectId": i.ProjectID,
-	}
+		"projectId": ID(i.ProjectID),
+	}, "title")
 }
 
 // ToFlatSearchIssue converts api.SearchIssue to FlatSearchIssue.
@@ -79,14 +79,14 @@ type FlatSearchMR struct {
 
 // SearchMRToMap converts FlatSearchMR to a map for field filtering.
 func SearchMRToMap(m FlatSearchMR) map[string]any {
-	return map[string]any{
-		"id":        m.ID,
-		"iid":       m.IID,
+	return MarkUntrusted(map[string]any{
+		"id":        ID(m.ID),
+		"iid":       ID(m.IID),
 		"title":     m.Title,
 		"state":     m.State,
 		"webUrl":    m.WebURL,
-		"projectId": m.ProjectID,
-	}
+		"projectId": ID(m.ProjectID),
+	}, "title")
 }
 
 // ToFlatSearchMR converts api.SearchMR to FlatSearchMR.
@@ -113,14 +113,14 @@ type FlatSearchBlob struct {
 
 // SearchBlobToMap converts FlatSearchBlob to a map for field filtering.
 func SearchBlobToMap(b FlatSearchBlob) map[string]any {
-	return map[string]any{
+	return MarkUntrusted(map[string]any{
 		"filename":  b.Filename,
 		"path":      b.Path,
 		"ref":       b.Ref,
-		"startLine": b.StartLine,
+		"startLine": ID(b.StartLine),
 		"data":      b.Data,
-		"projectId": b.ProjectID,
-	}
+		"projectId": ID(b.ProjectID),
+	}, "filename", "path", "ref", "data")
 }
 
 // ToFlatSearchBlob converts api.SearchBlob to FlatSearchBlob.
@@ -147,14 +147,14 @@ type FlatSearchCommit struct {
 
 // SearchCommitToMap converts FlatSearchCommit to a map for field filtering.
 func SearchCommitToMap(c FlatSearchCommit) map[string]any {
-	return map[string]any{
+	return MarkUntrusted(map[string]any{
 		"id":         c.ID,
 		"shortId":    c.ShortID,
 		"title":      c.Title,
 		"authorName": c.AuthorName,
 		"createdAt":  c.CreatedAt,
 		"webUrl":     c.WebURL,
-	}
+	}, "title", "authorName")
 }
 
 // ToFlatSearchCommit converts api.SearchCommit to FlatSearchCommit.

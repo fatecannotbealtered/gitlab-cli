@@ -7,16 +7,18 @@ import (
 	"github.com/fatecannotbealtered/gitlab-cli/internal/api"
 )
 
-// assertKeys checks that every expected key is present in m and that no key contains "_".
+// assertKeys checks that every expected key is present in m and that no key
+// contains "_" except the spec-defined _untrusted marker.
 func assertKeys(t *testing.T, fn string, m map[string]any, keys []string) {
 	t.Helper()
+	keys = append(keys, UntrustedKey)
 	for _, k := range keys {
 		if _, ok := m[k]; !ok {
 			t.Errorf("%s missing key %q", fn, k)
 		}
 	}
 	for k := range m {
-		if strings.Contains(k, "_") {
+		if strings.Contains(k, "_") && k != UntrustedKey {
 			t.Errorf("%s has snake_case key %q", fn, k)
 		}
 	}
@@ -172,6 +174,28 @@ func TestFilterMap_CaseInsensitive(t *testing.T) {
 	}
 	if got["id"] != 1 {
 		t.Error("id missing")
+	}
+}
+
+func TestFilterMap_FiltersUntrustedMarker(t *testing.T) {
+	m := map[string]any{
+		"id":         "1",
+		"title":      "external title",
+		"state":      "opened",
+		UntrustedKey: []string{"title"},
+	}
+	got := FilterMap(m, []string{"id", UntrustedKey})
+	if _, ok := got[UntrustedKey]; ok {
+		t.Fatalf("_untrusted should be omitted when no untrusted field is selected: %v", got)
+	}
+
+	got = FilterMap(m, []string{"id", "title"})
+	fields, ok := got[UntrustedKey].([]string)
+	if !ok {
+		t.Fatalf("_untrusted = %T, want []string", got[UntrustedKey])
+	}
+	if len(fields) != 1 || fields[0] != "title" {
+		t.Fatalf("_untrusted = %v, want [title]", fields)
 	}
 }
 

@@ -128,7 +128,7 @@ var issueListCmd = &cobra.Command{
 			for i, iss := range issues {
 				out[i] = output.FilterMap(output.IssueToMap(toFlatIssue(&iss)), fields)
 			}
-			output.PrintJSON(out)
+			printSimpleListJSON(cmd, out, limit)
 			return nil
 		}
 		if len(issues) == 0 {
@@ -205,8 +205,8 @@ var issueCreateCmd = &cobra.Command{
 		milestoneID, _ := cmd.Flags().GetInt("milestone-id")
 		confidential, _ := cmd.Flags().GetBool("confidential")
 
-		if dryRunOutput("create issue", map[string]any{"project": project, "title": title}) {
-			return nil
+		if done, err := prepareWrite(cmd, "create issue", map[string]any{"project": project, "title": title}); done || err != nil {
+			return err
 		}
 
 		client, _, err := newClient()
@@ -265,8 +265,8 @@ var issueUpdateCmd = &cobra.Command{
 		removeLabels, _ := cmd.Flags().GetString("remove-labels")
 		milestoneID, _ := cmd.Flags().GetInt("milestone-id")
 
-		if dryRunOutput("update issue", map[string]any{"project": project, "iid": iid}) {
-			return nil
+		if done, err := prepareWrite(cmd, "update issue", map[string]any{"project": project, "iid": iid}); done || err != nil {
+			return err
 		}
 
 		client, _, err := newClient()
@@ -318,10 +318,7 @@ var issueCloseCmd = &cobra.Command{
 			return failArg("iid must be a number")
 		}
 		confirmPayload := map[string]any{"project": project, "iid": iid}
-		if dryRunOutput("close issue", confirmPayload) {
-			return nil
-		}
-		if err := requireConfirm(cmd, "close issue", confirmPayload); err != nil {
+		if done, err := prepareWrite(cmd, "close issue", confirmPayload); done || err != nil {
 			return err
 		}
 		client, _, err := newClient()
@@ -356,8 +353,8 @@ var issueReopenCmd = &cobra.Command{
 		if err != nil {
 			return failArg("iid must be a number")
 		}
-		if dryRunOutput("reopen issue", map[string]any{"project": project, "iid": iid}) {
-			return nil
+		if done, err := prepareWrite(cmd, "reopen issue", map[string]any{"project": project, "iid": iid}); done || err != nil {
+			return err
 		}
 		client, _, err := newClient()
 		if err != nil {
@@ -391,8 +388,8 @@ var issueAssignCmd = &cobra.Command{
 		if err != nil {
 			return failArg("iid must be a number")
 		}
-		if dryRunOutput("assign issue", map[string]any{"project": project, "iid": iid, "assignee": args[1]}) {
-			return nil
+		if done, err := prepareWrite(cmd, "assign issue", map[string]any{"project": project, "iid": iid, "assignee": args[1]}); done || err != nil {
+			return err
 		}
 		client, _, err := newClient()
 		if err != nil {
@@ -435,8 +432,8 @@ var issueLabelCmd = &cobra.Command{
 		if add == "" && remove == "" {
 			return failArg("at least one of --add or --remove is required")
 		}
-		if dryRunOutput("label issue", map[string]any{"project": project, "iid": iid, "add": add, "remove": remove}) {
-			return nil
+		if done, err := prepareWrite(cmd, "label issue", map[string]any{"project": project, "iid": iid, "add": add, "remove": remove}); done || err != nil {
+			return err
 		}
 		client, _, err := newClient()
 		if err != nil {

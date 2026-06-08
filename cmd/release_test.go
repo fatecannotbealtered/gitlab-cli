@@ -343,7 +343,7 @@ func TestRelease_Create_JSON(t *testing.T) {
 	defer func() { dryRun = origDR; jsonMode = origJM }()
 	dryRun = false
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"release", "create", "--project", "foo/bar", "--tag", "v1.0", "--name", "Release 1.0", "--json"})
+		rootCmd.SetArgs(withConfirmForTest(t, []string{"release", "create", "--project", "foo/bar", "--tag", "v1.0", "--name", "Release 1.0", "--json"}))
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, `"tagName": "v1.0"`) {
@@ -364,7 +364,7 @@ func TestRelease_Update_JSON(t *testing.T) {
 	defer func() { dryRun = origDR; jsonMode = origJM }()
 	dryRun = false
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"release", "update", "--project", "foo/bar", "--tag", "v1.0", "--name", "Updated", "--json"})
+		rootCmd.SetArgs(withConfirmForTest(t, []string{"release", "update", "--project", "foo/bar", "--tag", "v1.0", "--name", "Updated", "--json"}))
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, `"tagName": "v1.0"`) {
@@ -460,7 +460,7 @@ func TestRelease_Create_PlainText(t *testing.T) {
 	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"release", "create", "--project", "foo/bar", "--tag", "v1.0", "--name", "Release 1.0"})
+		rootCmd.SetArgs(withConfirmForTest(t, []string{"release", "create", "--project", "foo/bar", "--tag", "v1.0", "--name", "Release 1.0"}))
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, "Created") {
@@ -483,7 +483,7 @@ func TestRelease_Update_PlainText(t *testing.T) {
 	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"release", "update", "--project", "foo/bar", "--tag", "v1.0", "--name", "Updated"})
+		rootCmd.SetArgs(withConfirmForTest(t, []string{"release", "update", "--project", "foo/bar", "--tag", "v1.0", "--name", "Updated"}))
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, "Updated") {
@@ -683,7 +683,7 @@ func TestRelease_Create_NewClientError(t *testing.T) {
 	origExit := lastExit
 	defer func() { lastExit = origExit }()
 	lastExit = 0
-	rootCmd.SetArgs([]string{"release", "create", "--project", "g/p", "--tag", "v1.0", "--name", "R1"})
+	rootCmd.SetArgs(withConfirmForTest(t, []string{"release", "create", "--project", "g/p", "--tag", "v1.0", "--name", "R1"}))
 	_ = rootCmd.Execute()
 	if lastExit != ExitAuth {
 		t.Errorf("exit = %d, want %d", lastExit, ExitAuth)
@@ -702,7 +702,7 @@ func TestRelease_Create_APIError(t *testing.T) {
 	origExit := lastExit
 	defer func() { lastExit = origExit }()
 	lastExit = 0
-	rootCmd.SetArgs([]string{"release", "create", "--project", "g/p", "--tag", "v1.0", "--name", "R1"})
+	rootCmd.SetArgs(withConfirmForTest(t, []string{"release", "create", "--project", "g/p", "--tag", "v1.0", "--name", "R1"}))
 	_ = rootCmd.Execute()
 	if lastExit == ExitOK {
 		t.Errorf("expected non-zero exit, got %d", lastExit)
@@ -714,7 +714,7 @@ func TestRelease_Update_NewClientError(t *testing.T) {
 	origExit := lastExit
 	defer func() { lastExit = origExit }()
 	lastExit = 0
-	rootCmd.SetArgs([]string{"release", "update", "--project", "g/p", "--tag", "v1.0", "--name", "Updated"})
+	rootCmd.SetArgs(withConfirmForTest(t, []string{"release", "update", "--project", "g/p", "--tag", "v1.0", "--name", "Updated"}))
 	_ = rootCmd.Execute()
 	if lastExit != ExitAuth {
 		t.Errorf("exit = %d, want %d", lastExit, ExitAuth)
@@ -733,7 +733,7 @@ func TestRelease_Update_APIError(t *testing.T) {
 	origExit := lastExit
 	defer func() { lastExit = origExit }()
 	lastExit = 0
-	rootCmd.SetArgs([]string{"release", "update", "--project", "g/p", "--tag", "v1.0", "--name", "Updated"})
+	rootCmd.SetArgs(withConfirmForTest(t, []string{"release", "update", "--project", "g/p", "--tag", "v1.0", "--name", "Updated"}))
 	_ = rootCmd.Execute()
 	if lastExit == ExitOK {
 		t.Errorf("expected non-zero exit, got %d", lastExit)

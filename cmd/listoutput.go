@@ -48,3 +48,7 @@ func printListJSON(cmd *cobra.Command, rows []map[string]any, pag api.Pagination
 	}
 	output.PrintJSON(output.NewListEnvelope(items, meta))
 }
+
+func printSimpleListJSON(cmd *cobra.Command, rows []map[string]any, requestedLimit int) {
+	printListJSON(cmd, rows, api.Pagination{PerPage: requestedLimit}, requestedLimit, false)
+}

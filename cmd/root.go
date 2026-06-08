@@ -57,6 +57,12 @@ const (
 	formatRaw  = "raw"
 )
 
+const (
+	toolRiskTier    = "T1"
+	toolBlastRadius = "Can read and mutate GitLab project state including issues, merge requests, CI jobs, releases, repository files, branches, and CI/CD variables with the configured token permissions."
+	skillMinVersion = "1.2.0"
+)
+
 // fieldsFlag is set by commands that opt into the global --fields flag.
 // It's a comma-separated list of field names to include in JSON output.
 //
@@ -155,6 +161,8 @@ func Execute() error {
 func ExecuteContext(ctx context.Context) error {
 	lastExit = 0
 	cmdStartTime = time.Now()
+	activeCmd = nil
+	defer func() { activeCmd = nil }()
 	output.DurationMS = func() int64 {
 		if cmdStartTime.IsZero() {
 			return 0
@@ -224,9 +232,13 @@ func dryRunOutput(action string, detail map[string]any) bool {
 		if detail == nil {
 			detail = map[string]any{}
 		}
+		normalized, _ := normalizeConfirmPayload(detail).(map[string]any)
+		if normalized == nil {
+			normalized = detail
+		}
 		changes := []map[string]any{}
-		if len(detail) > 0 {
-			changes = append(changes, detail)
+		if len(normalized) > 0 {
+			changes = append(changes, normalized)
 		}
 		token, expires := newConfirmToken(action, detail)
 		output.PrintJSON(map[string]any{
@@ -241,6 +253,16 @@ func dryRunOutput(action string, detail map[string]any) bool {
 		output.Info("[dry-run] " + action)
 	}
 	return true
+}
+
+func prepareWrite(cmd *cobra.Command, action string, detail map[string]any) (bool, error) {
+	if dryRunOutput(action, detail) {
+		return true, nil
+	}
+	if err := requireConfirm(cmd, action, detail); err != nil {
+		return false, err
+	}
+	return false, nil
 }
 
 func applyFormatFlags(cmd *cobra.Command) error {
@@ -336,6 +358,7 @@ func markWrite(cmd *cobra.Command) {
 		cmd.Annotations = map[string]string{}
 	}
 	cmd.Annotations["write"] = "true"
+	cmd.Annotations["confirm"] = "true"
 }
 
 // markConfirm marks commands that prompt for typed confirmation unless --force is set.

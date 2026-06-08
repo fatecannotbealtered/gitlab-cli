@@ -216,7 +216,9 @@ func TestVariable_Create_JSON(t *testing.T) {
 	defer func() { dryRun = origDR; jsonMode = origJM }()
 	dryRun = false
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"variable", "create", "--project", "foo/bar", "--key", "FOO", "--value", "secret", "--json"})
+		args := []string{"variable", "create", "--project", "foo/bar", "--key", "FOO", "--value", "secret", "--json"}
+		args = append(args, confirmArgsForTest(t, "create variable", map[string]any{"project": "foo/bar", "key": "FOO", "type": "env_var", "envScope": "*"})...)
+		rootCmd.SetArgs(args)
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, `"key": "FOO"`) {
@@ -240,7 +242,9 @@ func TestVariable_Update_JSON(t *testing.T) {
 	defer func() { dryRun = origDR; jsonMode = origJM }()
 	dryRun = false
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"variable", "update", "--project", "foo/bar", "--key", "FOO", "--value", "newval", "--json"})
+		args := []string{"variable", "update", "--project", "foo/bar", "--key", "FOO", "--value", "newval", "--json"}
+		args = append(args, confirmArgsForTest(t, "update variable", map[string]any{"project": "foo/bar", "key": "FOO", "envScope": ""})...)
+		rootCmd.SetArgs(args)
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, `"key": "FOO"`) {
@@ -334,7 +338,9 @@ func TestVariable_Create_PlainText(t *testing.T) {
 	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"variable", "create", "--project", "foo/bar", "--key", "FOO", "--value", "secret"})
+		args := []string{"variable", "create", "--project", "foo/bar", "--key", "FOO", "--value", "secret"}
+		args = append(args, confirmArgsForTest(t, "create variable", map[string]any{"project": "foo/bar", "key": "FOO", "type": "env_var", "envScope": "*"})...)
+		rootCmd.SetArgs(args)
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, "FOO") {
@@ -378,7 +384,9 @@ func TestVariable_Update_PlainText(t *testing.T) {
 	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"variable", "update", "--project", "foo/bar", "--key", "FOO", "--value", "newval"})
+		args := []string{"variable", "update", "--project", "foo/bar", "--key", "FOO", "--value", "newval"}
+		args = append(args, confirmArgsForTest(t, "update variable", map[string]any{"project": "foo/bar", "key": "FOO", "envScope": ""})...)
+		rootCmd.SetArgs(args)
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, "FOO") {
@@ -617,7 +625,9 @@ func TestVariable_Create_MissingAuth(t *testing.T) {
 	defer func() { lastExit = origExit; dryRun = origDR }()
 	lastExit = 0
 	dryRun = false
-	rootCmd.SetArgs([]string{"variable", "create", "--project", "foo/bar", "--key", "FOO", "--value", "secret"})
+	args := []string{"variable", "create", "--project", "foo/bar", "--key", "FOO", "--value", "secret"}
+	args = append(args, confirmArgsForTest(t, "create variable", map[string]any{"project": "foo/bar", "key": "FOO", "type": "env_var", "envScope": "*"})...)
+	rootCmd.SetArgs(args)
 	_ = rootCmd.Execute()
 	if lastExit != ExitAuth {
 		t.Errorf("exit code = %d, want %d", lastExit, ExitAuth)
@@ -637,7 +647,9 @@ func TestVariable_Create_ShowValues_JSON(t *testing.T) {
 	defer func() { dryRun = origDR; _ = variableCmd.PersistentFlags().Set("show-values", "false") }()
 	dryRun = false
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"variable", "create", "--project", "foo/bar", "--key", "FOO", "--value", "secret", "--json", "--show-values"})
+		args := []string{"variable", "create", "--project", "foo/bar", "--key", "FOO", "--value", "secret", "--json", "--show-values"}
+		args = append(args, confirmArgsForTest(t, "create variable", map[string]any{"project": "foo/bar", "key": "FOO", "type": "env_var", "envScope": "*"})...)
+		rootCmd.SetArgs(args)
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, `"value"`) {
@@ -658,7 +670,9 @@ func TestVariable_Create_APIError(t *testing.T) {
 	defer func() { dryRun = origDR; lastExit = origExit }()
 	dryRun = false
 	lastExit = 0
-	rootCmd.SetArgs([]string{"variable", "create", "--project", "foo/bar", "--key", "FOO", "--value", "secret"})
+	args := []string{"variable", "create", "--project", "foo/bar", "--key", "FOO", "--value", "secret"}
+	args = append(args, confirmArgsForTest(t, "create variable", map[string]any{"project": "foo/bar", "key": "FOO", "type": "env_var", "envScope": "*"})...)
+	rootCmd.SetArgs(args)
 	_ = rootCmd.Execute()
 	if lastExit == ExitOK {
 		t.Errorf("expected non-zero exit for API error, got %d", lastExit)
@@ -715,7 +729,7 @@ func TestVariable_Update_AllFlags(t *testing.T) {
 	dryRun = false
 	setTextFormatForTest(t)
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{
+		args := []string{
 			"variable", "update",
 			"--project", "foo/bar",
 			"--key", "FOO",
@@ -726,7 +740,9 @@ func TestVariable_Update_AllFlags(t *testing.T) {
 			"--raw", "true",
 			"--env-scope", "prod",
 			"--description", "desc",
-		})
+		}
+		args = append(args, confirmArgsForTest(t, "update variable", map[string]any{"project": "foo/bar", "key": "FOO", "envScope": "prod"})...)
+		rootCmd.SetArgs(args)
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, "FOO") {
@@ -735,6 +751,7 @@ func TestVariable_Update_AllFlags(t *testing.T) {
 }
 
 func TestVariable_Update_MissingAuth(t *testing.T) {
+	resetVariableFlags(t)
 	isolateConfigHome(t)
 	t.Setenv("GITLAB_CLI_HOST", "")
 	t.Setenv("GITLAB_CLI_TOKEN", "")
@@ -743,7 +760,9 @@ func TestVariable_Update_MissingAuth(t *testing.T) {
 	defer func() { lastExit = origExit; dryRun = origDR }()
 	lastExit = 0
 	dryRun = false
-	rootCmd.SetArgs([]string{"variable", "update", "--project", "foo/bar", "--key", "FOO", "--value", "new"})
+	args := []string{"variable", "update", "--project", "foo/bar", "--key", "FOO", "--value", "new"}
+	args = append(args, confirmArgsForTest(t, "update variable", map[string]any{"project": "foo/bar", "key": "FOO", "envScope": ""})...)
+	rootCmd.SetArgs(args)
 	_ = rootCmd.Execute()
 	if lastExit != ExitAuth {
 		t.Errorf("exit code = %d, want %d", lastExit, ExitAuth)
@@ -751,6 +770,7 @@ func TestVariable_Update_MissingAuth(t *testing.T) {
 }
 
 func TestVariable_Update_ShowValues_JSON(t *testing.T) {
+	resetVariableFlags(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, `{"key":"FOO","value":"newval","variable_type":"env_var","protected":false,"masked":false,"environment_scope":"*"}`)
@@ -762,7 +782,9 @@ func TestVariable_Update_ShowValues_JSON(t *testing.T) {
 	defer func() { dryRun = origDR; _ = variableCmd.PersistentFlags().Set("show-values", "false") }()
 	dryRun = false
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"variable", "update", "--project", "foo/bar", "--key", "FOO", "--value", "newval", "--json", "--show-values"})
+		args := []string{"variable", "update", "--project", "foo/bar", "--key", "FOO", "--value", "newval", "--json", "--show-values"}
+		args = append(args, confirmArgsForTest(t, "update variable", map[string]any{"project": "foo/bar", "key": "FOO", "envScope": ""})...)
+		rootCmd.SetArgs(args)
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, `"value"`) {
@@ -771,6 +793,7 @@ func TestVariable_Update_ShowValues_JSON(t *testing.T) {
 }
 
 func TestVariable_Update_APIError(t *testing.T) {
+	resetVariableFlags(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = w.Write([]byte(`{"message":"500"}`))
@@ -783,7 +806,9 @@ func TestVariable_Update_APIError(t *testing.T) {
 	defer func() { dryRun = origDR; lastExit = origExit }()
 	dryRun = false
 	lastExit = 0
-	rootCmd.SetArgs([]string{"variable", "update", "--project", "foo/bar", "--key", "FOO", "--value", "new"})
+	args := []string{"variable", "update", "--project", "foo/bar", "--key", "FOO", "--value", "new"}
+	args = append(args, confirmArgsForTest(t, "update variable", map[string]any{"project": "foo/bar", "key": "FOO", "envScope": ""})...)
+	rootCmd.SetArgs(args)
 	_ = rootCmd.Execute()
 	if lastExit == ExitOK {
 		t.Errorf("expected non-zero exit for API error, got %d", lastExit)
@@ -947,6 +972,7 @@ func TestVariable_Delete_PlainText(t *testing.T) {
 }
 
 func TestVariable_Update_PlainTextSuccess(t *testing.T) {
+	resetVariableFlags(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, `{"key":"FOO","value":"new","variable_type":"env_var","protected":false,"masked":false,"environment_scope":"*"}`)
@@ -960,7 +986,9 @@ func TestVariable_Update_PlainTextSuccess(t *testing.T) {
 	dryRun = false
 	setTextFormatForTest(t)
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"variable", "update", "--project", "foo/bar", "--key", "FOO", "--value", "new"})
+		args := []string{"variable", "update", "--project", "foo/bar", "--key", "FOO", "--value", "new"}
+		args = append(args, confirmArgsForTest(t, "update variable", map[string]any{"project": "foo/bar", "key": "FOO", "envScope": ""})...)
+		rootCmd.SetArgs(args)
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, "updated") {

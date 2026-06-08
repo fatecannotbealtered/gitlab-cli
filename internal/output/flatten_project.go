@@ -26,14 +26,14 @@ func ToFlatProject(p *api.Project) FlatProject {
 
 // ProjectToMap converts a FlatProject to a map for field filtering.
 func ProjectToMap(p FlatProject) map[string]any {
-	return map[string]any{
-		"id":                p.ID,
+	return MarkUntrusted(map[string]any{
+		"id":                ID(p.ID),
 		"pathWithNamespace": p.PathWithNamespace,
 		"name":              p.Name,
 		"visibility":        p.Visibility,
 		"webUrl":            p.WebURL,
 		"defaultBranch":     p.DefaultBranch,
-	}
+	}, "pathWithNamespace", "name", "defaultBranch")
 }
 
 // FlatProjectMember is a token-efficient representation of a project member.
@@ -58,11 +58,11 @@ func ToFlatProjectMember(m *api.ProjectMember) FlatProjectMember {
 
 // ProjectMemberToMap converts a FlatProjectMember to a map for field filtering.
 func ProjectMemberToMap(m FlatProjectMember) map[string]any {
-	return map[string]any{
-		"id":          m.ID,
+	return MarkUntrusted(map[string]any{
+		"id":          ID(m.ID),
 		"username":    m.Username,
 		"name":        m.Name,
 		"state":       m.State,
-		"accessLevel": m.AccessLevel,
-	}
+		"accessLevel": ID(m.AccessLevel),
+	}, "username", "name")
 }

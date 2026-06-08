@@ -347,7 +347,7 @@ func TestJob_Retry_JSON(t *testing.T) {
 	defer func() { dryRun = origDR; jsonMode = origJM }()
 	dryRun = false
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"job", "retry", "--project", "foo/bar", "10", "--json"})
+		rootCmd.SetArgs(withConfirmForTest(t, []string{"job", "retry", "--project", "foo/bar", "10", "--json"}))
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, `"pending"`) {
@@ -372,7 +372,7 @@ func TestJob_Cancel_JSON(t *testing.T) {
 	defer func() { dryRun = origDR; jsonMode = origJM }()
 	dryRun = false
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"job", "cancel", "--project", "foo/bar", "10", "--json"})
+		rootCmd.SetArgs(withConfirmForTest(t, []string{"job", "cancel", "--project", "foo/bar", "10", "--json"}))
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, `"canceled"`) {
@@ -416,7 +416,7 @@ func TestJob_Retry_PlainText(t *testing.T) {
 	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"job", "retry", "--project", "42", "99"})
+		rootCmd.SetArgs(withConfirmForTest(t, []string{"job", "retry", "--project", "42", "99"}))
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, "retried") && !strings.Contains(out, "build") {
@@ -439,7 +439,7 @@ func TestJob_Cancel_PlainText(t *testing.T) {
 	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"job", "cancel", "--project", "42", "99"})
+		rootCmd.SetArgs(withConfirmForTest(t, []string{"job", "cancel", "--project", "42", "99"}))
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, "canceled") && !strings.Contains(out, "build") {
@@ -857,7 +857,7 @@ func TestJob_Retry_NewClientError(t *testing.T) {
 	origExit := lastExit
 	defer func() { lastExit = origExit }()
 	lastExit = 0
-	rootCmd.SetArgs([]string{"job", "retry", "--project", "42", "99"})
+	rootCmd.SetArgs(withConfirmForTest(t, []string{"job", "retry", "--project", "42", "99"}))
 	_ = rootCmd.Execute()
 	if lastExit != ExitAuth {
 		t.Errorf("exit = %d, want %d", lastExit, ExitAuth)
@@ -901,7 +901,7 @@ func TestJob_Cancel_NewClientError(t *testing.T) {
 	origExit := lastExit
 	defer func() { lastExit = origExit }()
 	lastExit = 0
-	rootCmd.SetArgs([]string{"job", "cancel", "--project", "42", "99"})
+	rootCmd.SetArgs(withConfirmForTest(t, []string{"job", "cancel", "--project", "42", "99"}))
 	_ = rootCmd.Execute()
 	if lastExit != ExitAuth {
 		t.Errorf("exit = %d, want %d", lastExit, ExitAuth)
@@ -1199,15 +1199,15 @@ func TestJob_Wait_ContextCancelledDuringSleep(t *testing.T) {
 	}
 	t.Cleanup(func() { jobWaitCmd.RunE = origRunE })
 
-	stdout := captureStdout(t, func() {
+	stderr := captureStderr(t, func() {
 		rootCmd.SetArgs([]string{"job", "wait", "--project", "42", "99", "--interval", "1"})
 		_ = rootCmd.Execute()
 	})
 	if LastExitCode() != ExitNetwork {
 		t.Errorf("exit = %d, want %d", LastExitCode(), ExitNetwork)
 	}
-	if !strings.Contains(stdout, "context canceled") {
-		t.Errorf("expected context canceled on stdout, got:\n%s", stdout)
+	if !strings.Contains(stderr, "context canceled") {
+		t.Errorf("expected context canceled on stderr, got:\n%s", stderr)
 	}
 }
 

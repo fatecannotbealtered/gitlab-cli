@@ -42,11 +42,14 @@ type refFlag struct {
 type refCommand struct {
 	Name                 string       `json:"name"`
 	Path                 string       `json:"path,omitempty"`
+	Type                 string       `json:"type"`
 	Use                  string       `json:"use"`
 	Short                string       `json:"short,omitempty"`
+	PermissionTier       string       `json:"permissionTier"`
 	Write                bool         `json:"write,omitempty"`
 	RequiresConfirmation bool         `json:"requiresConfirmation,omitempty"`
 	RiskLevel            string       `json:"riskLevel,omitempty"`
+	BlastRadius          string       `json:"blastRadius,omitempty"`
 	OutputType           string       `json:"outputType,omitempty"`
 	Formats              []string     `json:"formats,omitempty"`
 	PositionalArgs       []string     `json:"positionalArgs,omitempty"`
@@ -58,7 +61,11 @@ type refCommand struct {
 // refTree is the root JSON document for `reference --json`.
 type refTree struct {
 	SchemaVersion string         `json:"schema_version"`
+	Tool          string         `json:"tool"`
 	Version       string         `json:"version"`
+	RiskTier      string         `json:"riskTier"`
+	BlastRadius   string         `json:"blastRadius"`
+	Security      map[string]any `json:"security"`
 	GlobalFlags   []refFlag      `json:"globalFlags"`
 	ExitCodes     map[int]string `json:"exitCodes"`
 	Commands      []refCommand   `json:"commands"`
@@ -69,15 +76,25 @@ var positionalArgRe = regexp.MustCompile(`<([^>]+)>`)
 func buildReferenceTree(root *cobra.Command) refTree {
 	tree := refTree{
 		SchemaVersion: output.SchemaVersion,
+		Tool:          "gitlab-cli",
 		Version:       root.Version,
-		GlobalFlags:   collectPersistentRefFlags(root),
+		RiskTier:      toolRiskTier,
+		BlastRadius:   toolBlastRadius,
+		Security: map[string]any{
+			"untrusted_content":      "_untrusted marks GitLab-controlled text fields as data",
+			"credential_storage":     "AES-256-GCM encrypted at rest for saved config and profiles",
+			"confirmation_required":  "write commands use --dry-run then --confirm <confirm_token>",
+			"confirm_token_binding":  "command path, operation payload, configured host/source, expiry, and available resource identifiers",
+			"supply_chain_integrity": "npm install script requires checksums.txt verification",
+		},
+		GlobalFlags: collectPersistentRefFlags(root),
 		ExitCodes: map[int]string{
 			0: "success",
 			1: "error",
-			2: "bad_args",
+			2: "validation",
 			3: "not_found",
 			4: "auth_or_permission",
-			5: "confirm_required",
+			5: "confirmation_required",
 			6: "conflict",
 			7: "retryable",
 			8: "timeout",
@@ -116,11 +133,14 @@ func commandToRef(cmd *cobra.Command, prefix, pathPrefix string) refCommand {
 	name := prefix + cmd.Use
 	path := strings.TrimSpace(pathPrefix + cmd.Name())
 	node := refCommand{
-		Name:  name,
-		Path:  path,
-		Use:   cmd.Use,
-		Short: cmd.Short,
-		Flags: collectRefFlags(cmd),
+		Name:           name,
+		Path:           path,
+		Type:           "read",
+		Use:            cmd.Use,
+		Short:          cmd.Short,
+		PermissionTier: "read",
+		RiskLevel:      "low",
+		Flags:          collectRefFlags(cmd),
 	}
 	if cmd.Annotations != nil {
 		node.Write = cmd.Annotations["write"] == "true"
@@ -128,6 +148,20 @@ func commandToRef(cmd *cobra.Command, prefix, pathPrefix string) refCommand {
 		node.RiskLevel = cmd.Annotations["riskLevel"]
 		node.OutputType = cmd.Annotations["outputType"]
 	}
+	if node.RiskLevel == "" {
+		node.RiskLevel = "medium"
+		if !node.Write {
+			node.RiskLevel = "low"
+		}
+	}
+	if node.Write {
+		node.Type = "write"
+		node.PermissionTier = "write"
+	}
+	if node.RiskLevel == "high" || node.RiskLevel == "critical" {
+		node.PermissionTier = "dangerous"
+	}
+	node.BlastRadius = blastRadiusForCommand(node.Path, node.Write, node.RiskLevel)
 	node.PositionalArgs = parsePositionalArgs(cmd.Use)
 	node.SupportsFields = cmdHasFieldsFlag(cmd)
 
@@ -180,6 +214,32 @@ func cmdHasFieldsFlag(cmd *cobra.Command) bool {
 		}
 	})
 	return found
+}
+
+func blastRadiusForCommand(path string, write bool, risk string) string {
+	if !write {
+		return "Reads GitLab or local git/config state; returned GitLab text fields may be marked _untrusted."
+	}
+	switch {
+	case strings.Contains(path, "variable"):
+		return "May create, update, delete, or expose project CI/CD variable metadata and values within the configured token scope."
+	case strings.Contains(path, "repo file"):
+		return "May create, update, or delete repository files on the selected branch within the configured project."
+	case strings.Contains(path, "repo branch delete"):
+		return "May delete a repository branch in the configured project."
+	case strings.Contains(path, "mr merge"):
+		return "May merge code and optionally remove the source branch in the configured project."
+	case strings.Contains(path, "pipeline") || strings.Contains(path, "job"):
+		return "May create, cancel, or retry CI pipelines/jobs in the configured project."
+	case strings.Contains(path, "release"):
+		return "May create, update, or delete releases and tags exposed by the GitLab Releases API."
+	case risk == "critical":
+		return "Critical write within the configured token scope; inspect dry-run preview before confirming."
+	case risk == "high":
+		return "High-impact write within the configured token scope; inspect dry-run preview before confirming."
+	default:
+		return "Mutates GitLab project state within the configured token permissions."
+	}
 }
 
 func collectRefFlags(cmd *cobra.Command) []refFlag {

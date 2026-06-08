@@ -1,4 +1,4 @@
-# Local GitLab CE for gitlab-cli E2E testing.
+# Local GitLab EE for gitlab-cli E2E testing (matches corporate GitLab 18.8.x).
 # Usage: docker compose -f docker-compose.e2e.yml up -d
 # UI:    http://localhost:8929  (user: root, password: see GITLAB_ROOT_PASSWORD below)
 # CLI:   GITLAB_CLI_HOST=http://localhost:8929  GITLAB_CLI_TOKEN=<PAT from scripts/e2e-up.ps1>
@@ -8,7 +8,7 @@
 
 services:
   gitlab:
-    image: gitlab/gitlab-ce:17.11.4-ce.0
+    image: gitlab/gitlab-ee:18.8.10-ee.0
     container_name: gitlab-cli-e2e
     hostname: gitlab.local
     shm_size: "256m"
@@ -43,7 +43,7 @@ services:
 
   # Demo CI runner: docker executor, shares GitLab network for job clones (localhost:8929).
   gitlab-runner:
-    image: gitlab/gitlab-runner:v17.11.0
+    image: gitlab/gitlab-runner:v18.8.0
     container_name: gitlab-cli-e2e-runner
     restart: unless-stopped
     depends_on:

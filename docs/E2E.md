@@ -2,7 +2,9 @@
 
 > **Platform note:** This guide is written primarily for **Windows** (PowerShell + Docker Desktop). All helper scripts under `scripts/` are `*.ps1`. The underlying stack is cross-platform (`docker-compose.e2e.yml` + Go integration tests); Linux/macOS users can follow [Non-Windows (manual)](#non-windows-manual) below.
 
-Local GitLab CE via Docker for real API integration tests — no GitLab.com or corporate instance required.
+Local GitLab EE via Docker for real API integration tests — no GitLab.com or corporate instance required.
+
+> **Version:** `gitlab/gitlab-ee:18.8.10-ee.0` + `gitlab/gitlab-runner:v18.8.0` (aligned with corporate GitLab 18.8.x). EE runs in **trial mode** without a license — sufficient for gitlab-cli API E2E. Major upgrades (e.g. 17→18): **recreate volumes** (`docker compose down -v` or `e2e-down.ps1 -RemoveVolumes`); do not reuse old CE data.
 
 See also [CONTRIBUTING.md](../CONTRIBUTING.md).
 
@@ -72,7 +74,7 @@ cd gitlab-cli
 
 ### CI Runner (avoid pipeline/job SKIP)
 
-Local CE has no runner by default. Compose includes **`gitlab-cli-e2e-runner`** ( **shell** executor: jobs run inside the runner container, clone via `clone_url=http://gitlab:8929`, works with Windows Docker Desktop).
+Local GitLab has no runner by default. Compose includes **`gitlab-cli-e2e-runner`** ( **shell** executor: jobs run inside the runner container, clone via `clone_url=http://gitlab:8929`, works with Windows Docker Desktop).
 
 **If the GitLab data volume was recreated** (`e2e-up` with a new volume), runner tokens are invalid — re-register:
 

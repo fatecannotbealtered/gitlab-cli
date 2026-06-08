@@ -72,7 +72,7 @@ var projectListCmd = &cobra.Command{
 			for i, p := range projects {
 				out[i] = output.FilterMap(output.ProjectToMap(output.ToFlatProject(&p)), fields)
 			}
-			output.PrintJSON(out)
+			printSimpleListJSON(cmd, out, limit)
 			return nil
 		}
 		if len(projects) == 0 {
@@ -153,7 +153,7 @@ var projectMembersCmd = &cobra.Command{
 			for i, m := range members {
 				out[i] = output.ProjectMemberToMap(output.ToFlatProjectMember(&m))
 			}
-			output.PrintJSON(out)
+			printSimpleListJSON(cmd, out, limit)
 			return nil
 		}
 		if len(members) == 0 {

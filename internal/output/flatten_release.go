@@ -16,7 +16,7 @@ type FlatRelease struct {
 
 // ReleaseToMap converts a FlatRelease to a map for field filtering.
 func ReleaseToMap(r FlatRelease) map[string]any {
-	return map[string]any{
+	return MarkUntrusted(map[string]any{
 		"tagName":     r.TagName,
 		"name":        r.Name,
 		"description": r.Description,
@@ -25,7 +25,7 @@ func ReleaseToMap(r FlatRelease) map[string]any {
 		"author":      r.Author,
 		"commitId":    r.CommitID,
 		"assetCount":  r.AssetCount,
-	}
+	}, "tagName", "name", "description")
 }
 
 // ToFlatRelease converts an api.Release to a FlatRelease.

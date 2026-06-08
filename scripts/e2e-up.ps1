@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-  Start local GitLab CE for gitlab-cli E2E and print connection hints.
+  Start local GitLab EE for gitlab-cli E2E and print connection hints.
 
 .DESCRIPTION
   Requires Docker Desktop (or Docker Engine) with compose v2.
@@ -66,7 +66,7 @@ if ($DataRoot -ne "") {
 
 Push-Location $RepoRoot
 try {
-    Write-Host "Starting GitLab CE (port $HttpPort)..." -ForegroundColor Cyan
+    Write-Host "Starting GitLab EE (port $HttpPort)..." -ForegroundColor Cyan
     & $Docker compose -f $ComposeFile up -d
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 } finally {

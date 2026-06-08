@@ -91,7 +91,7 @@ var repoFileGetCmd = &cobra.Command{
 				result["encoding"] = "base64"
 				result["content"] = base64.StdEncoding.EncodeToString(data)
 			}
-			output.PrintJSON(result)
+			output.PrintJSON(output.MarkUntrusted(result, "content"))
 			return nil
 		}
 
@@ -135,10 +135,10 @@ var repoFileCreateCmd = &cobra.Command{
 			return failArg(err.Error())
 		}
 
-		if dryRunOutput("repo file create", map[string]any{
+		if done, err := prepareWrite(cmd, "repo file create", map[string]any{
 			"project": project, "path": path, "branch": branch,
-		}) {
-			return nil
+		}); done || err != nil {
+			return err
 		}
 
 		client, _, err := newClient()
@@ -190,10 +190,10 @@ var repoFileUpdateCmd = &cobra.Command{
 			return failArg(err.Error())
 		}
 
-		if dryRunOutput("repo file update", map[string]any{
+		if done, err := prepareWrite(cmd, "repo file update", map[string]any{
 			"project": project, "path": path, "branch": branch,
-		}) {
-			return nil
+		}); done || err != nil {
+			return err
 		}
 
 		client, _, err := newClient()
@@ -240,11 +240,7 @@ var repoFileDeleteCmd = &cobra.Command{
 			"branch":        branch,
 			"commitMessage": commitMsg,
 		}
-		if dryRunOutput("repo file delete", confirmPayload) {
-			return nil
-		}
-
-		if err := requireConfirm(cmd, "repo file delete", confirmPayload); err != nil {
+		if done, err := prepareWrite(cmd, "repo file delete", confirmPayload); done || err != nil {
 			return err
 		}
 
@@ -299,7 +295,7 @@ var repoBranchListCmd = &cobra.Command{
 				b := b
 				flat[i] = output.FilterMap(output.BranchToMap(output.ToFlatBranch(&b)), fields)
 			}
-			output.PrintJSON(flat)
+			printSimpleListJSON(cmd, flat, limit)
 			return nil
 		}
 		if len(branches) == 0 {
@@ -334,8 +330,8 @@ var repoBranchCreateCmd = &cobra.Command{
 			return failArg("--project, --name, and --ref are required")
 		}
 
-		if dryRunOutput("repo branch create", map[string]any{"project": project, "name": name, "ref": ref}) {
-			return nil
+		if done, err := prepareWrite(cmd, "repo branch create", map[string]any{"project": project, "name": name, "ref": ref}); done || err != nil {
+			return err
 		}
 
 		client, _, err := newClient()
@@ -349,7 +345,7 @@ var repoBranchCreateCmd = &cobra.Command{
 		}
 
 		if jsonMode {
-			output.PrintJSON(output.ToFlatBranch(b))
+			output.PrintJSON(output.BranchToMap(output.ToFlatBranch(b)))
 			return nil
 		}
 		output.Success(fmt.Sprintf("Created branch %s from %s", b.Name, ref))
@@ -371,11 +367,7 @@ var repoBranchDeleteCmd = &cobra.Command{
 		}
 
 		confirmPayload := map[string]any{"project": project, "name": name}
-		if dryRunOutput("repo branch delete", confirmPayload) {
-			return nil
-		}
-
-		if err := requireConfirm(cmd, "repo branch delete", confirmPayload); err != nil {
+		if done, err := prepareWrite(cmd, "repo branch delete", confirmPayload); done || err != nil {
 			return err
 		}
 
@@ -389,7 +381,7 @@ var repoBranchDeleteCmd = &cobra.Command{
 		}
 
 		if jsonMode {
-			output.PrintJSON(map[string]any{"name": name, "action": "deleted"})
+			output.PrintJSON(output.MarkUntrusted(map[string]any{"name": name, "action": "deleted"}, "name"))
 			return nil
 		}
 		output.Success(fmt.Sprintf("Deleted branch %s", name))
@@ -435,7 +427,7 @@ var repoCommitListCmd = &cobra.Command{
 				c := c
 				flat[i] = output.FilterMap(output.CommitToMap(output.ToFlatCommit(&c)), fields)
 			}
-			output.PrintJSON(flat)
+			printSimpleListJSON(cmd, flat, limit)
 			return nil
 		}
 		if len(commits) == 0 {
@@ -527,7 +519,7 @@ var repoTreeCmd = &cobra.Command{
 				e := e
 				flat[i] = output.FilterMap(output.TreeEntryToMap(output.ToFlatTreeEntry(&e)), fields)
 			}
-			output.PrintJSON(flat)
+			printSimpleListJSON(cmd, flat, limit)
 			return nil
 		}
 		if len(entries) == 0 {

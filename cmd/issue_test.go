@@ -107,7 +107,7 @@ func TestIssue_Update_DryRun_JSON(t *testing.T) {
 		rootCmd.SetArgs([]string{"issue", "update", "1", "--project", "foo/bar", "--title", "fixed", "--dry-run", "--json"})
 		_ = rootCmd.Execute()
 	})
-	for _, want := range []string{`"confirm_token"`, `"iid": 1`} {
+	for _, want := range []string{`"confirm_token"`, `"iid": "1"`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in output:\n%s", want, out)
 		}
@@ -123,7 +123,7 @@ func TestIssue_Close_DryRun_JSON(t *testing.T) {
 		rootCmd.SetArgs([]string{"issue", "close", "2", "--project", "foo/bar", "--dry-run", "--json"})
 		_ = rootCmd.Execute()
 	})
-	for _, want := range []string{`"confirm_token"`, `"iid": 2`} {
+	for _, want := range []string{`"confirm_token"`, `"iid": "2"`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in output:\n%s", want, out)
 		}
@@ -139,7 +139,7 @@ func TestIssue_Reopen_DryRun_JSON(t *testing.T) {
 		rootCmd.SetArgs([]string{"issue", "reopen", "3", "--project", "foo/bar", "--dry-run", "--json"})
 		_ = rootCmd.Execute()
 	})
-	for _, want := range []string{`"confirm_token"`, `"iid": 3`} {
+	for _, want := range []string{`"confirm_token"`, `"iid": "3"`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in output:\n%s", want, out)
 		}
@@ -155,7 +155,7 @@ func TestIssue_Assign_DryRun_JSON(t *testing.T) {
 		rootCmd.SetArgs([]string{"issue", "assign", "4", "alice", "--project", "foo/bar", "--dry-run", "--json"})
 		_ = rootCmd.Execute()
 	})
-	for _, want := range []string{`"confirm_token"`, `"iid": 4`} {
+	for _, want := range []string{`"confirm_token"`, `"iid": "4"`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in output:\n%s", want, out)
 		}
@@ -171,7 +171,7 @@ func TestIssue_Label_DryRun_JSON(t *testing.T) {
 		rootCmd.SetArgs([]string{"issue", "label", "5", "--project", "foo/bar", "--add", "bug", "--dry-run", "--json"})
 		_ = rootCmd.Execute()
 	})
-	for _, want := range []string{`"confirm_token"`, `"iid": 5`} {
+	for _, want := range []string{`"confirm_token"`, `"iid": "5"`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in output:\n%s", want, out)
 		}
@@ -337,7 +337,7 @@ func TestIssue_Create_JSON(t *testing.T) {
 	defer func() { dryRun = origDR; jsonMode = origJM }()
 	dryRun = false
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"issue", "create", "--project", "foo/bar", "--title", "bug", "--json"})
+		rootCmd.SetArgs(withConfirmForTest(t, []string{"issue", "create", "--project", "foo/bar", "--title", "bug", "--json"}))
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, `"title": "bug"`) {
@@ -358,7 +358,7 @@ func TestIssue_Update_JSON(t *testing.T) {
 	defer func() { dryRun = origDR; jsonMode = origJM }()
 	dryRun = false
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"issue", "update", "1", "--project", "foo/bar", "--title", "fixed", "--json"})
+		rootCmd.SetArgs(withConfirmForTest(t, []string{"issue", "update", "1", "--project", "foo/bar", "--title", "fixed", "--json"}))
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, `"title": "fixed"`) {
@@ -402,7 +402,7 @@ func TestIssue_Reopen_JSON(t *testing.T) {
 	defer func() { dryRun = origDR; jsonMode = origJM }()
 	dryRun = false
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"issue", "reopen", "1", "--project", "foo/bar", "--json"})
+		rootCmd.SetArgs(withConfirmForTest(t, []string{"issue", "reopen", "1", "--project", "foo/bar", "--json"}))
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, `"opened"`) {
@@ -474,7 +474,7 @@ func TestIssue_Create_PlainText(t *testing.T) {
 	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"issue", "create", "--project", "foo/bar", "--title", "bug"})
+		rootCmd.SetArgs(withConfirmForTest(t, []string{"issue", "create", "--project", "foo/bar", "--title", "bug"}))
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, "Created") || !strings.Contains(out, "bug") {
@@ -497,7 +497,7 @@ func TestIssue_Update_PlainText(t *testing.T) {
 	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"issue", "update", "1", "--project", "foo/bar", "--title", "fixed"})
+		rootCmd.SetArgs(withConfirmForTest(t, []string{"issue", "update", "1", "--project", "foo/bar", "--title", "fixed"}))
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, "Updated") {
@@ -545,7 +545,7 @@ func TestIssue_Reopen_PlainText(t *testing.T) {
 	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"issue", "reopen", "1", "--project", "foo/bar"})
+		rootCmd.SetArgs(withConfirmForTest(t, []string{"issue", "reopen", "1", "--project", "foo/bar"}))
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, "Reopened") {
@@ -572,7 +572,7 @@ func TestIssue_Assign_PlainText(t *testing.T) {
 	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"issue", "assign", "1", "alice", "--project", "foo/bar"})
+		rootCmd.SetArgs(withConfirmForTest(t, []string{"issue", "assign", "1", "alice", "--project", "foo/bar"}))
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, "Assigned") {
@@ -595,7 +595,7 @@ func TestIssue_Label_PlainText(t *testing.T) {
 	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"issue", "label", "1", "--project", "foo/bar", "--add", "bug"})
+		rootCmd.SetArgs(withConfirmForTest(t, []string{"issue", "label", "1", "--project", "foo/bar", "--add", "bug"}))
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, "Updated") {
@@ -620,7 +620,7 @@ func TestIssue_Assign_JSON(t *testing.T) {
 	defer func() { dryRun = origDR; jsonMode = origJM }()
 	dryRun = false
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"issue", "assign", "1", "alice", "--project", "foo/bar", "--json"})
+		rootCmd.SetArgs(withConfirmForTest(t, []string{"issue", "assign", "1", "alice", "--project", "foo/bar", "--json"}))
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, `"iid"`) {
@@ -641,7 +641,7 @@ func TestIssue_Label_JSON(t *testing.T) {
 	defer func() { dryRun = origDR; jsonMode = origJM }()
 	dryRun = false
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"issue", "label", "1", "--project", "foo/bar", "--add", "bug", "--json"})
+		rootCmd.SetArgs(withConfirmForTest(t, []string{"issue", "label", "1", "--project", "foo/bar", "--add", "bug", "--json"}))
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, `"iid"`) {
@@ -861,7 +861,11 @@ func testIssueMissingAuth(t *testing.T, args ...string) {
 	origExit := lastExit
 	defer func() { lastExit = origExit }()
 	lastExit = 0
-	rootCmd.SetArgs(args)
+	runArgs := append([]string{}, args...)
+	if argsTargetWriteCommandForTest(runArgs) {
+		runArgs = withConfirmForTest(t, runArgs)
+	}
+	rootCmd.SetArgs(runArgs)
 	_ = rootCmd.Execute()
 	if lastExit != ExitAuth {
 		t.Errorf("exit code = %d, want %d (ExitAuth)", lastExit, ExitAuth)
@@ -972,7 +976,7 @@ func TestIssue_Create_WithAssignee(t *testing.T) {
 	dryRun = false
 	setTextFormatForTest(t)
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"issue", "create", "--project", "foo/bar", "--title", "bug", "--assignee", "alice"})
+		rootCmd.SetArgs(withConfirmForTest(t, []string{"issue", "create", "--project", "foo/bar", "--title", "bug", "--assignee", "alice"}))
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, "Created") {
@@ -993,7 +997,7 @@ func TestIssue_Create_AssigneeNotFound(t *testing.T) {
 	defer func() { dryRun = origDR; lastExit = origExit }()
 	dryRun = false
 	lastExit = 0
-	rootCmd.SetArgs([]string{"issue", "create", "--project", "foo/bar", "--title", "bug", "--assignee", "ghost"})
+	rootCmd.SetArgs(withConfirmForTest(t, []string{"issue", "create", "--project", "foo/bar", "--title", "bug", "--assignee", "ghost"}))
 	_ = rootCmd.Execute()
 	if lastExit == ExitOK {
 		t.Errorf("expected non-zero exit when assignee not found, got %d", lastExit)
@@ -1018,7 +1022,7 @@ func TestIssue_Create_APIError(t *testing.T) {
 	dryRun = false
 	lastExit = 0
 	_ = issueCreateCmd.Flags().Set("assignee", "")
-	rootCmd.SetArgs([]string{"issue", "create", "--project", "foo/bar", "--title", "bug"})
+	rootCmd.SetArgs(withConfirmForTest(t, []string{"issue", "create", "--project", "foo/bar", "--title", "bug"}))
 	_ = rootCmd.Execute()
 	if lastExit == ExitOK {
 		t.Errorf("expected non-zero exit for API error, got %d", lastExit)
@@ -1046,7 +1050,7 @@ func TestIssue_Create_APIError_JSON(t *testing.T) {
 	lastExit = 0
 	jsonMode = true
 	_ = issueCreateCmd.Flags().Set("assignee", "")
-	rootCmd.SetArgs([]string{"issue", "create", "--project", "foo/bar", "--title", "bug", "--json"})
+	rootCmd.SetArgs(withConfirmForTest(t, []string{"issue", "create", "--project", "foo/bar", "--title", "bug", "--json"}))
 	_ = rootCmd.Execute()
 	if lastExit == ExitOK {
 		t.Errorf("expected non-zero exit for API error, got %d", lastExit)
@@ -1068,7 +1072,7 @@ func TestIssue_Update_APIError_JSON(t *testing.T) {
 	dryRun = false
 	lastExit = 0
 	jsonMode = true
-	rootCmd.SetArgs([]string{"issue", "update", "1", "--project", "foo/bar", "--title", "x", "--json"})
+	rootCmd.SetArgs(withConfirmForTest(t, []string{"issue", "update", "1", "--project", "foo/bar", "--title", "x", "--json"}))
 	_ = rootCmd.Execute()
 	if lastExit == ExitOK {
 		t.Errorf("expected non-zero exit for API error, got %d", lastExit)
@@ -1130,7 +1134,7 @@ func TestIssue_Update_WithAssignee(t *testing.T) {
 	dryRun = false
 	setTextFormatForTest(t)
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"issue", "update", "1", "--project", "foo/bar", "--assignee", "alice"})
+		rootCmd.SetArgs(withConfirmForTest(t, []string{"issue", "update", "1", "--project", "foo/bar", "--assignee", "alice"}))
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, "Updated") {
@@ -1151,7 +1155,7 @@ func TestIssue_Update_APIError(t *testing.T) {
 	defer func() { dryRun = origDR; lastExit = origExit }()
 	dryRun = false
 	lastExit = 0
-	rootCmd.SetArgs([]string{"issue", "update", "1", "--project", "foo/bar", "--title", "x"})
+	rootCmd.SetArgs(withConfirmForTest(t, []string{"issue", "update", "1", "--project", "foo/bar", "--title", "x"}))
 	_ = rootCmd.Execute()
 	if lastExit == ExitOK {
 		t.Errorf("expected non-zero exit for API error, got %d", lastExit)
@@ -1174,9 +1178,21 @@ func TestIssue_Close_InvalidIID(t *testing.T) {
 }
 
 func TestIssue_Close_MissingAuth(t *testing.T) {
+	isolateConfigHome(t)
+	t.Setenv("GITLAB_CLI_HOST", "")
+	t.Setenv("GITLAB_CLI_TOKEN", "")
+	t.Setenv("GITLAB_HOST", "")
+	t.Setenv("GITLAB_TOKEN", "")
 	args := []string{"issue", "close", "1", "--project", "foo/bar"}
 	args = append(args, confirmArgsForTest(t, "close issue", map[string]any{"project": "foo/bar", "iid": 1})...)
-	testIssueMissingAuth(t, args...)
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs(args)
+	_ = rootCmd.Execute()
+	if lastExit != ExitAuth {
+		t.Errorf("exit code = %d, want %d (ExitAuth)", lastExit, ExitAuth)
+	}
 }
 
 func TestIssue_Close_APIError(t *testing.T) {
@@ -1233,7 +1249,7 @@ func TestIssue_Reopen_APIError(t *testing.T) {
 	defer func() { dryRun = origDR; lastExit = origExit }()
 	dryRun = false
 	lastExit = 0
-	rootCmd.SetArgs([]string{"issue", "reopen", "1", "--project", "foo/bar"})
+	rootCmd.SetArgs(withConfirmForTest(t, []string{"issue", "reopen", "1", "--project", "foo/bar"}))
 	_ = rootCmd.Execute()
 	if lastExit == ExitOK {
 		t.Errorf("expected non-zero exit for API error, got %d", lastExit)
@@ -1288,7 +1304,7 @@ func TestIssue_Assign_UserNotFound(t *testing.T) {
 	defer func() { dryRun = origDR; lastExit = origExit }()
 	dryRun = false
 	lastExit = 0
-	rootCmd.SetArgs([]string{"issue", "assign", "1", "ghost", "--project", "foo/bar"})
+	rootCmd.SetArgs(withConfirmForTest(t, []string{"issue", "assign", "1", "ghost", "--project", "foo/bar"}))
 	_ = rootCmd.Execute()
 	if lastExit == ExitOK {
 		t.Errorf("expected non-zero exit when user not found, got %d", lastExit)
@@ -1313,7 +1329,7 @@ func TestIssue_Assign_APIError(t *testing.T) {
 	defer func() { dryRun = origDR; lastExit = origExit }()
 	dryRun = false
 	lastExit = 0
-	rootCmd.SetArgs([]string{"issue", "assign", "1", "alice", "--project", "foo/bar"})
+	rootCmd.SetArgs(withConfirmForTest(t, []string{"issue", "assign", "1", "alice", "--project", "foo/bar"}))
 	_ = rootCmd.Execute()
 	if lastExit == ExitOK {
 		t.Errorf("expected non-zero exit for API error, got %d", lastExit)
@@ -1390,7 +1406,7 @@ func TestIssue_Label_APIError(t *testing.T) {
 	defer func() { dryRun = origDR; lastExit = origExit }()
 	dryRun = false
 	lastExit = 0
-	rootCmd.SetArgs([]string{"issue", "label", "1", "--project", "foo/bar", "--add", "bug"})
+	rootCmd.SetArgs(withConfirmForTest(t, []string{"issue", "label", "1", "--project", "foo/bar", "--add", "bug"}))
 	_ = rootCmd.Execute()
 	if lastExit == ExitOK {
 		t.Errorf("expected non-zero exit for API error, got %d", lastExit)

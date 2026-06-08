@@ -56,7 +56,7 @@ func ToFlatVariableWithValue(v *api.Variable) FlatVariableWithValue {
 
 // VariableToMap converts a FlatVariable to a map for field filtering.
 func VariableToMap(f FlatVariable) map[string]any {
-	return map[string]any{
+	return MarkUntrusted(map[string]any{
 		"key":         f.Key,
 		"type":        f.Type,
 		"protected":   f.Protected,
@@ -64,12 +64,12 @@ func VariableToMap(f FlatVariable) map[string]any {
 		"raw":         f.Raw,
 		"envScope":    f.EnvScope,
 		"description": f.Description,
-	}
+	}, "key", "envScope", "description")
 }
 
 // VariableWithValueToMap converts a FlatVariableWithValue to a map for field filtering.
 func VariableWithValueToMap(f FlatVariableWithValue) map[string]any {
-	return map[string]any{
+	return MarkUntrusted(map[string]any{
 		"key":         f.Key,
 		"value":       f.Value,
 		"type":        f.Type,
@@ -78,5 +78,5 @@ func VariableWithValueToMap(f FlatVariableWithValue) map[string]any {
 		"raw":         f.Raw,
 		"envScope":    f.EnvScope,
 		"description": f.Description,
-	}
+	}, "key", "value", "envScope", "description")
 }

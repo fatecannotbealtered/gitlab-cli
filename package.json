@@ -36,10 +36,18 @@
     "scripts/run.js",
     "skills/",
     "README.md",
+    "README_zh.md",
     "LICENSE",
+    "NOTICE.md",
     "CHANGELOG.md",
     "CONTRIBUTING.md",
-    "SECURITY.md"
+    "SECURITY.md",
+    "CODE_OF_CONDUCT.md",
+    "AGENTS.md",
+    ".agent/",
+    "docs/COMPATIBILITY.md",
+    "docs/OPEN_SOURCE_CHECKLIST.md",
+    "docs/E2E.md"
   ],
   "os": [
     "darwin",

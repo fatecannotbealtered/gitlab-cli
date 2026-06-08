@@ -3,7 +3,6 @@ package cmd
 import (
 	"bytes"
 	"errors"
-	"io"
 	"os"
 	"strings"
 	"testing"
@@ -156,7 +155,7 @@ func TestDryRunOutput_JSON(t *testing.T) {
 	out := captureStdout(t, func() {
 		dryRunOutput("delete mr", map[string]any{"iid": 5})
 	})
-	for _, want := range []string{`"action": "delete mr"`, `"confirm_token"`, `"iid": 5`} {
+	for _, want := range []string{`"action": "delete mr"`, `"confirm_token"`, `"iid": "5"`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in JSON dry-run, got:\n%s", want, out)
 		}
@@ -270,7 +269,7 @@ func TestFormat_JSONAliasConflictsWithText(t *testing.T) {
 	origExit := lastExit
 	defer func() { lastExit = origExit }()
 	lastExit = 0
-	errOut := captureStdout(t, func() {
+	errOut := captureStderr(t, func() {
 		rootCmd.SetArgs([]string{"reference", "--format", "text", "--json"})
 		_ = rootCmd.Execute()
 	})
@@ -330,30 +329,10 @@ func TestHandleAPIError_JSON(t *testing.T) {
 	defer func() { lastExit = origExit }()
 	lastExit = 0
 
-	// Capture stdout where PrintErrorJSONWithCode writes the failure envelope.
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("os.Pipe: %v", err)
-	}
-	origStdout := os.Stdout
-	os.Stdout = w
-
-	var buf bytes.Buffer
-	done := make(chan struct{})
-	go func() {
-		_, _ = io.Copy(&buf, r)
-		close(done)
-	}()
-
-	apiErr := &api.APIError{StatusCode: 404}
-	_ = handleAPIError(apiErr, true)
-
-	_ = w.Close()
-	os.Stdout = origStdout
-	<-done
-	_ = r.Close()
-
-	out := buf.String()
+	out := captureStderr(t, func() {
+		apiErr := &api.APIError{StatusCode: 404}
+		_ = handleAPIError(apiErr, true)
+	})
 	if !strings.Contains(out, "404") && !strings.Contains(out, "error") {
 		t.Errorf("expected JSON error envelope with 404, got:\n%s", out)
 	}

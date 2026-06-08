@@ -157,7 +157,7 @@ func TestLabel_Create_JSON(t *testing.T) {
 	defer func() { dryRun = origDR; jsonMode = origJM }()
 	dryRun = false
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"label", "create", "--project", "foo/bar", "--name", "bug", "--color", "#e11", "--json"})
+		rootCmd.SetArgs(withConfirmForTest(t, []string{"label", "create", "--project", "foo/bar", "--name", "bug", "--color", "#e11", "--json"}))
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, `"name": "bug"`) {
@@ -178,7 +178,7 @@ func TestLabel_Update_JSON(t *testing.T) {
 	defer func() { dryRun = origDR; jsonMode = origJM }()
 	dryRun = false
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"label", "update", "--project", "foo/bar", "--label-id", "1", "--name", "bug2", "--json"})
+		rootCmd.SetArgs(withConfirmForTest(t, []string{"label", "update", "--project", "foo/bar", "--label-id", "1", "--name", "bug2", "--json"}))
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, `"name": "bug2"`) {
@@ -275,7 +275,7 @@ func TestLabel_Create_PlainText(t *testing.T) {
 	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"label", "create", "--project", "foo/bar", "--name", "bug", "--color", "#e11"})
+		rootCmd.SetArgs(withConfirmForTest(t, []string{"label", "create", "--project", "foo/bar", "--name", "bug", "--color", "#e11"}))
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, "bug") {
@@ -298,7 +298,7 @@ func TestLabel_Update_PlainText(t *testing.T) {
 	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"label", "update", "--project", "foo/bar", "--label-id", "1", "--name", "bug2"})
+		rootCmd.SetArgs(withConfirmForTest(t, []string{"label", "update", "--project", "foo/bar", "--label-id", "1", "--name", "bug2"}))
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, "Updated") {
@@ -433,7 +433,7 @@ func TestLabel_Create_MissingAuth(t *testing.T) {
 	defer func() { lastExit = origExit; dryRun = origDR }()
 	lastExit = 0
 	dryRun = false
-	rootCmd.SetArgs([]string{"label", "create", "--project", "foo/bar", "--name", "bug", "--color", "#e11"})
+	rootCmd.SetArgs(withConfirmForTest(t, []string{"label", "create", "--project", "foo/bar", "--name", "bug", "--color", "#e11"}))
 	_ = rootCmd.Execute()
 	if lastExit != ExitAuth {
 		t.Errorf("exit code = %d, want %d", lastExit, ExitAuth)
@@ -455,7 +455,7 @@ func TestLabel_Create_WithPriority(t *testing.T) {
 	dryRun = false
 	setTextFormatForTest(t)
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"label", "create", "--project", "foo/bar", "--name", "bug", "--color", "#e11", "--priority", "5"})
+		rootCmd.SetArgs(withConfirmForTest(t, []string{"label", "create", "--project", "foo/bar", "--name", "bug", "--color", "#e11", "--priority", "5"}))
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, "bug") {
@@ -476,7 +476,7 @@ func TestLabel_Create_APIError(t *testing.T) {
 	defer func() { dryRun = origDR; lastExit = origExit }()
 	dryRun = false
 	lastExit = 0
-	rootCmd.SetArgs([]string{"label", "create", "--project", "foo/bar", "--name", "bug", "--color", "#e11"})
+	rootCmd.SetArgs(withConfirmForTest(t, []string{"label", "create", "--project", "foo/bar", "--name", "bug", "--color", "#e11"}))
 	_ = rootCmd.Execute()
 	if lastExit == ExitOK {
 		t.Errorf("expected non-zero exit for API error, got %d", lastExit)
@@ -524,7 +524,7 @@ func TestLabel_Update_MissingAuth(t *testing.T) {
 	defer func() { lastExit = origExit; dryRun = origDR }()
 	lastExit = 0
 	dryRun = false
-	rootCmd.SetArgs([]string{"label", "update", "--project", "foo/bar", "--label-id", "1", "--name", "x"})
+	rootCmd.SetArgs(withConfirmForTest(t, []string{"label", "update", "--project", "foo/bar", "--label-id", "1", "--name", "x"}))
 	_ = rootCmd.Execute()
 	if lastExit != ExitAuth {
 		t.Errorf("exit code = %d, want %d", lastExit, ExitAuth)
@@ -545,7 +545,7 @@ func TestLabel_Update_WithPriority(t *testing.T) {
 	dryRun = false
 	setTextFormatForTest(t)
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"label", "update", "--project", "foo/bar", "--label-id", "1", "--priority", "3"})
+		rootCmd.SetArgs(withConfirmForTest(t, []string{"label", "update", "--project", "foo/bar", "--label-id", "1", "--priority", "3"}))
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, "Updated") {
@@ -566,7 +566,7 @@ func TestLabel_Update_APIError(t *testing.T) {
 	defer func() { dryRun = origDR; lastExit = origExit }()
 	dryRun = false
 	lastExit = 0
-	rootCmd.SetArgs([]string{"label", "update", "--project", "foo/bar", "--label-id", "1", "--name", "x"})
+	rootCmd.SetArgs(withConfirmForTest(t, []string{"label", "update", "--project", "foo/bar", "--label-id", "1", "--name", "x"}))
 	_ = rootCmd.Execute()
 	if lastExit == ExitOK {
 		t.Errorf("expected non-zero exit for API error, got %d", lastExit)

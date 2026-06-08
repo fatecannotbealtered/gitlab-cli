@@ -76,7 +76,7 @@ var labelListCmd = &cobra.Command{
 			for i, l := range labels {
 				out[i] = output.FilterMap(output.LabelToMap(toFlatLabel(&l)), fields)
 			}
-			output.PrintJSON(out)
+			printSimpleListJSON(cmd, out, limit)
 			return nil
 		}
 		if len(labels) == 0 {
@@ -117,8 +117,8 @@ var labelCreateCmd = &cobra.Command{
 		desc, _ := cmd.Flags().GetString("description")
 		priority, _ := cmd.Flags().GetInt("priority")
 
-		if dryRunOutput("create label", map[string]any{"project": project, "name": name, "color": color}) {
-			return nil
+		if done, err := prepareWrite(cmd, "create label", map[string]any{"project": project, "name": name, "color": color}); done || err != nil {
+			return err
 		}
 
 		client, _, err := newClient()
@@ -161,8 +161,8 @@ var labelUpdateCmd = &cobra.Command{
 		desc, _ := cmd.Flags().GetString("description")
 		priority, _ := cmd.Flags().GetInt("priority")
 
-		if dryRunOutput("update label", map[string]any{"project": project, "labelId": labelID}) {
-			return nil
+		if done, err := prepareWrite(cmd, "update label", map[string]any{"project": project, "labelId": labelID}); done || err != nil {
+			return err
 		}
 
 		client, _, err := newClient()
@@ -200,21 +200,18 @@ var labelDeleteCmd = &cobra.Command{
 			return failArg("--label-id is required")
 		}
 		confirmPayload := map[string]any{"project": project, "labelId": labelID}
-		if dryRunOutput("delete label", confirmPayload) {
-			return nil
+		if done, err := prepareWrite(cmd, "delete label", confirmPayload); done || err != nil {
+			return err
 		}
 		client, _, err := newClient()
 		if err != nil {
-			return err
-		}
-		if err := requireConfirm(cmd, "delete label", confirmPayload); err != nil {
 			return err
 		}
 		if err := client.Labels.Delete(apiCtx(), project, labelID); err != nil {
 			return handleAPIError(err, jsonMode)
 		}
 		if jsonMode {
-			output.PrintJSON(map[string]any{"deleted": true, "labelId": labelID})
+			output.PrintJSON(map[string]any{"deleted": true, "labelId": output.ID(labelID)})
 			return nil
 		}
 		output.Success(fmt.Sprintf("Deleted label ID %d", labelID))

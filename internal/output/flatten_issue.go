@@ -17,7 +17,7 @@ type FlatIssue struct {
 // IssueToMap converts a FlatIssue to a map for field filtering.
 func IssueToMap(f FlatIssue) map[string]any {
 	m := map[string]any{
-		"iid":   f.IID,
+		"iid":   ID(f.IID),
 		"title": f.Title,
 		"state": f.State,
 	}
@@ -36,7 +36,7 @@ func IssueToMap(f FlatIssue) map[string]any {
 	if f.WebURL != "" {
 		m["webUrl"] = f.WebURL
 	}
-	return m
+	return MarkUntrusted(m, "title", "labels", "milestone")
 }
 
 // ─── Label ───────────────────────────────────────────────────────────────────
@@ -53,7 +53,7 @@ type FlatLabel struct {
 // LabelToMap converts a FlatLabel to a map for field filtering.
 func LabelToMap(f FlatLabel) map[string]any {
 	m := map[string]any{
-		"id":    f.ID,
+		"id":    ID(f.ID),
 		"name":  f.Name,
 		"color": f.Color,
 	}
@@ -63,7 +63,7 @@ func LabelToMap(f FlatLabel) map[string]any {
 	if f.Priority != nil {
 		m["priority"] = *f.Priority
 	}
-	return m
+	return MarkUntrusted(m, "name", "description")
 }
 
 // ─── Milestone ───────────────────────────────────────────────────────────────
@@ -82,8 +82,8 @@ type FlatMilestone struct {
 // MilestoneToMap converts a FlatMilestone to a map for field filtering.
 func MilestoneToMap(f FlatMilestone) map[string]any {
 	m := map[string]any{
-		"id":    f.ID,
-		"iid":   f.IID,
+		"id":    ID(f.ID),
+		"iid":   ID(f.IID),
 		"title": f.Title,
 		"state": f.State,
 	}
@@ -96,5 +96,5 @@ func MilestoneToMap(f FlatMilestone) map[string]any {
 	if f.WebURL != "" {
 		m["webUrl"] = f.WebURL
 	}
-	return m
+	return MarkUntrusted(m, "title")
 }

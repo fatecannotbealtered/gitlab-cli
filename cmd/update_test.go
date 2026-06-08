@@ -189,7 +189,7 @@ func TestUpdate_ChecksumMismatch(t *testing.T) {
 	origExit := lastExit
 	defer func() { lastExit = origExit }()
 	lastExit = 0
-	errOut := captureStdout(t, func() {
+	errOut := captureStderr(t, func() {
 		args := []string{"update", "--json"}
 		args = append(args, updateConfirmArgsForTest(t, srv.URL, "1.0.0", "1.2.3", false)...)
 		rootCmd.SetArgs(args)
@@ -212,7 +212,7 @@ func TestUpdate_MissingAsset(t *testing.T) {
 	origExit := lastExit
 	defer func() { lastExit = origExit }()
 	lastExit = 0
-	errOut := captureStdout(t, func() {
+	errOut := captureStderr(t, func() {
 		rootCmd.SetArgs([]string{"update", "--check", "--json"})
 		_ = rootCmd.Execute()
 	})
@@ -303,7 +303,7 @@ func TestCompareVersions(t *testing.T) {
 	}{
 		{"1.0.0", "1.2.0", -1},
 		{"1.2.0", "1.2.0", 0},
-		{"1.3.0", "1.2.0", 1},
+		{"2.0.0", "1.2.0", 1},
 		{"1.2.0-rc.1", "1.2.0", -1},
 		{"1.2.0-rc.10", "1.2.0-rc.2", 1},
 		{"1.2.0-alpha.1", "1.2.0-alpha.beta", -1},

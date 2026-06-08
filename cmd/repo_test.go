@@ -557,12 +557,12 @@ func TestRepo_File_Create_JSON(t *testing.T) {
 	dryRun = false
 	lastExit = 0
 	captureStdout(t, func() {
-		rootCmd.SetArgs([]string{
+		rootCmd.SetArgs(withConfirmForTest(t, []string{
 			"repo", "file", "create",
 			"--project", "foo/bar", "--path", "README.md",
 			"--branch", "main", "--content", "hello",
 			"--commit-message", "add readme", "--json",
-		})
+		}))
 		_ = rootCmd.Execute()
 	})
 	if lastExit != ExitOK {
@@ -589,12 +589,12 @@ func TestRepo_File_Update_JSON(t *testing.T) {
 	dryRun = false
 	lastExit = 0
 	captureStdout(t, func() {
-		rootCmd.SetArgs([]string{
+		rootCmd.SetArgs(withConfirmForTest(t, []string{
 			"repo", "file", "update",
 			"--project", "foo/bar", "--path", "README.md",
 			"--branch", "main", "--content", "updated",
 			"--commit-message", "update readme", "--json",
-		})
+		}))
 		_ = rootCmd.Execute()
 	})
 	if lastExit != ExitOK {
@@ -653,7 +653,7 @@ func TestRepo_Branch_Create_JSON(t *testing.T) {
 	defer func() { dryRun = origDR; jsonMode = origJM }()
 	dryRun = false
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"repo", "branch", "create", "--project", "foo/bar", "--name", "feat", "--ref", "main", "--json"})
+		rootCmd.SetArgs(withConfirmForTest(t, []string{"repo", "branch", "create", "--project", "foo/bar", "--name", "feat", "--ref", "main", "--json"}))
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, `"feat"`) {
@@ -944,7 +944,7 @@ func TestRepo_Branch_Create_PlainText(t *testing.T) {
 	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"repo", "branch", "create", "--project", "group/proj", "--name", "feat", "--ref", "main"})
+		rootCmd.SetArgs(withConfirmForTest(t, []string{"repo", "branch", "create", "--project", "group/proj", "--name", "feat", "--ref", "main"}))
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, "Created") {
@@ -968,12 +968,12 @@ func TestRepo_File_Create_PlainText(t *testing.T) {
 	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{
+		rootCmd.SetArgs(withConfirmForTest(t, []string{
 			"repo", "file", "create",
 			"--project", "group/proj", "--path", "README.md",
 			"--branch", "main", "--content", "hello",
 			"--commit-message", "add readme",
-		})
+		}))
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, "Created") {
@@ -996,12 +996,12 @@ func TestRepo_File_Update_PlainText(t *testing.T) {
 	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{
+		rootCmd.SetArgs(withConfirmForTest(t, []string{
 			"repo", "file", "update",
 			"--project", "group/proj", "--path", "README.md",
 			"--branch", "main", "--content", "updated",
 			"--commit-message", "update readme",
-		})
+		}))
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, "Updated") {
@@ -1217,7 +1217,7 @@ func TestRepo_File_Create_NewClientError(t *testing.T) {
 	origExit := lastExit
 	defer func() { lastExit = origExit }()
 	lastExit = 0
-	rootCmd.SetArgs([]string{"repo", "file", "create", "--project", "g/p", "--path", "a.md", "--branch", "main", "--content", "x", "--commit-message", "add"})
+	rootCmd.SetArgs(withConfirmForTest(t, []string{"repo", "file", "create", "--project", "g/p", "--path", "a.md", "--branch", "main", "--content", "x", "--commit-message", "add"}))
 	_ = rootCmd.Execute()
 	if lastExit != ExitAuth {
 		t.Errorf("exit = %d, want %d", lastExit, ExitAuth)
@@ -1236,7 +1236,7 @@ func TestRepo_File_Create_APIError(t *testing.T) {
 	origExit := lastExit
 	defer func() { lastExit = origExit }()
 	lastExit = 0
-	rootCmd.SetArgs([]string{"repo", "file", "create", "--project", "g/p", "--path", "a.md", "--branch", "main", "--content", "x", "--commit-message", "add"})
+	rootCmd.SetArgs(withConfirmForTest(t, []string{"repo", "file", "create", "--project", "g/p", "--path", "a.md", "--branch", "main", "--content", "x", "--commit-message", "add"}))
 	_ = rootCmd.Execute()
 	if lastExit == ExitOK {
 		t.Errorf("expected non-zero exit, got %d", lastExit)
@@ -1248,7 +1248,7 @@ func TestRepo_File_Update_NewClientError(t *testing.T) {
 	origExit := lastExit
 	defer func() { lastExit = origExit }()
 	lastExit = 0
-	rootCmd.SetArgs([]string{"repo", "file", "update", "--project", "g/p", "--path", "a.md", "--branch", "main", "--content", "x", "--commit-message", "upd"})
+	rootCmd.SetArgs(withConfirmForTest(t, []string{"repo", "file", "update", "--project", "g/p", "--path", "a.md", "--branch", "main", "--content", "x", "--commit-message", "upd"}))
 	_ = rootCmd.Execute()
 	if lastExit != ExitAuth {
 		t.Errorf("exit = %d, want %d", lastExit, ExitAuth)
@@ -1267,7 +1267,7 @@ func TestRepo_File_Update_APIError(t *testing.T) {
 	origExit := lastExit
 	defer func() { lastExit = origExit }()
 	lastExit = 0
-	rootCmd.SetArgs([]string{"repo", "file", "update", "--project", "g/p", "--path", "a.md", "--branch", "main", "--content", "x", "--commit-message", "upd"})
+	rootCmd.SetArgs(withConfirmForTest(t, []string{"repo", "file", "update", "--project", "g/p", "--path", "a.md", "--branch", "main", "--content", "x", "--commit-message", "upd"}))
 	_ = rootCmd.Execute()
 	if lastExit == ExitOK {
 		t.Errorf("expected non-zero exit, got %d", lastExit)
@@ -1349,7 +1349,7 @@ func TestRepo_Branch_Create_NewClientError(t *testing.T) {
 	origExit := lastExit
 	defer func() { lastExit = origExit }()
 	lastExit = 0
-	rootCmd.SetArgs([]string{"repo", "branch", "create", "--project", "g/p", "--name", "feat", "--ref", "main"})
+	rootCmd.SetArgs(withConfirmForTest(t, []string{"repo", "branch", "create", "--project", "g/p", "--name", "feat", "--ref", "main"}))
 	_ = rootCmd.Execute()
 	if lastExit != ExitAuth {
 		t.Errorf("exit = %d, want %d", lastExit, ExitAuth)
@@ -1368,7 +1368,7 @@ func TestRepo_Branch_Create_APIError(t *testing.T) {
 	origExit := lastExit
 	defer func() { lastExit = origExit }()
 	lastExit = 0
-	rootCmd.SetArgs([]string{"repo", "branch", "create", "--project", "g/p", "--name", "feat", "--ref", "main"})
+	rootCmd.SetArgs(withConfirmForTest(t, []string{"repo", "branch", "create", "--project", "g/p", "--name", "feat", "--ref", "main"}))
 	_ = rootCmd.Execute()
 	if lastExit == ExitOK {
 		t.Errorf("expected non-zero exit, got %d", lastExit)

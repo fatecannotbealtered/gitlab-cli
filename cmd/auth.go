@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"bufio"
-	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -75,7 +74,10 @@ var authProfileUseCmd = &cobra.Command{
 	Use:   "use <name>",
 	Short: "Switch active profile",
 	Args:  cobra.ExactArgs(1),
-	RunE: func(_ *cobra.Command, args []string) error {
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if done, err := prepareWrite(cmd, "use profile", map[string]any{"name": args[0]}); done || err != nil {
+			return err
+		}
 		if err := config.UseProfile(args[0]); err != nil {
 			return failArg(err.Error())
 		}
@@ -92,7 +94,10 @@ var authProfileRemoveCmd = &cobra.Command{
 	Use:   "remove <name>",
 	Short: "Remove a saved profile",
 	Args:  cobra.ExactArgs(1),
-	RunE: func(_ *cobra.Command, args []string) error {
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if done, err := prepareWrite(cmd, "remove profile", map[string]any{"name": args[0]}); done || err != nil {
+			return err
+		}
 		if err := config.DeleteProfile(args[0]); err != nil {
 			return failArg(err.Error())
 		}
@@ -141,13 +146,17 @@ func runAuthProfileList(_ *cobra.Command, _ []string) error {
 		items := make([]map[string]any, 0, len(names))
 		for _, n := range names {
 			c := pf.Profiles[n]
-			items = append(items, map[string]any{
+			items = append(items, output.MarkUntrusted(map[string]any{
 				"name":   n,
 				"host":   c.Host,
 				"active": n == pf.Active,
-			})
+			}, "name", "host"))
 		}
-		output.PrintJSON(map[string]any{"active": pf.Active, "profiles": items})
+		output.PrintJSON(output.NewListEnvelope(items, output.ListMeta{
+			Count:   len(items),
+			Limit:   len(items),
+			HasMore: false,
+		}))
 		return nil
 	}
 	output.Info(fmt.Sprintf("Active profile: %s", pf.Active))
@@ -162,7 +171,7 @@ func runAuthProfileList(_ *cobra.Command, _ []string) error {
 	return nil
 }
 
-func runAuthLogin(_ *cobra.Command, _ []string) error {
+func runAuthLogin(cmd *cobra.Command, _ []string) error {
 	// Non-interactive mode: both --host and --token provided
 	if authLoginHostFlag != "" && authLoginTokenFlag != "" {
 		host := strings.TrimSpace(authLoginHostFlag)
@@ -174,8 +183,8 @@ func runAuthLogin(_ *cobra.Command, _ []string) error {
 			return failArg("token cannot be empty")
 		}
 
-		if dryRunOutput("save credentials", map[string]any{"host": host}) {
-			return nil
+		if done, err := prepareWrite(cmd, "save credentials", map[string]any{"host": host}); done || err != nil {
+			return err
 		}
 
 		cfg := &config.Config{Host: host, Token: token}
@@ -190,13 +199,13 @@ func runAuthLogin(_ *cobra.Command, _ []string) error {
 		}
 
 		if jsonMode {
-			output.PrintJSON(map[string]any{
+			output.PrintJSON(output.MarkUntrusted(map[string]any{
 				"status":   "ok",
 				"username": me.Username,
 				"name":     me.Name,
 				"host":     host,
 				"profile":  authLoginProfileFlag,
-			})
+			}, "username", "name"))
 			return nil
 		}
 		output.Success(fmt.Sprintf("Logged in as %s (%s)", me.Name, me.Username))
@@ -209,8 +218,8 @@ func runAuthLogin(_ *cobra.Command, _ []string) error {
 		if !strings.HasPrefix(host, "https://") && !strings.HasPrefix(host, "http://") {
 			return failArg("host must start with https:// (or http:// for local development)")
 		}
-		if dryRunOutput("save credentials", map[string]any{"host": host}) {
-			return nil
+		if done, err := prepareWrite(cmd, "save credentials", map[string]any{"host": host}); done || err != nil {
+			return err
 		}
 	}
 
@@ -258,8 +267,8 @@ func runAuthLogin(_ *cobra.Command, _ []string) error {
 	}
 
 	output.Gray("  Verifying credentials...")
-	if dryRunOutput("save credentials", map[string]any{"host": host}) {
-		return nil
+	if done, err := prepareWrite(cmd, "save credentials", map[string]any{"host": host}); done || err != nil {
+		return err
 	}
 	cfg := &config.Config{Host: host, Token: token}
 	client := api.NewClient(cfg)
@@ -281,9 +290,9 @@ func runAuthLogin(_ *cobra.Command, _ []string) error {
 	return nil
 }
 
-func runAuthLogout(_ *cobra.Command, _ []string) error {
-	if dryRunOutput("delete credentials", map[string]any{"path": config.FilePath()}) {
-		return nil
+func runAuthLogout(cmd *cobra.Command, _ []string) error {
+	if done, err := prepareWrite(cmd, "delete credentials", map[string]any{"path": config.FilePath()}); done || err != nil {
+		return err
 	}
 	if err := config.ClearStoredCredentials(); err != nil {
 		return failWithCode("failed to remove credentials: "+err.Error(), ExitNetwork, output.ErrNetwork)
@@ -313,16 +322,12 @@ func authStatusSource() (string, error) {
 			return "profile", nil
 		}
 	}
-	data, err := os.ReadFile(config.FilePath())
+	fileCfg, exists, err := config.LoadStoredConfig()
 	if err != nil {
-		if os.IsNotExist(err) {
-			return "none", nil
-		}
 		return "", err
 	}
-	var fileCfg config.Config
-	if err := json.Unmarshal(data, &fileCfg); err != nil {
-		return "", fmt.Errorf("parsing config %s: %w", config.FilePath(), err)
+	if !exists {
+		return "none", nil
 	}
 	if fileCfg.Host != "" && strings.TrimSpace(fileCfg.Token) != "" {
 		return "file", nil

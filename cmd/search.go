@@ -80,7 +80,7 @@ var searchProjectsCmd = &cobra.Command{
 			for i, r := range results {
 				out[i] = output.FilterMap(output.SearchProjectToMap(output.ToFlatSearchProject(&r)), fields)
 			}
-			output.PrintJSON(out)
+			printSimpleListJSON(cmd, out, limit)
 			return nil
 		}
 		if len(results) == 0 {
@@ -128,7 +128,7 @@ var searchIssuesCmd = &cobra.Command{
 			for i, r := range results {
 				out[i] = output.FilterMap(output.SearchIssueToMap(output.ToFlatSearchIssue(&r)), fields)
 			}
-			output.PrintJSON(out)
+			printSimpleListJSON(cmd, out, limit)
 			return nil
 		}
 		if len(results) == 0 {
@@ -181,7 +181,7 @@ var searchMRsCmd = &cobra.Command{
 			for i, r := range results {
 				out[i] = output.FilterMap(output.SearchMRToMap(output.ToFlatSearchMR(&r)), fields)
 			}
-			output.PrintJSON(out)
+			printSimpleListJSON(cmd, out, limit)
 			return nil
 		}
 		if len(results) == 0 {
@@ -237,7 +237,7 @@ var searchCodeCmd = &cobra.Command{
 			for i, r := range results {
 				out[i] = output.FilterMap(output.SearchBlobToMap(output.ToFlatSearchBlob(&r)), fields)
 			}
-			output.PrintJSON(out)
+			printSimpleListJSON(cmd, out, limit)
 			return nil
 		}
 		if len(results) == 0 {
@@ -285,7 +285,7 @@ var searchCommitsCmd = &cobra.Command{
 			for i, r := range results {
 				out[i] = output.FilterMap(output.SearchCommitToMap(output.ToFlatSearchCommit(&r)), fields)
 			}
-			output.PrintJSON(out)
+			printSimpleListJSON(cmd, out, limit)
 			return nil
 		}
 		if len(results) == 0 {

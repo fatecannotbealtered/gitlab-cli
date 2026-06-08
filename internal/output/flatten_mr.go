@@ -34,8 +34,8 @@ func ToFlatMR(mr *api.MergeRequest) FlatMR {
 
 // MRToMap converts a FlatMR to a map for field filtering.
 func MRToMap(m FlatMR) map[string]any {
-	return map[string]any{
-		"iid":    m.IID,
+	return MarkUntrusted(map[string]any{
+		"iid":    ID(m.IID),
 		"title":  m.Title,
 		"state":  m.State,
 		"source": m.Source,
@@ -43,7 +43,7 @@ func MRToMap(m FlatMR) map[string]any {
 		"author": m.Author,
 		"webUrl": m.WebURL,
 		"draft":  m.Draft,
-	}
+	}, "title")
 }
 
 // FlatMRNote is a token-efficient representation of a GitLab MR note.
@@ -70,10 +70,10 @@ func ToFlatMRNote(n *api.MergeRequestNote) FlatMRNote {
 
 // MRNoteToMap converts a FlatMRNote to a map for field filtering.
 func MRNoteToMap(n FlatMRNote) map[string]any {
-	return map[string]any{
-		"id":      n.ID,
+	return MarkUntrusted(map[string]any{
+		"id":      ID(n.ID),
 		"author":  n.Author,
 		"body":    n.Body,
 		"created": n.Created,
-	}
+	}, "body")
 }

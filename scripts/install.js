@@ -101,13 +101,13 @@ function install() {
         verifyChecksum(archivePath, expectedHash);
         console.log("✔ Checksum verified");
       } else {
-        console.warn("Warning: archive not found in checksums.txt, skipping verification");
+        throw new Error(`archive ${archiveName} not found in checksums.txt`);
       }
     } catch (checksumErr) {
       if (checksumErr.message.includes("Checksum mismatch")) {
         throw checksumErr;
       }
-      console.warn("Warning: could not verify checksum —", checksumErr.message);
+      throw new Error(`could not verify checksum: ${checksumErr.message}`);
     }
 
     // Extract binary

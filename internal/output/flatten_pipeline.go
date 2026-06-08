@@ -18,13 +18,13 @@ type FlatPipeline struct {
 // PipelineToMap converts a FlatPipeline to a map for field filtering.
 func PipelineToMap(p FlatPipeline) map[string]any {
 	m := map[string]any{
-		"id":     p.ID,
-		"iid":    p.IID,
+		"id":     ID(p.ID),
+		"iid":    ID(p.IID),
 		"ref":    p.Ref,
 		"status": p.Status,
 	}
 	if p.ProjectID != 0 {
-		m["projectId"] = p.ProjectID
+		m["projectId"] = ID(p.ProjectID)
 	}
 	if p.SHA != "" {
 		m["sha"] = p.SHA
@@ -44,7 +44,7 @@ func PipelineToMap(p FlatPipeline) map[string]any {
 	if p.Username != "" {
 		m["username"] = p.Username
 	}
-	return m
+	return MarkUntrusted(m, "ref")
 }
 
 // FlatJob is a token-efficient representation of a GitLab CI job.
@@ -66,7 +66,7 @@ type FlatJob struct {
 // JobToMap converts a FlatJob to a map for field filtering.
 func JobToMap(j FlatJob) map[string]any {
 	m := map[string]any{
-		"id":     j.ID,
+		"id":     ID(j.ID),
 		"name":   j.Name,
 		"status": j.Status,
 	}
@@ -95,7 +95,7 @@ func JobToMap(j FlatJob) map[string]any {
 		m["username"] = j.Username
 	}
 	if j.PipelineID != 0 {
-		m["pipelineId"] = j.PipelineID
+		m["pipelineId"] = ID(j.PipelineID)
 	}
-	return m
+	return MarkUntrusted(m, "name", "stage", "ref")
 }

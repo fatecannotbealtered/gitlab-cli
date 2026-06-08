@@ -14,14 +14,14 @@ type FlatBranch struct {
 
 // BranchToMap converts a FlatBranch to a map for field filtering.
 func BranchToMap(b FlatBranch) map[string]any {
-	return map[string]any{
+	return MarkUntrusted(map[string]any{
 		"name":      b.Name,
 		"default":   b.Default,
 		"protected": b.Protected,
 		"merged":    b.Merged,
 		"webUrl":    b.WebURL,
 		"commitId":  b.CommitID,
-	}
+	}, "name")
 }
 
 // ToFlatBranch converts an api.Branch to a FlatBranch.
@@ -52,7 +52,7 @@ type FlatCommit struct {
 
 // CommitToMap converts a FlatCommit to a map for field filtering.
 func CommitToMap(c FlatCommit) map[string]any {
-	return map[string]any{
+	return MarkUntrusted(map[string]any{
 		"id":            c.ID,
 		"shortId":       c.ShortID,
 		"title":         c.Title,
@@ -60,7 +60,7 @@ func CommitToMap(c FlatCommit) map[string]any {
 		"authoredDate":  c.AuthoredDate,
 		"committedDate": c.CommittedDate,
 		"webUrl":        c.WebURL,
-	}
+	}, "title", "authorName")
 }
 
 // ToFlatCommit converts an api.Commit to a FlatCommit.
@@ -87,13 +87,13 @@ type FlatTreeEntry struct {
 
 // TreeEntryToMap converts a FlatTreeEntry to a map for field filtering.
 func TreeEntryToMap(e FlatTreeEntry) map[string]any {
-	return map[string]any{
+	return MarkUntrusted(map[string]any{
 		"id":   e.ID,
 		"name": e.Name,
 		"type": e.Type,
 		"path": e.Path,
 		"mode": e.Mode,
-	}
+	}, "name", "path")
 }
 
 // ToFlatTreeEntry converts an api.TreeEntry to a FlatTreeEntry.

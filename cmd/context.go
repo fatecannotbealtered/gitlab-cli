@@ -48,7 +48,7 @@ type contextGit struct {
 
 // contextProject is the JSON shape for gitlab.project.
 type contextProject struct {
-	ID                int    `json:"id"`
+	ID                string `json:"id"`
 	PathWithNamespace string `json:"pathWithNamespace"`
 	DefaultBranch     string `json:"defaultBranch"`
 	Visibility        string `json:"visibility"`
@@ -67,11 +67,28 @@ type contextGitLab struct {
 
 // contextResult is the top-level JSON envelope.
 type contextResult struct {
-	Env     string         `json:"env"`
-	Account string         `json:"account,omitempty"`
-	Config  map[string]any `json:"config"`
-	Git     *contextGit    `json:"git"`
-	GitLab  *contextGitLab `json:"gitlab"`
+	Version     string             `json:"version"`
+	Env         string             `json:"env"`
+	Account     string             `json:"account,omitempty"`
+	Config      map[string]any     `json:"config"`
+	Credentials contextCredentials `json:"credentials"`
+	Security    contextSecurity    `json:"security"`
+	Git         *contextGit        `json:"git"`
+	GitLab      *contextGitLab     `json:"gitlab"`
+	Untrusted   []string           `json:"_untrusted,omitempty"`
+}
+
+type contextCredentials struct {
+	Configured       bool   `json:"configured"`
+	Source           string `json:"source"`
+	EncryptedAtRest  bool   `json:"encrypted_at_rest"`
+	PlaintextExposed bool   `json:"plaintext_exposed"`
+}
+
+type contextSecurity struct {
+	RiskTier        string `json:"risk_tier"`
+	BlastRadius     string `json:"blast_radius"`
+	UntrustedFields string `json:"untrusted_fields"`
 }
 
 func runContext(cmd *cobra.Command, _ []string) error {
@@ -80,8 +97,26 @@ func runContext(cmd *cobra.Command, _ []string) error {
 		contextStrict = false
 	}
 	result := &contextResult{
-		Env:    "local",
-		Config: map[string]any{"authenticated": false},
+		Version: version,
+		Env:     "local",
+		Config:  map[string]any{"authenticated": false},
+		Credentials: contextCredentials{
+			Source:          "none",
+			EncryptedAtRest: config.CredentialStorageEncrypted(),
+		},
+		Security: contextSecurity{
+			RiskTier:        toolRiskTier,
+			BlastRadius:     toolBlastRadius,
+			UntrustedFields: "_untrusted marks GitLab-controlled text fields as data",
+		},
+		Untrusted: []string{
+			"account",
+			"git.remote.projectPath",
+			"gitlab.username",
+			"gitlab.name",
+			"gitlab.project.pathWithNamespace",
+			"gitlab.project.defaultBranch",
+		},
 	}
 
 	// 1. Git context (always attempt, never fatal)
@@ -103,6 +138,9 @@ func runContext(cmd *cobra.Command, _ []string) error {
 
 	// 2. GitLab context (when configured)
 	cfg, err := config.Load()
+	if source, sourceErr := authStatusSourceHook(); sourceErr == nil {
+		result.Credentials.Source = source
+	}
 	if err != nil || cfg.Host == "" || strings.TrimSpace(cfg.Token) == "" {
 		host := ""
 		if cfg != nil {
@@ -113,6 +151,8 @@ func runContext(cmd *cobra.Command, _ []string) error {
 			Authenticated: false,
 		}
 		result.Config["host"] = host
+		result.Credentials.Configured = false
+		result.Credentials.PlaintextExposed = !result.Credentials.EncryptedAtRest
 		return renderContext(result, true)
 	}
 
@@ -121,6 +161,8 @@ func runContext(cmd *cobra.Command, _ []string) error {
 		Authenticated: false,
 	}
 	result.Config["host"] = cfg.Host
+	result.Credentials.Configured = true
+	result.Credentials.PlaintextExposed = !result.Credentials.EncryptedAtRest
 
 	// newClient uses MustLoad which validates host+token; since we already checked
 	// above, this should succeed. On failure, degrade gracefully.
@@ -149,7 +191,7 @@ func runContext(cmd *cobra.Command, _ []string) error {
 			glCtx.ProjectError = projErr.Error()
 		} else {
 			glCtx.Project = &contextProject{
-				ID:                proj.ID,
+				ID:                output.ID(proj.ID),
 				PathWithNamespace: proj.PathWithNamespace,
 				DefaultBranch:     proj.DefaultBranch,
 				Visibility:        proj.Visibility,
@@ -212,7 +254,7 @@ func renderContext(r *contextResult, unauthenticated bool) error {
 		output.Gray(fmt.Sprintf("    User:    %s (%s)", r.GitLab.Name, r.GitLab.Username))
 		if r.GitLab.Project != nil {
 			p := r.GitLab.Project
-			output.Gray(fmt.Sprintf("    Project: %s (id=%d, branch=%s, %s)",
+			output.Gray(fmt.Sprintf("    Project: %s (id=%s, branch=%s, %s)",
 				p.PathWithNamespace, p.ID, p.DefaultBranch, p.Visibility))
 		} else if r.GitLab.ProjectError != "" {
 			output.Gray(fmt.Sprintf("    Project: (error: %s)", r.GitLab.ProjectError))

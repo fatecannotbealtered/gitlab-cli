@@ -217,7 +217,7 @@ func TestAuth_ProfileList_JSON(t *testing.T) {
 	if lastExit != ExitOK {
 		t.Errorf("expected exit 0, got %d", lastExit)
 	}
-	if !strings.Contains(out, `"active": "work"`) || !strings.Contains(out, `"name": "work"`) {
+	if !strings.Contains(out, `"items"`) || !strings.Contains(out, `"name": "work"`) || !strings.Contains(out, `"active": true`) {
 		t.Errorf("expected profile list JSON, got:\n%s", out)
 	}
 }
@@ -284,12 +284,14 @@ func TestAuth_Login_NonInteractive_Success(t *testing.T) {
 	lastExit = 0
 
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{
+		args := []string{
 			"auth", "login",
 			"--host", srv.URL,
 			"--token", "secret",
 			"--profile", "work",
-		})
+		}
+		args = append(args, confirmArgsForTest(t, "save credentials", map[string]any{"host": srv.URL})...)
+		rootCmd.SetArgs(args)
 		_ = rootCmd.Execute()
 	})
 
@@ -321,12 +323,14 @@ func TestAuth_Login_NonInteractive_JSON(t *testing.T) {
 	lastExit = 0
 
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{
+		args := []string{
 			"auth", "login",
 			"--host", srv.URL,
 			"--token", "secret",
 			"--json",
-		})
+		}
+		args = append(args, confirmArgsForTest(t, "save credentials", map[string]any{"host": srv.URL})...)
+		rootCmd.SetArgs(args)
 		_ = rootCmd.Execute()
 	})
 
@@ -384,7 +388,9 @@ func TestAuth_Login_NonInteractive_APIError(t *testing.T) {
 	defer func() { lastExit = origExit }()
 	lastExit = 0
 
-	rootCmd.SetArgs([]string{"auth", "login", "--host", srv.URL, "--token", "bad", "--json"})
+	args := []string{"auth", "login", "--host", srv.URL, "--token", "bad", "--json"}
+	args = append(args, confirmArgsForTest(t, "save credentials", map[string]any{"host": srv.URL})...)
+	rootCmd.SetArgs(args)
 	_ = rootCmd.Execute()
 
 	if lastExit != ExitAuth {
@@ -405,7 +411,9 @@ func TestAuth_Login_NonInteractive_SaveError(t *testing.T) {
 	defer func() { lastExit = origExit }()
 	lastExit = 0
 
-	rootCmd.SetArgs([]string{"auth", "login", "--host", srv.URL, "--token", "secret", "--json"})
+	args := []string{"auth", "login", "--host", srv.URL, "--token", "secret", "--json"}
+	args = append(args, confirmArgsForTest(t, "save credentials", map[string]any{"host": srv.URL})...)
+	rootCmd.SetArgs(args)
 	_ = rootCmd.Execute()
 
 	if lastExit != ExitNetwork {
@@ -428,7 +436,9 @@ func TestAuth_Login_Interactive_Success(t *testing.T) {
 	lastExit = 0
 
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"auth", "login", "--host", srv.URL})
+		args := []string{"auth", "login", "--host", srv.URL}
+		args = append(args, confirmArgsForTest(t, "save credentials", map[string]any{"host": srv.URL})...)
+		rootCmd.SetArgs(args)
 		_ = rootCmd.Execute()
 	})
 
@@ -454,7 +464,9 @@ func TestAuth_Login_Interactive_ReadHostFromStdin(t *testing.T) {
 	defer func() { lastExit = origExit }()
 	lastExit = 0
 
-	rootCmd.SetArgs([]string{"auth", "login"})
+	args := []string{"auth", "login"}
+	args = append(args, confirmArgsForTest(t, "save credentials", map[string]any{"host": srv.URL})...)
+	rootCmd.SetArgs(args)
 	_ = rootCmd.Execute()
 
 	if lastExit != ExitOK {
@@ -536,7 +548,9 @@ func TestAuth_Login_Interactive_APIError(t *testing.T) {
 	defer func() { lastExit = origExit }()
 	lastExit = 0
 
-	rootCmd.SetArgs([]string{"auth", "login", "--host", srv.URL})
+	args := []string{"auth", "login", "--host", srv.URL}
+	args = append(args, confirmArgsForTest(t, "save credentials", map[string]any{"host": srv.URL})...)
+	rootCmd.SetArgs(args)
 	_ = rootCmd.Execute()
 
 	if lastExit != ExitForbidden {
@@ -559,7 +573,9 @@ func TestAuth_Login_Interactive_SaveError(t *testing.T) {
 	defer func() { lastExit = origExit }()
 	lastExit = 0
 
-	rootCmd.SetArgs([]string{"auth", "login", "--host", srv.URL})
+	args := []string{"auth", "login", "--host", srv.URL}
+	args = append(args, confirmArgsForTest(t, "save credentials", map[string]any{"host": srv.URL})...)
+	rootCmd.SetArgs(args)
 	_ = rootCmd.Execute()
 
 	if lastExit != ExitNetwork {
@@ -579,7 +595,9 @@ func TestAuth_Logout_Success_JSON(t *testing.T) {
 	lastExit = 0
 
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"auth", "logout", "--json"})
+		args := []string{"auth", "logout", "--json"}
+		args = append(args, confirmArgsForTest(t, "delete credentials", map[string]any{"path": config.FilePath()})...)
+		rootCmd.SetArgs(args)
 		_ = rootCmd.Execute()
 	})
 
@@ -606,7 +624,9 @@ func TestAuth_Logout_Success_PlainText(t *testing.T) {
 	lastExit = 0
 
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"auth", "logout"})
+		args := []string{"auth", "logout"}
+		args = append(args, confirmArgsForTest(t, "delete credentials", map[string]any{"path": config.FilePath()})...)
+		rootCmd.SetArgs(args)
 		_ = rootCmd.Execute()
 	})
 
@@ -628,7 +648,9 @@ func TestAuth_Logout_RemoveError(t *testing.T) {
 	defer func() { lastExit = origExit }()
 	lastExit = 0
 
-	rootCmd.SetArgs([]string{"auth", "logout", "--json"})
+	args := []string{"auth", "logout", "--json"}
+	args = append(args, confirmArgsForTest(t, "delete credentials", map[string]any{"path": config.FilePath()})...)
+	rootCmd.SetArgs(args)
 	_ = rootCmd.Execute()
 
 	if lastExit != ExitNetwork {
@@ -962,7 +984,9 @@ func TestAuth_Login_NonInteractive_PlainText(t *testing.T) {
 	setTextFormatForTest(t)
 
 	captureCombinedOutput(t, func() {
-		rootCmd.SetArgs([]string{"auth", "login", "--host", srv.URL, "--token", "secret-token"})
+		args := []string{"auth", "login", "--host", srv.URL, "--token", "secret-token"}
+		args = append(args, confirmArgsForTest(t, "save credentials", map[string]any{"host": srv.URL})...)
+		rootCmd.SetArgs(args)
 		_ = rootCmd.Execute()
 	})
 }
@@ -982,7 +1006,9 @@ func TestAuth_Login_Interactive_NonTTY_TokenLine(t *testing.T) {
 	withStdinInput(t, "line-token\n")
 
 	captureCombinedOutput(t, func() {
-		rootCmd.SetArgs([]string{"auth", "login", "--host", srv.URL})
+		args := []string{"auth", "login", "--host", srv.URL}
+		args = append(args, confirmArgsForTest(t, "save credentials", map[string]any{"host": srv.URL})...)
+		rootCmd.SetArgs(args)
 		_ = rootCmd.Execute()
 	})
 
@@ -1010,7 +1036,9 @@ func TestAuth_Login_Interactive_PromptHost(t *testing.T) {
 	withStdinInput(t, srv.URL+"\nsecret-token\n")
 
 	captureCombinedOutput(t, func() {
-		rootCmd.SetArgs([]string{"auth", "login"})
+		args := []string{"auth", "login"}
+		args = append(args, confirmArgsForTest(t, "save credentials", map[string]any{"host": srv.URL})...)
+		rootCmd.SetArgs(args)
 		_ = rootCmd.Execute()
 	})
 }
@@ -1077,7 +1105,9 @@ func TestAuth_ProfileUse_PlainText(t *testing.T) {
 	setTextFormatForTest(t)
 
 	out := captureCombinedOutput(t, func() {
-		rootCmd.SetArgs([]string{"auth", "profile", "use", "work"})
+		args := []string{"auth", "profile", "use", "work"}
+		args = append(args, confirmArgsForTest(t, "use profile", map[string]any{"name": "work"})...)
+		rootCmd.SetArgs(args)
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, "Active profile: work") {
@@ -1099,7 +1129,9 @@ func TestAuth_ProfileRemove_PlainText(t *testing.T) {
 	setTextFormatForTest(t)
 
 	out := captureCombinedOutput(t, func() {
-		rootCmd.SetArgs([]string{"auth", "profile", "remove", "work"})
+		args := []string{"auth", "profile", "remove", "work"}
+		args = append(args, confirmArgsForTest(t, "remove profile", map[string]any{"name": "work"})...)
+		rootCmd.SetArgs(args)
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, "Removed profile: work") {

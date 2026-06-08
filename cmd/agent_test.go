@@ -125,7 +125,7 @@ func TestAgentSafe_ShowValuesRejected(t *testing.T) {
 	lastExit = 0
 	jsonMode = true
 
-	stdout := captureStdout(t, func() {
+	stderr := captureStderr(t, func() {
 		rootCmd.SetArgs([]string{
 			"variable", "list",
 			"--project", "group/proj",
@@ -137,8 +137,8 @@ func TestAgentSafe_ShowValuesRejected(t *testing.T) {
 	if lastExit != ExitBadArgs {
 		t.Errorf("exit code = %d, want %d", lastExit, ExitBadArgs)
 	}
-	if !strings.Contains(stdout, "show-values") {
-		t.Errorf("stdout missing show-values rejection:\n%s", stdout)
+	if !strings.Contains(stderr, "show-values") {
+		t.Errorf("stderr missing show-values rejection:\n%s", stderr)
 	}
 }
 
@@ -156,7 +156,7 @@ func TestAgentSafe_ForceRejected(t *testing.T) {
 	lastExit = 0
 	jsonMode = true
 
-	stdout := captureStdout(t, func() {
+	stderr := captureStderr(t, func() {
 		rootCmd.SetArgs([]string{
 			"repo", "branch", "delete",
 			"--project", "group/proj", "--name", "feat/x",
@@ -168,9 +168,9 @@ func TestAgentSafe_ForceRejected(t *testing.T) {
 	if lastExit != ExitBadArgs {
 		t.Errorf("exit code = %d, want %d (ExitBadArgs)", lastExit, ExitBadArgs)
 	}
-	for _, want := range []string{`"code": "E_BAD_ARGS"`, "--force", "--dry-run", "--confirm"} {
-		if !strings.Contains(stdout, want) {
-			t.Errorf("stdout missing %q, got:\n%s", want, stdout)
+	for _, want := range []string{`"code": "E_VALIDATION"`, "--force", "--dry-run", "--confirm"} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("stderr missing %q, got:\n%s", want, stderr)
 		}
 	}
 }

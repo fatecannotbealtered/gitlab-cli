@@ -53,7 +53,7 @@ var pipelineListCmd = &cobra.Command{
 				fp := toFlatPipeline(&p)
 				flat[i] = output.FilterMap(output.PipelineToMap(fp), fields)
 			}
-			output.PrintJSON(flat)
+			printSimpleListJSON(cmd, flat, limit)
 			return nil
 		}
 		if len(pipelines) == 0 {
@@ -166,10 +166,7 @@ var pipelineCreateCmd = &cobra.Command{
 		}
 
 		confirmPayload := map[string]any{"project": project, "ref": ref, "variables": varFlags}
-		if dryRunOutput("create pipeline", confirmPayload) {
-			return nil
-		}
-		if err := requireConfirm(cmd, "create pipeline", confirmPayload); err != nil {
+		if done, err := prepareWrite(cmd, "create pipeline", confirmPayload); done || err != nil {
 			return err
 		}
 
@@ -204,8 +201,8 @@ var pipelineRetryCmd = &cobra.Command{
 		if err != nil {
 			return failArg("pipeline_id must be an integer")
 		}
-		if dryRunOutput("retry pipeline", map[string]any{"project": project, "pipeline_id": pipelineID}) {
-			return nil
+		if done, err := prepareWrite(cmd, "retry pipeline", map[string]any{"project": project, "pipeline_id": pipelineID}); done || err != nil {
+			return err
 		}
 		client, _, err := newClient()
 		if err != nil {
@@ -238,10 +235,7 @@ var pipelineCancelCmd = &cobra.Command{
 			return failArg("pipeline_id must be an integer")
 		}
 		confirmPayload := map[string]any{"project": project, "pipeline_id": pipelineID}
-		if dryRunOutput("cancel pipeline", confirmPayload) {
-			return nil
-		}
-		if err := requireConfirm(cmd, "cancel pipeline", confirmPayload); err != nil {
+		if done, err := prepareWrite(cmd, "cancel pipeline", confirmPayload); done || err != nil {
 			return err
 		}
 		client, _, err := newClient()
@@ -294,7 +288,7 @@ var pipelineJobsCmd = &cobra.Command{
 			for i, j := range jobs {
 				flat[i] = output.FilterMap(output.JobToMap(toFlatJob(&j)), fields)
 			}
-			output.PrintJSON(flat)
+			printSimpleListJSON(cmd, flat, len(flat))
 			return nil
 		}
 		if len(jobs) == 0 {

@@ -62,8 +62,8 @@ var issueCommentAddCmd = &cobra.Command{
 		if body == "" {
 			return failArg("--body or --body-file is required")
 		}
-		if dryRunOutput("add comment", map[string]any{"project": project, "iid": iid, "body": body}) {
-			return nil
+		if done, err := prepareWrite(cmd, "add comment", map[string]any{"project": project, "iid": iid, "body": body}); done || err != nil {
+			return err
 		}
 		client, _, err := newClient()
 		if err != nil {
@@ -74,10 +74,10 @@ var issueCommentAddCmd = &cobra.Command{
 			return handleAPIError(err, jsonMode)
 		}
 		if jsonMode {
-			output.PrintJSON(map[string]any{
-				"id":   note.ID,
+			output.PrintJSON(output.MarkUntrusted(map[string]any{
+				"id":   output.ID(note.ID),
 				"body": note.Body,
-			})
+			}, "body"))
 			return nil
 		}
 		output.Success(fmt.Sprintf("Added comment #%d to issue #%d", note.ID, iid))
@@ -117,13 +117,13 @@ var issueCommentListCmd = &cobra.Command{
 				if n.System {
 					continue
 				}
-				m := map[string]any{"id": n.ID, "body": n.Body}
+				m := output.MarkUntrusted(map[string]any{"id": output.ID(n.ID), "body": n.Body}, "body")
 				if n.Author != nil {
 					m["author"] = n.Author.Username
 				}
 				out = append(out, output.FilterMap(m, fields))
 			}
-			output.PrintJSON(out)
+			printSimpleListJSON(cmd, out, limit)
 			return nil
 		}
 		if len(notes) == 0 {
@@ -169,21 +169,18 @@ var issueCommentDeleteCmd = &cobra.Command{
 			return failArg("--note-id is required")
 		}
 		confirmPayload := map[string]any{"project": project, "iid": iid, "noteId": noteID}
-		if dryRunOutput("delete comment", confirmPayload) {
-			return nil
+		if done, err := prepareWrite(cmd, "delete comment", confirmPayload); done || err != nil {
+			return err
 		}
 		client, _, err := newClient()
 		if err != nil {
-			return err
-		}
-		if err := requireConfirm(cmd, "delete comment", confirmPayload); err != nil {
 			return err
 		}
 		if err := client.Issues.DeleteNote(apiCtx(), project, iid, noteID); err != nil {
 			return handleAPIError(err, jsonMode)
 		}
 		if jsonMode {
-			output.PrintJSON(map[string]any{"deleted": true, "noteId": noteID})
+			output.PrintJSON(map[string]any{"deleted": true, "noteId": output.ID(noteID)})
 			return nil
 		}
 		output.Success(fmt.Sprintf("Deleted comment #%d", noteID))

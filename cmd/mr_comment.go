@@ -66,8 +66,8 @@ var mrCommentAddCmd = &cobra.Command{
 			return failArg("--body or --body-file is required")
 		}
 
-		if dryRunOutput("add mr comment", map[string]any{"project": project, "iid": iid, "body": body}) {
-			return nil
+		if done, err := prepareWrite(cmd, "add mr comment", map[string]any{"project": project, "iid": iid, "body": body}); done || err != nil {
+			return err
 		}
 
 		client, _, err := newClient()
@@ -121,7 +121,7 @@ var mrCommentListCmd = &cobra.Command{
 					out = append(out, output.FilterMap(output.MRNoteToMap(output.ToFlatMRNote(&n)), fields))
 				}
 			}
-			output.PrintJSON(out)
+			printSimpleListJSON(cmd, out, limit)
 			return nil
 		}
 		if len(notes) == 0 {
@@ -168,11 +168,7 @@ var mrCommentDeleteCmd = &cobra.Command{
 		}
 
 		confirmPayload := map[string]any{"project": project, "iid": iid, "noteId": noteID}
-		if dryRunOutput("delete mr comment", confirmPayload) {
-			return nil
-		}
-
-		if err := requireConfirm(cmd, "delete mr comment", confirmPayload); err != nil {
+		if done, err := prepareWrite(cmd, "delete mr comment", confirmPayload); done || err != nil {
 			return err
 		}
 
@@ -184,7 +180,7 @@ var mrCommentDeleteCmd = &cobra.Command{
 			return handleAPIError(err, jsonMode)
 		}
 		if jsonMode {
-			output.PrintJSON(map[string]any{"deleted": true, "noteId": noteID})
+			output.PrintJSON(map[string]any{"deleted": true, "noteId": output.ID(noteID)})
 			return nil
 		}
 		output.Success(fmt.Sprintf("Deleted comment #%d from MR !%d", noteID, iid))

@@ -46,7 +46,7 @@ var releaseListCmd = &cobra.Command{
 				r := r
 				flat[i] = output.FilterMap(output.ReleaseToMap(output.ToFlatRelease(&r)), fields)
 			}
-			output.PrintJSON(flat)
+			printSimpleListJSON(cmd, flat, limit)
 			return nil
 		}
 		if len(releases) == 0 {
@@ -90,7 +90,7 @@ var releaseGetCmd = &cobra.Command{
 		}
 
 		if jsonMode {
-			output.PrintJSON(output.ToFlatRelease(r))
+			output.PrintJSON(output.ReleaseToMap(output.ToFlatRelease(r)))
 			return nil
 		}
 		author := ""
@@ -127,10 +127,10 @@ var releaseCreateCmd = &cobra.Command{
 
 		milestones := parseMilestones(milestoneStr)
 
-		if dryRunOutput("release create", map[string]any{
+		if done, err := prepareWrite(cmd, "release create", map[string]any{
 			"project": project, "tag": tag, "name": name,
-		}) {
-			return nil
+		}); done || err != nil {
+			return err
 		}
 
 		client, _, err := newClient()
@@ -150,7 +150,7 @@ var releaseCreateCmd = &cobra.Command{
 		}
 
 		if jsonMode {
-			output.PrintJSON(output.ToFlatRelease(r))
+			output.PrintJSON(output.ReleaseToMap(output.ToFlatRelease(r)))
 			return nil
 		}
 		output.Success(fmt.Sprintf("Created release %s (%s)", r.Name, r.TagName))
@@ -176,10 +176,10 @@ var releaseUpdateCmd = &cobra.Command{
 
 		milestones := parseMilestones(milestoneStr)
 
-		if dryRunOutput("release update", map[string]any{
+		if done, err := prepareWrite(cmd, "release update", map[string]any{
 			"project": project, "tag": tag,
-		}) {
-			return nil
+		}); done || err != nil {
+			return err
 		}
 
 		client, _, err := newClient()
@@ -197,7 +197,7 @@ var releaseUpdateCmd = &cobra.Command{
 		}
 
 		if jsonMode {
-			output.PrintJSON(output.ToFlatRelease(r))
+			output.PrintJSON(output.ReleaseToMap(output.ToFlatRelease(r)))
 			return nil
 		}
 		output.Success(fmt.Sprintf("Updated release %s (%s)", r.Name, r.TagName))
@@ -219,11 +219,7 @@ var releaseDeleteCmd = &cobra.Command{
 		}
 
 		confirmPayload := map[string]any{"project": project, "tag": tag}
-		if dryRunOutput("release delete", confirmPayload) {
-			return nil
-		}
-
-		if err := requireConfirm(cmd, "release delete", confirmPayload); err != nil {
+		if done, err := prepareWrite(cmd, "release delete", confirmPayload); done || err != nil {
 			return err
 		}
 
@@ -237,7 +233,7 @@ var releaseDeleteCmd = &cobra.Command{
 		}
 
 		if jsonMode {
-			output.PrintJSON(map[string]any{"tag": tag, "action": "deleted"})
+			output.PrintJSON(output.MarkUntrusted(map[string]any{"tag": tag, "action": "deleted"}, "tag"))
 			return nil
 		}
 		output.Success(fmt.Sprintf("Deleted release %s", tag))

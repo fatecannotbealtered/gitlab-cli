@@ -65,21 +65,19 @@ func Load() (*Config, error) {
 		cfg.Token = prof.Token
 	}
 
-	// 1. Legacy config file (lowest precedence among stored creds)
-	data, err := os.ReadFile(FilePath())
-	if err == nil {
-		fileCfg := &Config{}
-		if jsonErr := json.Unmarshal(data, fileCfg); jsonErr != nil {
-			return nil, fmt.Errorf("parsing config %s: %w", FilePath(), jsonErr)
-		}
+	// 1. Stored config file (lowest precedence among stored creds; encrypted
+	// when written by current versions, plaintext legacy files still read).
+	fileCfg, exists, err := LoadStoredConfig()
+	if err != nil {
+		return nil, err
+	}
+	if exists {
 		if cfg.Host == "" {
 			cfg.Host = fileCfg.Host
 		}
 		if cfg.Token == "" {
 			cfg.Token = fileCfg.Token
 		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return nil, fmt.Errorf("reading config: %w", err)
 	}
 
 	// 2. GITLAB_* env vars (compatible with glab) — overrides file
@@ -108,7 +106,7 @@ func saveLegacyFile(cfg *Config) error {
 		return fmt.Errorf("creating config dir: %w", err)
 	}
 
-	data, err := jsonMarshalIndent(cfg, "", "  ")
+	data, err := encodeEncryptedJSON(cfg)
 	if err != nil {
 		return fmt.Errorf("encoding config: %w", err)
 	}
@@ -117,6 +115,24 @@ func saveLegacyFile(cfg *Config) error {
 		return fmt.Errorf("writing config: %w", err)
 	}
 	return nil
+}
+
+// LoadStoredConfig reads ~/.gitlab-cli/config.json directly. Current files are
+// encrypted; plaintext legacy files are still accepted and rewritten encrypted
+// on the next save.
+func LoadStoredConfig() (*Config, bool, error) {
+	data, err := os.ReadFile(FilePath())
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return &Config{}, false, nil
+		}
+		return nil, false, fmt.Errorf("reading config: %w", err)
+	}
+	fileCfg := &Config{}
+	if err := decodeMaybeEncryptedJSON(data, fileCfg); err != nil {
+		return nil, true, fmt.Errorf("parsing config %s: %w", FilePath(), err)
+	}
+	return fileCfg, true, nil
 }
 
 // Save writes config.json and updates the default profile (legacy save path).

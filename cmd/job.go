@@ -83,7 +83,7 @@ var jobLogCmd = &cobra.Command{
 				return handleAPIError(err, jsonMode)
 			}
 			if jsonMode {
-				output.PrintJSON(map[string]any{"jobId": jobID, "log": string(data)})
+				output.PrintJSON(output.MarkUntrusted(map[string]any{"jobId": output.ID(jobID), "log": string(data)}, "log"))
 				return nil
 			}
 			_, _ = os.Stdout.Write(data)
@@ -107,11 +107,11 @@ var jobLogCmd = &cobra.Command{
 			if err != nil {
 				return handleAPIError(err, jsonMode)
 			}
-			output.PrintJSON(map[string]any{
-				"id":     j.ID,
+			output.PrintJSON(output.MarkUntrusted(map[string]any{
+				"id":     output.ID(j.ID),
 				"status": j.Status,
 				"log":    buf.String(),
-			})
+			}, "log"))
 			return nil
 		}
 
@@ -132,8 +132,8 @@ var jobRetryCmd = &cobra.Command{
 		if err != nil {
 			return failArg("job_id must be an integer")
 		}
-		if dryRunOutput("retry job", map[string]any{"project": project, "job_id": jobID}) {
-			return nil
+		if done, err := prepareWrite(cmd, "retry job", map[string]any{"project": project, "job_id": jobID}); done || err != nil {
+			return err
 		}
 		client, _, err := newClient()
 		if err != nil {
@@ -165,8 +165,8 @@ var jobCancelCmd = &cobra.Command{
 		if err != nil {
 			return failArg("job_id must be an integer")
 		}
-		if dryRunOutput("cancel job", map[string]any{"project": project, "job_id": jobID}) {
-			return nil
+		if done, err := prepareWrite(cmd, "cancel job", map[string]any{"project": project, "job_id": jobID}); done || err != nil {
+			return err
 		}
 		client, _, err := newClient()
 		if err != nil {

@@ -524,7 +524,7 @@ func TestPipeline_Retry_JSON(t *testing.T) {
 	defer func() { dryRun = origDR; jsonMode = origJM }()
 	dryRun = false
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"pipeline", "retry", "--project", "foo/bar", "1", "--json"})
+		rootCmd.SetArgs(withConfirmForTest(t, []string{"pipeline", "retry", "--project", "foo/bar", "1", "--json"}))
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, `"pending"`) {
@@ -647,7 +647,7 @@ func TestPipeline_Retry_PlainText(t *testing.T) {
 	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"pipeline", "retry", "--project", "foo/bar", "1"})
+		rootCmd.SetArgs(withConfirmForTest(t, []string{"pipeline", "retry", "--project", "foo/bar", "1"}))
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, "retried") {
@@ -1178,7 +1178,7 @@ func TestPipeline_Current_NoPipelines(t *testing.T) {
 	defer func() { lastExit = origExit }()
 	lastExit = 0
 
-	out := captureStdout(t, func() {
+	out := captureStderr(t, func() {
 		rootCmd.SetArgs([]string{"pipeline", "current"})
 		_ = rootCmd.Execute()
 	})
@@ -1341,7 +1341,7 @@ func TestPipeline_Retry_NewClientError(t *testing.T) {
 	origExit := lastExit
 	defer func() { lastExit = origExit }()
 	lastExit = 0
-	rootCmd.SetArgs([]string{"pipeline", "retry", "--project", "42", "1"})
+	rootCmd.SetArgs(withConfirmForTest(t, []string{"pipeline", "retry", "--project", "42", "1"}))
 	_ = rootCmd.Execute()
 	if lastExit != ExitAuth {
 		t.Errorf("exit = %d, want %d", lastExit, ExitAuth)
@@ -1607,15 +1607,15 @@ func TestPipeline_Wait_ContextCancelledDuringSleep(t *testing.T) {
 	}
 	t.Cleanup(func() { pipelineWaitCmd.RunE = origRunE })
 
-	stdout := captureStdout(t, func() {
+	stderr := captureStderr(t, func() {
 		rootCmd.SetArgs([]string{"pipeline", "wait", "--project", "42", "1", "--interval", "1"})
 		_ = rootCmd.Execute()
 	})
 	if LastExitCode() != ExitNetwork {
 		t.Errorf("exit = %d, want %d", LastExitCode(), ExitNetwork)
 	}
-	if !strings.Contains(stdout, "context canceled") {
-		t.Errorf("expected context canceled on stdout, got:\n%s", stdout)
+	if !strings.Contains(stderr, "context canceled") {
+		t.Errorf("expected context canceled on stderr, got:\n%s", stderr)
 	}
 }
 

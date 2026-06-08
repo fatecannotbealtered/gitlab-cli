@@ -97,7 +97,7 @@ var userSearchCmd = &cobra.Command{
 			for i, u := range filtered {
 				out[i] = output.FilterMap(output.UserToMap(toFlatUser(&u)), fields)
 			}
-			output.PrintJSON(out)
+			printSimpleListJSON(cmd, out, limit)
 			return nil
 		}
 		if len(filtered) == 0 {

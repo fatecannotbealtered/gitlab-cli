@@ -48,6 +48,24 @@ func TestReference_JSON_HasAgentMetadata(t *testing.T) {
 	}
 }
 
+func TestReference_AllWriteCommandsRequireConfirmation(t *testing.T) {
+	tree := buildReferenceTree(rootCmd)
+	var missing []string
+	collectWritesMissingConfirmation(tree.Commands, &missing)
+	if len(missing) > 0 {
+		t.Fatalf("write commands missing requiresConfirmation: %s", strings.Join(missing, ", "))
+	}
+}
+
+func collectWritesMissingConfirmation(nodes []refCommand, missing *[]string) {
+	for _, node := range nodes {
+		if node.Write && !node.RequiresConfirmation {
+			*missing = append(*missing, node.Path)
+		}
+		collectWritesMissingConfirmation(node.Commands, missing)
+	}
+}
+
 func containsAllStrings(got, want []string) bool {
 	seen := map[string]bool{}
 	for _, item := range got {

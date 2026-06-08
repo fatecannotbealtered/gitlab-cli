@@ -69,6 +69,7 @@ func ErrorEnvelope(msg string, statusCode int, code ErrorCode) Envelope {
 	return Envelope{
 		OK:            false,
 		SchemaVersion: SchemaVersion,
+		Meta:          Meta{DurationMS: commandDurationMS()},
 		Error: &EnvelopeError{
 			Code:      code,
 			Message:   msg,
@@ -107,10 +108,10 @@ const (
 	ErrForbidden       ErrorCode = "E_FORBIDDEN"
 	ErrNotFound        ErrorCode = "E_NOT_FOUND"
 	ErrConflict        ErrorCode = "E_CONFLICT"
-	ErrRateLimit       ErrorCode = "E_RATE_LIMIT"
+	ErrRateLimit       ErrorCode = "E_RATE_LIMITED"
 	ErrServer          ErrorCode = "E_SERVER"
-	ErrValidation      ErrorCode = "E_BAD_ARGS"
-	ErrConfirmRequired ErrorCode = "E_CONFIRM_REQUIRED"
+	ErrValidation      ErrorCode = "E_VALIDATION"
+	ErrConfirmRequired ErrorCode = "E_CONFIRMATION_REQUIRED"
 	ErrCancelled       ErrorCode = "E_CANCELLED"
 	ErrTimeout         ErrorCode = "E_TIMEOUT"
 	ErrNetwork         ErrorCode = "E_NETWORK"
@@ -182,7 +183,7 @@ func RetryableErrorCode(code ErrorCode) bool {
 	}
 }
 
-// PrintErrorJSON outputs a machine-readable error envelope as JSON to stdout.
+// PrintErrorJSON outputs a machine-readable error envelope as JSON to stderr.
 func PrintErrorJSON(msg string, statusCode int) {
 	code := ErrorCodeFromStatus(statusCode)
 	if statusCode == 0 {
@@ -203,8 +204,8 @@ func emitErrorPayload(msg string, statusCode int, code ErrorCode) {
 	}
 	data, err := emitJSONMarshal(payload)
 	if err != nil {
-		_, _ = fmt.Fprintf(os.Stdout, `{"ok":false,"schema_version":%q,"error":{"code":%q,"message":%q,"details":{},"retryable":false}}`+"\n", SchemaVersion, code, msg)
+		_, _ = fmt.Fprintf(os.Stderr, `{"ok":false,"schema_version":%q,"meta":{"duration_ms":%d},"error":{"code":%q,"message":%q,"details":{},"retryable":false}}`+"\n", SchemaVersion, commandDurationMS(), code, msg)
 		return
 	}
-	_, _ = fmt.Fprintln(os.Stdout, string(data))
+	_, _ = fmt.Fprintln(os.Stderr, string(data))
 }

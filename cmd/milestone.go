@@ -84,7 +84,7 @@ var milestoneListCmd = &cobra.Command{
 			for i, m := range ms {
 				out[i] = output.FilterMap(output.MilestoneToMap(toFlatMilestone(&m)), fields)
 			}
-			output.PrintJSON(out)
+			printSimpleListJSON(cmd, out, limit)
 			return nil
 		}
 		if len(ms) == 0 {
@@ -162,8 +162,8 @@ var milestoneCreateCmd = &cobra.Command{
 		startDate, _ := cmd.Flags().GetString("start-date")
 		dueDate, _ := cmd.Flags().GetString("due-date")
 
-		if dryRunOutput("create milestone", map[string]any{"project": project, "title": title}) {
-			return nil
+		if done, err := prepareWrite(cmd, "create milestone", map[string]any{"project": project, "title": title}); done || err != nil {
+			return err
 		}
 
 		client, _, err := newClient()
@@ -207,8 +207,8 @@ var milestoneUpdateCmd = &cobra.Command{
 		dueDate, _ := cmd.Flags().GetString("due-date")
 		stateEvent, _ := cmd.Flags().GetString("state-event")
 
-		if dryRunOutput("update milestone", map[string]any{"project": project, "milestoneId": milestoneID}) {
-			return nil
+		if done, err := prepareWrite(cmd, "update milestone", map[string]any{"project": project, "milestoneId": milestoneID}); done || err != nil {
+			return err
 		}
 
 		client, _, err := newClient()
@@ -248,14 +248,11 @@ var milestoneCloseCmd = &cobra.Command{
 			return failArg("--milestone-id is required")
 		}
 		confirmPayload := map[string]any{"project": project, "milestoneId": milestoneID}
-		if dryRunOutput("close milestone", confirmPayload) {
-			return nil
+		if done, err := prepareWrite(cmd, "close milestone", confirmPayload); done || err != nil {
+			return err
 		}
 		client, _, err := newClient()
 		if err != nil {
-			return err
-		}
-		if err := requireConfirm(cmd, "close milestone", confirmPayload); err != nil {
 			return err
 		}
 		m, err := client.Milestones.Update(apiCtx(), project, milestoneID, api.MilestoneUpdateOpts{StateEvent: "close"})

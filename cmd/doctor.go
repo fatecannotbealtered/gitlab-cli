@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/fatecannotbealtered/gitlab-cli/internal/api"
@@ -27,23 +28,36 @@ func runDoctor(_ *cobra.Command, _ []string) error {
 		Fix    *string `json:"fix"`
 	}
 	type doctorResult struct {
-		Checks       []doctorCheck `json:"checks"`
-		ConfigExists bool          `json:"configExists"`
-		AuthValid    bool          `json:"authValid"`
-		LatencyMs    int64         `json:"latencyMs"`
-		Host         string        `json:"host,omitempty"`
-		Username     string        `json:"username,omitempty"`
-		Name         string        `json:"name,omitempty"`
-		Error        string        `json:"error,omitempty"`
+		Checks          []doctorCheck `json:"checks"`
+		Version         string        `json:"version"`
+		SkillMinVersion string        `json:"skill_min_version"`
+		RiskTier        string        `json:"risk_tier"`
+		ConfigExists    bool          `json:"configExists"`
+		AuthValid       bool          `json:"authValid"`
+		LatencyMs       int64         `json:"latencyMs"`
+		Host            string        `json:"host,omitempty"`
+		Username        string        `json:"username,omitempty"`
+		Name            string        `json:"name,omitempty"`
+		Error           string        `json:"error,omitempty"`
 	}
 
-	result := doctorResult{}
+	result := doctorResult{
+		Version:         version,
+		SkillMinVersion: skillMinVersion,
+		RiskTier:        toolRiskTier,
+	}
 	check := func(name, status, fix string) {
 		var fixPtr *string
 		if fix != "" {
 			fixPtr = &fix
 		}
 		result.Checks = append(result.Checks, doctorCheck{Check: name, Status: status, Fix: fixPtr})
+	}
+
+	if currentVersionMeetsSkillMin() {
+		check("version", "pass", "")
+	} else {
+		check("version", "fail", "npm install -g @fatecannotbealtered-/gitlab-cli@latest && gitlab-cli changelog --since "+version)
 	}
 
 	cfg, err := config.Load()
@@ -138,6 +152,14 @@ func runDoctor(_ *cobra.Command, _ []string) error {
 	output.Gray(fmt.Sprintf("  Latency: %dms", latency))
 	fmt.Println()
 	return nil
+}
+
+func currentVersionMeetsSkillMin() bool {
+	current := cleanVersion(version)
+	if current == "" || current == "dev" || strings.Contains(current, "devel") {
+		return true
+	}
+	return !semverGreater(skillMinVersion, current)
 }
 
 // asAPI is a small helper to keep doctor.go decoupled from errors.As call site sprawl.
