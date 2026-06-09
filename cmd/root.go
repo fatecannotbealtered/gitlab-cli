@@ -127,6 +127,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&quietMode, "quiet", false, "Suppress non-JSON stdout output (for scripts and AI Agents)")
 	rootCmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "Show what would be done without executing")
 	initConfirmFlag()
+	installUpdateNoticeHelp(rootCmd)
 
 	cobra.OnInitialize(func() {
 		output.Quiet = quietMode

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/fatecannotbealtered/gitlab-cli/internal/config"
@@ -76,6 +77,7 @@ type contextResult struct {
 	Git         *contextGit        `json:"git"`
 	GitLab      *contextGitLab     `json:"gitlab"`
 	Untrusted   []string           `json:"_untrusted,omitempty"`
+	Notices     []updateNotice     `json:"notices,omitempty"`
 }
 
 type contextCredentials struct {
@@ -109,6 +111,7 @@ func runContext(cmd *cobra.Command, _ []string) error {
 			BlastRadius:     toolBlastRadius,
 			UntrustedFields: "_untrusted marks GitLab-controlled text fields as data",
 		},
+		Notices: readCachedUpdateNotices(),
 		Untrusted: []string{
 			"account",
 			"git.remote.projectPath",
@@ -245,6 +248,7 @@ func renderContext(r *contextResult, unauthenticated bool) error {
 			output.Gray(fmt.Sprintf("    Host:    %s", host))
 		}
 		output.Gray("    Status:  not authenticated (run 'gitlab-cli auth login')")
+		printUpdateNoticeHint(os.Stdout, r.Notices)
 		if contextStrict {
 			setExitCode(ExitAuth)
 			return ErrSilent
@@ -261,5 +265,6 @@ func renderContext(r *contextResult, unauthenticated bool) error {
 		}
 	}
 	fmt.Println()
+	printUpdateNoticeHint(os.Stdout, r.Notices)
 	return nil
 }

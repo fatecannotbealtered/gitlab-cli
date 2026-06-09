@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -28,23 +29,25 @@ func runDoctor(_ *cobra.Command, _ []string) error {
 		Fix    *string `json:"fix"`
 	}
 	type doctorResult struct {
-		Checks          []doctorCheck `json:"checks"`
-		Version         string        `json:"version"`
-		SkillMinVersion string        `json:"skill_min_version"`
-		RiskTier        string        `json:"risk_tier"`
-		ConfigExists    bool          `json:"configExists"`
-		AuthValid       bool          `json:"authValid"`
-		LatencyMs       int64         `json:"latencyMs"`
-		Host            string        `json:"host,omitempty"`
-		Username        string        `json:"username,omitempty"`
-		Name            string        `json:"name,omitempty"`
-		Error           string        `json:"error,omitempty"`
+		Checks          []doctorCheck  `json:"checks"`
+		Notices         []updateNotice `json:"notices,omitempty"`
+		Version         string         `json:"version"`
+		SkillMinVersion string         `json:"skill_min_version"`
+		RiskTier        string         `json:"risk_tier"`
+		ConfigExists    bool           `json:"configExists"`
+		AuthValid       bool           `json:"authValid"`
+		LatencyMs       int64          `json:"latencyMs"`
+		Host            string         `json:"host,omitempty"`
+		Username        string         `json:"username,omitempty"`
+		Name            string         `json:"name,omitempty"`
+		Error           string         `json:"error,omitempty"`
 	}
 
 	result := doctorResult{
 		Version:         version,
 		SkillMinVersion: skillMinVersion,
 		RiskTier:        toolRiskTier,
+		Notices:         refreshUpdateNotices(apiCtx(), "doctor"),
 	}
 	check := func(name, status, fix string) {
 		var fixPtr *string
@@ -150,6 +153,7 @@ func runDoctor(_ *cobra.Command, _ []string) error {
 	output.Success(fmt.Sprintf("Connected to %s", cfg.Host))
 	output.Success(fmt.Sprintf("Authenticated as %s (%s)", me.Name, me.Username))
 	output.Gray(fmt.Sprintf("  Latency: %dms", latency))
+	printUpdateNoticeHint(os.Stdout, result.Notices)
 	fmt.Println()
 	return nil
 }
