@@ -7,7 +7,7 @@ This is a side project shared for AI tooling experimentation; maintainers do not
 ## Development setup
 
 - Go **1.25+** (see `go.mod`)
-- Optional: **Node.js 16+** if you work on the npm install scripts
+- Optional: **Node.js 16+** if you work on the npm wrapper or platform-package scripts
 - Optional: **golangci-lint** (CI runs it on Linux)
 
 Clone and verify:

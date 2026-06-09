@@ -85,7 +85,7 @@ func buildReferenceTree(root *cobra.Command) refTree {
 			"credential_storage":     "AES-256-GCM encrypted at rest for saved config and profiles",
 			"confirmation_required":  "write commands use --dry-run then --confirm <confirm_token>",
 			"confirm_token_binding":  "command path, operation payload, configured host/source, expiry, and available resource identifiers",
-			"supply_chain_integrity": "npm install script requires checksums.txt verification",
+			"supply_chain_integrity": "npm install uses provenance platform packages; standalone updates verify signed checksums",
 		},
 		GlobalFlags: collectPersistentRefFlags(root),
 		ExitCodes: map[int]string{

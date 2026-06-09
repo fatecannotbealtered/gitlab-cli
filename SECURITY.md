@@ -36,8 +36,10 @@ High-impact commands use `--dry-run` plus `--confirm <confirm_token>`. Returned 
 
 ## Supply chain
 
-- npm installation downloads release artifacts from GitHub Releases and requires `checksums.txt` verification.
-- Checksum verification failure, missing checksum files, or a missing archive checksum hard-fails installation.
+- npm installation uses the main wrapper package plus OS/CPU-specific optional platform packages; it does not download GitHub Release binaries at install time.
+- npm packages are published from the tagged GitHub Actions workflow with provenance; npm registry integrity and provenance cover the npm install path.
+- Standalone GitHub binary install/update paths verify release archives against `checksums.txt`.
+- Checksum verification failure, missing checksum files, or a missing archive checksum hard-fails standalone installation/update.
 - Release artifacts are expected to be built from tagged source via CI.
 - Releases sign `checksums.txt` with Sigstore/Cosign keyless signing from the tagged GitHub Actions release workflow and publish `checksums.txt.sigstore.json`.
 - Self-update results must sync the whole `skills/gitlab-cli/` directory or return a `skill_sync_command` equivalent to `npx skills add fatecannotbealtered/gitlab-cli -y -g`.

@@ -16,7 +16,8 @@ Use this before publishing a release or pushing a newly prepared public branch.
 - [ ] Saved credentials are encrypted at rest and credential files are written with `0600`.
 - [ ] GitLab-controlled text fields are tagged with `_untrusted`.
 - [ ] Write commands require `--dry-run` then `--confirm <confirm_token>`.
-- [ ] `scripts/install.js` hard-fails when checksum verification is unavailable or mismatched.
+- [ ] npm publishes the main wrapper package and OS/CPU platform packages with provenance.
+- [ ] Standalone binary install/update paths hard-fail when checksum verification is unavailable or mismatched.
 - [ ] `npm audit` and Go tests pass for release dependencies.
 
 ## Release

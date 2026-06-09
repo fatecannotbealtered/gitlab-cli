@@ -27,11 +27,15 @@
   "bin": {
     "gitlab-cli": "scripts/run.js"
   },
-  "scripts": {
-    "postinstall": "node scripts/install.js"
+  "optionalDependencies": {
+    "@fatecannotbealtered-/gitlab-cli-darwin-arm64": "1.2.0",
+    "@fatecannotbealtered-/gitlab-cli-darwin-x64": "1.2.0",
+    "@fatecannotbealtered-/gitlab-cli-linux-arm64": "1.2.0",
+    "@fatecannotbealtered-/gitlab-cli-linux-x64": "1.2.0",
+    "@fatecannotbealtered-/gitlab-cli-win32-arm64": "1.2.0",
+    "@fatecannotbealtered-/gitlab-cli-win32-x64": "1.2.0"
   },
   "files": [
-    "scripts/install.js",
     "scripts/run.js",
     "skills/",
     "README.md",
@@ -46,15 +50,6 @@
     "AGENTS.md",
     ".agent/",
     "docs/"
-  ],
-  "os": [
-    "darwin",
-    "linux",
-    "win32"
-  ],
-  "cpu": [
-    "x64",
-    "arm64"
   ],
   "engines": {
     "node": ">=16"
