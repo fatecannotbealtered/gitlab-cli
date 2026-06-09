@@ -5,6 +5,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"crypto/sha256"
 	"fmt"
 	"net/http"
@@ -27,6 +28,7 @@ func resetUpdateTestState(t *testing.T) {
 	origPlatform := updatePlatform
 	origExecutable := updateExecutable
 	origApply := updateApply
+	origSkillSync := updateSkillSync
 	origNow := updateNow
 	t.Cleanup(func() {
 		version = origVersion
@@ -35,6 +37,7 @@ func resetUpdateTestState(t *testing.T) {
 		updatePlatform = origPlatform
 		updateExecutable = origExecutable
 		updateApply = origApply
+		updateSkillSync = origSkillSync
 		updateNow = origNow
 	})
 	for _, kv := range []struct{ name, value string }{
@@ -51,6 +54,7 @@ func resetUpdateTestState(t *testing.T) {
 		return filepath.Join(t.TempDir(), "gitlab-cli"), nil
 	}
 	updateNow = func() time.Time { return time.Unix(1700000000, 0) }
+	updateSkillSync = func(context.Context, string) error { return nil }
 }
 
 func updateConfirmArgsForTest(t *testing.T, serverURL, currentVersion, targetVersion string, reinstall bool) []string {
@@ -60,11 +64,14 @@ func updateConfirmArgsForTest(t *testing.T, serverURL, currentVersion, targetVer
 		t.Fatalf("update archive name: %v", err)
 	}
 	return confirmArgsForTest(t, "update gitlab-cli", map[string]any{
-		"currentVersion": currentVersion,
-		"targetVersion":  normalizeVersion(targetVersion),
-		"assetName":      assetName,
-		"assetURL":       serverURL + "/downloads/" + assetName,
-		"reinstall":      reinstall,
+		"currentVersion":     currentVersion,
+		"targetVersion":      normalizeVersion(targetVersion),
+		"assetName":          assetName,
+		"assetURL":           serverURL + "/downloads/" + assetName,
+		"checksumURL":        serverURL + "/downloads/checksums.txt",
+		"signatureBundleURL": "",
+		"reinstall":          reinstall,
+		"skillSyncCommand":   updateSkillSyncCommand(),
 	})
 }
 

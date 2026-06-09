@@ -20,10 +20,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - GitLab-controlled text fields are marked with `_untrusted` so agents treat returned content as data.
 - Error envelopes are emitted on stderr and include `meta.duration_ms`; stdout stays empty on failures.
 - Confirm tokens now bind command path, normalized operation payload, configured host/source context, and expiry.
+- Self-update now syncs the whole Agent Skill directory through `npx skills add fatecannotbealtered/gitlab-cli -y -g` and reports `skill_sync_status`.
+- Skill, README, `.agent/` specs, and test prompts now follow the unified Agent-first update and Skill sync contract.
 
 ### Security
 
 - Saved `config.json` and `profiles.json` credentials are encrypted at rest with AES-256-GCM and a machine-bound PBKDF2-SHA256 key.
+- Release checksums are signed with Sigstore/Cosign, and install/update paths report signature verification status separately from checksum verification.
 - The npm install script now hard-fails if checksum verification cannot be completed.
 
 ## [1.2.0] - 2026-06-07

@@ -59,7 +59,7 @@ gitlab-cli update --confirm <confirm_token> --compact
 gitlab-cli changelog --since <previous_version> --compact
 ```
 
-`update --dry-run` returns `data.confirm_token`. `update` downloads GitHub Release assets, verifies `checksums.txt`, then replaces the current binary. After a successful update, read `changelog --since <previous_version>` before continuing. On Windows, replacement may be scheduled for after the current process exits.
+`update --dry-run` returns `data.confirm_token`. `update` downloads GitHub Release assets, verifies the signed `checksums.txt` when possible, verifies the archive checksum, then replaces the current binary. After a successful update, confirm `skill_sync_status`, review signature/checksum status, and read `changelog --since <previous_version>` before continuing. On Windows, replacement may be scheduled for after the current process exits.
 
 ## Self-description
 
