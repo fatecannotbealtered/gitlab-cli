@@ -23,6 +23,7 @@ Use this before publishing a release or pushing a newly prepared public branch.
 ## Release
 
 - [ ] `package.json` version, git tag, and `CHANGELOG.md` release heading match.
+- [ ] Functional Contract Coverage is 100%: public README, Skill, `reference`, `--help`, `context`, `doctor`, `changelog`, and `update` behavior has command-level tests.
 - [ ] `gitlab-cli reference --compact` includes version, risk tier, security metadata, and command risk annotations.
 - [ ] `gitlab-cli changelog --since <previous-version>` reports the release delta from `CHANGELOG.md`.
 - [ ] GoReleaser artifacts include `checksums.txt`.
