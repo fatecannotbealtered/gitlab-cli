@@ -1,29 +1,35 @@
 # Code of Conduct
 
+> 中文版 → [CODE_OF_CONDUCT_zh.md](CODE_OF_CONDUCT_zh.md)
+
+This project follows the [Contributor Covenant](https://www.contributor-covenant.org/), version 2.1.
+
 ## Our Pledge
 
-We pledge to make participation in this project a harassment-free experience for everyone, regardless of age, body size, disability, ethnicity, sex characteristics, gender identity and expression, level of experience, education, socio-economic status, nationality, personal appearance, race, religion, or sexual identity and orientation.
+We pledge to make participation in `gitlab-cli` a harassment-free experience for everyone, regardless of age, body size, disability, ethnicity, gender identity and expression, level of experience, nationality, personal appearance, race, religion, or sexual identity and orientation.
 
 ## Expected Behavior
 
 - Use welcoming and inclusive language.
 - Respect differing viewpoints and experiences.
-- Give and accept constructive feedback.
-- Focus on what is best for the community and project.
+- Accept constructive criticism with focus on the work.
 - Show empathy toward other community members.
 
 ## Unacceptable Behavior
 
-- Harassment, trolling, insults, or personal attacks.
-- Public or private harassment.
-- Publishing another person's private information without explicit permission.
-- Sexualized language, imagery, or attention.
-- Any conduct that could reasonably be considered inappropriate in a professional setting.
+- Harassment, intimidation, or discriminatory language.
+- Personal attacks, trolling, or insulting comments.
+- Publishing others' private information without explicit permission.
+- Other conduct that would reasonably be considered inappropriate in a professional setting.
 
 ## Enforcement
 
-Project maintainers may remove, edit, or reject comments, commits, issues, pull requests, and other contributions that do not align with this Code of Conduct. Maintainers may also temporarily or permanently ban contributors for behavior they deem inappropriate, threatening, offensive, or harmful.
+Project maintainers are responsible for clarifying and enforcing this Code of Conduct. They may remove, edit, or reject comments, commits, issues, pull requests, or other contributions that do not align with it, and may temporarily or permanently ban any contributor for behavior they deem inappropriate.
 
-Report unacceptable behavior to `guosong6886@gmail.com`. Reports will be reviewed and investigated promptly and fairly.
+## Reporting
 
-This Code of Conduct is adapted from the Contributor Covenant, version 2.1.
+Report unacceptable behavior privately to the project maintainers at **guosong6886@gmail.com**. All complaints will be reviewed and investigated promptly and fairly. Maintainers must respect the privacy and security of the reporter.
+
+## Attribution
+
+This Code of Conduct is adapted from the [Contributor Covenant](https://www.contributor-covenant.org/version/2/1/code_of_conduct/), version 2.1.

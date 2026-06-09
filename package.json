@@ -1,7 +1,7 @@
 {
   "name": "@fatecannotbealtered-/gitlab-cli",
   "version": "1.2.0",
-  "description": "Full-featured GitLab CLI scaffold for AI Agents — manage merge requests, issues, pipelines, jobs, repositories, releases, labels, milestones, variables, and more from your terminal",
+  "description": "GitLab CLI for AI Agents - manage merge requests, issues, pipelines, jobs, repositories, releases, labels, milestones, and CI variables",
   "keywords": [
     "gitlab",
     "cli",
@@ -9,10 +9,9 @@
     "devtools",
     "merge-request",
     "pipeline",
-    "issue-tracker",
-    "openclaw"
+    "issue-tracker"
   ],
-  "author": "guosong6886@gmail.com",
+  "author": "Sean Guo",
   "homepage": "https://github.com/fatecannotbealtered/gitlab-cli#readme",
   "bugs": {
     "url": "https://github.com/fatecannotbealtered/gitlab-cli/issues"
@@ -37,6 +36,7 @@
     "skills/",
     "README.md",
     "README_zh.md",
+    "*_zh.md",
     "LICENSE",
     "NOTICE.md",
     "CHANGELOG.md",
@@ -45,9 +45,7 @@
     "CODE_OF_CONDUCT.md",
     "AGENTS.md",
     ".agent/",
-    "docs/COMPATIBILITY.md",
-    "docs/OPEN_SOURCE_CHECKLIST.md",
-    "docs/E2E.md"
+    "docs/"
   ],
   "os": [
     "darwin",

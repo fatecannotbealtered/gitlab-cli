@@ -85,7 +85,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.0.0] - 2026-05-24
 
-First public release of **gitlab-cli** — an AI-Agent-friendly CLI for GitLab.com, Self-Managed, Dedicated, and Data Center.
+First public release of **gitlab-cli** - an Agent-native CLI for GitLab.com, Self-Managed, Dedicated, and Data Center.
 
 ### Highlights
 

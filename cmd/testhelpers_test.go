@@ -14,6 +14,7 @@ import (
 func init() {
 	// Tests run non-interactively; disable agent-safe restrictions unless explicitly testing them.
 	_ = os.Setenv("GITLAB_CLI_AGENT_SAFE", "0")
+	_ = os.Setenv("GITLAB_CLI_RETRY_BASE_MS", "0")
 }
 
 var preserveTextFormatForReset bool

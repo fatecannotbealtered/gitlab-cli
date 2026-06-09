@@ -152,7 +152,7 @@ func rateLimitWait(h http.Header) time.Duration {
 		}
 	}
 	if wait <= 0 {
-		wait = time.Second
+		wait = retryBaseWait()
 	}
 	if wait > maxRateLimitWait {
 		return maxRateLimitWait
@@ -174,7 +174,16 @@ func isRetryableNetworkErr(err error) bool {
 }
 
 func serverErrorWait(attempt int) time.Duration {
-	return time.Duration(1<<uint(attempt)) * time.Second
+	return time.Duration(1<<uint(attempt)) * retryBaseWait()
+}
+
+func retryBaseWait() time.Duration {
+	if s := strings.TrimSpace(os.Getenv("GITLAB_CLI_RETRY_BASE_MS")); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n >= 0 {
+			return time.Duration(n) * time.Millisecond
+		}
+	}
+	return time.Second
 }
 
 func shouldRetry(statusCode int) bool {

@@ -108,7 +108,7 @@ var rootCmd = &cobra.Command{
 	SilenceUsage:  true,
 	Long: fmt.Sprintf("\n  %s\n  %s",
 		output.FormatCyanBold("gitlab-cli"),
-		output.FormatGray("AI-Agent-friendly GitLab control from your terminal")),
+		output.FormatGray("Agent-native GitLab control")),
 }
 
 func init() {

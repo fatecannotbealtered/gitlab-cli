@@ -7,4 +7,4 @@ The local specs under `.agent/` are the source of truth:
 - `.agent/CLI-SPEC.md` for the machine-readable CLI contract.
 - `.agent/SEC-SPEC.md` for untrusted content, credential storage, blast radius, and supply-chain rules.
 - `.agent/SKILL-SPEC.md` for the installable Skill contract.
-- `.agent/REPO-SPEC.md` for repository layout and release documentation.
+- Shared [`REPO-SPEC.md`](https://github.com/fatecannotbealtered/ai-native-cli-spec/blob/main/REPO-SPEC.md) for repository layout and release documentation.

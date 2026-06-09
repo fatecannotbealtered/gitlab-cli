@@ -6,7 +6,7 @@ This is a side project shared for AI tooling experimentation; maintainers do not
 
 ## Development setup
 
-- Go **1.23+** (see `go.mod`)
+- Go **1.25+** (see `go.mod`)
 - Optional: **Node.js 16+** if you work on the npm install scripts
 - Optional: **golangci-lint** (CI runs it on Linux)
 
@@ -39,7 +39,7 @@ set GOPROXY=https://goproxy.cn,direct
 | Build with version | `make build` (Unix) or `go build -ldflags "-s -w -X github.com/fatecannotbealtered/gitlab-cli/cmd.version=dev" -o bin/gitlab-cli.exe ./cmd/gitlab-cli` (Windows) |
 | Local goreleaser snapshot | `make snapshot` |
 
-CI mirrors `.github/workflows/ci.yml`: tidy modules, gofmt check (Linux), golangci-lint, `go vet`, build, `go test -race`, and a `--help` smoke test on linux/macos/windows × go 1.23/1.24.
+CI mirrors `.github/workflows/ci.yml`: tidy modules, gofmt check (Linux), golangci-lint, `go vet`, build, `go test -race`, and a `--help` smoke test on linux/macos/windows on the Go version pinned in `go.mod`.
 
 Local GitLab end-to-end tests (Docker Compose, 85 leaf commands): see [docs/E2E.md](docs/E2E.md) (**Windows / PowerShell** scripts; cross-platform notes inside). Run `go test -tags=integration ./e2e/...` after `scripts/e2e-up.ps1` on Windows.
 
