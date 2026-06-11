@@ -62,6 +62,7 @@ func runDoctor(_ *cobra.Command, _ []string) error {
 	} else {
 		check("version", "fail", "npm install -g @fatecannotbealtered-/gitlab-cli@latest && gitlab-cli changelog --since "+version)
 	}
+	check("release_readiness", releaseReadinessCheckStatus(), releaseReadinessCheckFix())
 
 	cfg, err := config.Load()
 	if err != nil {

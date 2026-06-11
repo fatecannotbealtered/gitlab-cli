@@ -23,6 +23,12 @@ func TestReference_JSON_HasAgentMetadata(t *testing.T) {
 	if tree.Version == "" {
 		t.Error("expected version in reference tree")
 	}
+	if tree.ReleaseReadiness.Level != "beta" {
+		t.Fatalf("release level = %q, want beta", tree.ReleaseReadiness.Level)
+	}
+	if tree.ReleaseReadiness.LiveSmokeStatus != "missing" {
+		t.Fatalf("live smoke status = %q, want missing", tree.ReleaseReadiness.LiveSmokeStatus)
+	}
 	mrDelete := findRefCommandByPath(tree.Commands, "mr comment delete")
 	if mrDelete == nil {
 		t.Fatal("mr comment delete not found in reference tree")

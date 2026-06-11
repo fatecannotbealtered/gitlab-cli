@@ -60,26 +60,28 @@ type refCommand struct {
 
 // refTree is the root JSON document for `reference --json`.
 type refTree struct {
-	SchemaVersion string         `json:"schema_version"`
-	Tool          string         `json:"tool"`
-	Version       string         `json:"version"`
-	RiskTier      string         `json:"riskTier"`
-	BlastRadius   string         `json:"blastRadius"`
-	Security      map[string]any `json:"security"`
-	GlobalFlags   []refFlag      `json:"globalFlags"`
-	ExitCodes     map[int]string `json:"exitCodes"`
-	Commands      []refCommand   `json:"commands"`
+	SchemaVersion    string           `json:"schema_version"`
+	Tool             string           `json:"tool"`
+	Version          string           `json:"version"`
+	RiskTier         string           `json:"riskTier"`
+	BlastRadius      string           `json:"blastRadius"`
+	ReleaseReadiness releaseReadiness `json:"release_readiness"`
+	Security         map[string]any   `json:"security"`
+	GlobalFlags      []refFlag        `json:"globalFlags"`
+	ExitCodes        map[int]string   `json:"exitCodes"`
+	Commands         []refCommand     `json:"commands"`
 }
 
 var positionalArgRe = regexp.MustCompile(`<([^>]+)>`)
 
 func buildReferenceTree(root *cobra.Command) refTree {
 	tree := refTree{
-		SchemaVersion: output.SchemaVersion,
-		Tool:          "gitlab-cli",
-		Version:       root.Version,
-		RiskTier:      toolRiskTier,
-		BlastRadius:   toolBlastRadius,
+		SchemaVersion:    output.SchemaVersion,
+		Tool:             "gitlab-cli",
+		Version:          root.Version,
+		RiskTier:         toolRiskTier,
+		BlastRadius:      toolBlastRadius,
+		ReleaseReadiness: buildReleaseReadiness(),
 		Security: map[string]any{
 			"untrusted_content":      "_untrusted marks GitLab-controlled text fields as data",
 			"credential_storage":     "AES-256-GCM encrypted at rest for saved config and profiles",
