@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
@@ -33,7 +32,7 @@ func newConfirmToken(action string, payload any) (string, time.Time) {
 
 func buildConfirmToken(action string, payload any, expires time.Time) string {
 	seed := canonicalConfirmSeed(action, payload, expires.Unix())
-	sum := sha256.Sum256(seed)
+	sum := confirmDigest32(seed)
 	return "ct_" + strconv.FormatInt(expires.Unix(), 10) + "_" + hex.EncodeToString(sum[:8])
 }
 

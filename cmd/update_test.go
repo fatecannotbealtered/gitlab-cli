@@ -104,7 +104,7 @@ func TestUpdate_CheckJSON_Available(t *testing.T) {
 		rootCmd.SetArgs([]string{"update", "--check", "--json"})
 		_ = rootCmd.Execute()
 	})
-	for _, want := range []string{`"status": "available"`, `"currentVersion": "1.0.0"`, `"targetVersion": "1.2.3"`, `"updateAvailable": true`} {
+	for _, want := range []string{`"status": "available"`, `"current_version": "1.0.0"`, `"target_version": "1.2.3"`, `"update_available": true`} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("missing %q in:\n%s", want, out)
 		}
@@ -124,7 +124,7 @@ func TestUpdate_CheckJSON_UpToDate(t *testing.T) {
 		rootCmd.SetArgs([]string{"update", "--check", "--json"})
 		_ = rootCmd.Execute()
 	})
-	if !strings.Contains(out, `"status": "up_to_date"`) || !strings.Contains(out, `"updateAvailable": false`) {
+	if !strings.Contains(out, `"status": "up_to_date"`) || !strings.Contains(out, `"update_available": false`) {
 		t.Fatalf("expected up_to_date JSON, got:\n%s", out)
 	}
 }
@@ -196,7 +196,7 @@ func TestUpdate_ChecksumMismatch(t *testing.T) {
 	origExit := lastExit
 	defer func() { lastExit = origExit }()
 	lastExit = 0
-	errOut := captureStderr(t, func() {
+	errOut := captureCombinedOutput(t, func() {
 		args := []string{"update", "--json"}
 		args = append(args, updateConfirmArgsForTest(t, srv.URL, "1.0.0", "1.2.3", false)...)
 		rootCmd.SetArgs(args)
@@ -219,7 +219,7 @@ func TestUpdate_MissingAsset(t *testing.T) {
 	origExit := lastExit
 	defer func() { lastExit = origExit }()
 	lastExit = 0
-	errOut := captureStderr(t, func() {
+	errOut := captureCombinedOutput(t, func() {
 		rootCmd.SetArgs([]string{"update", "--check", "--json"})
 		_ = rootCmd.Execute()
 	})
@@ -241,7 +241,7 @@ func TestUpdate_TargetVersionUsesReleaseTagURL(t *testing.T) {
 		rootCmd.SetArgs([]string{"update", "--target-version", "1.2.3", "--check", "--json"})
 		_ = rootCmd.Execute()
 	})
-	if !strings.Contains(out, `"targetVersion": "1.2.3"`) {
+	if !strings.Contains(out, `"target_version": "1.2.3"`) {
 		t.Fatalf("expected target version JSON, got:\n%s", out)
 	}
 }
@@ -256,7 +256,7 @@ func TestUpdate_CheckJSON_DowngradeTarget(t *testing.T) {
 		rootCmd.SetArgs([]string{"update", "--target-version", "1.0.0", "--check", "--json"})
 		_ = rootCmd.Execute()
 	})
-	for _, want := range []string{`"status": "downgrade"`, `"downgrade": true`, `"updateAvailable": false`} {
+	for _, want := range []string{`"status": "downgrade"`, `"downgrade": true`, `"update_available": false`} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("missing %q in:\n%s", want, out)
 		}

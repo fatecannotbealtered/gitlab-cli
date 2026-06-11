@@ -15,19 +15,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Unified the golangci-lint v2 toolchain: Makefile installs from the `/v2` module path and CI uses `golangci-lint-action@v8` to match the v2 config format.
+- `release_readiness` now declares `stable` with `live_smoke_status: verified`, citing the recorded acceptance evidence in `docs/E2E-ACCEPTANCE-REPORT.md` (85/85 leaf commands PASS).
+- Top-level `update` JSON keys are now snake_case (`current_version`, `target_version`, `update_available`, `release_url`, `pending_path`); text output reads the same keys.
 - List-style JSON commands now use a consistent `items` / `count` / `hasMore` list envelope.
 - JSON IDs are emitted as strings across flattened GitLab resources.
 - GitLab-controlled text fields are marked with `_untrusted` so agents treat returned content as data.
-- Error envelopes are emitted on stderr and include `meta.duration_ms`; stdout stays empty on failures.
+- In JSON mode the failure envelope is the single JSON document on stdout and includes `meta.duration_ms`, matching CLI-SPEC §4; stderr stays a human-readable side channel.
 - Confirm tokens now bind command path, normalized operation payload, configured host/source context, and expiry.
 - Self-update now syncs the whole Agent Skill directory through `npx skills add fatecannotbealtered/gitlab-cli -y -g` and reports `skill_sync_status`.
 - Skill, README, `.agent/` specs, and test prompts now follow the unified Agent-first update and Skill sync contract.
 
 ### Security
 
+- Confirm tokens are now signed with a machine-local HMAC key (`confirm.secret`, created on first use with 0600 permissions) so they cannot be fabricated without running `--dry-run` on the same machine.
 - Saved `config.json` and `profiles.json` credentials are encrypted at rest with AES-256-GCM and a machine-bound PBKDF2-SHA256 key.
 - Release checksums are signed with Sigstore/Cosign, and install/update paths report signature verification status separately from checksum verification.
 - The npm install script now hard-fails if checksum verification cannot be completed.
+
 
 ## [1.2.0] - 2026-06-07
 

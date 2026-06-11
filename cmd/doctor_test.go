@@ -118,8 +118,8 @@ func TestDoctor_WithMockServer_JSON(t *testing.T) {
 	if !strings.Contains(out, `"authValid": true`) {
 		t.Errorf("expected authValid true in JSON output, got: %s", out)
 	}
-	if !strings.Contains(out, `"release_readiness"`) || !strings.Contains(out, `"warn"`) {
-		t.Errorf("expected release_readiness warning in JSON output, got: %s", out)
+	if !strings.Contains(out, `"release_readiness"`) || !strings.Contains(out, `"pass"`) {
+		t.Errorf("expected release_readiness pass in JSON output, got: %s", out)
 	}
 }
 

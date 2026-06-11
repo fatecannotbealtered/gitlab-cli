@@ -125,7 +125,7 @@ func TestAgentSafe_ShowValuesRejected(t *testing.T) {
 	lastExit = 0
 	jsonMode = true
 
-	stderr := captureStderr(t, func() {
+	stderr := captureCombinedOutput(t, func() {
 		rootCmd.SetArgs([]string{
 			"variable", "list",
 			"--project", "group/proj",
@@ -156,7 +156,7 @@ func TestAgentSafe_ForceRejected(t *testing.T) {
 	lastExit = 0
 	jsonMode = true
 
-	stderr := captureStderr(t, func() {
+	stderr := captureCombinedOutput(t, func() {
 		rootCmd.SetArgs([]string{
 			"repo", "branch", "delete",
 			"--project", "group/proj", "--name", "feat/x",

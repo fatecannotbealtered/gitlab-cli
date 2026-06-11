@@ -1178,7 +1178,7 @@ func TestPipeline_Current_NoPipelines(t *testing.T) {
 	defer func() { lastExit = origExit }()
 	lastExit = 0
 
-	out := captureStderr(t, func() {
+	out := captureCombinedOutput(t, func() {
 		rootCmd.SetArgs([]string{"pipeline", "current"})
 		_ = rootCmd.Execute()
 	})
@@ -1607,7 +1607,7 @@ func TestPipeline_Wait_ContextCancelledDuringSleep(t *testing.T) {
 	}
 	t.Cleanup(func() { pipelineWaitCmd.RunE = origRunE })
 
-	stderr := captureStderr(t, func() {
+	stderr := captureCombinedOutput(t, func() {
 		rootCmd.SetArgs([]string{"pipeline", "wait", "--project", "42", "1", "--interval", "1"})
 		_ = rootCmd.Execute()
 	})

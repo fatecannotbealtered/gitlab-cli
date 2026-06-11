@@ -320,7 +320,7 @@ func TestMR_Create_AssigneeNotFound(t *testing.T) {
 	jsonMode = true
 	lastExit = 0
 
-	out := captureStderr(t, func() {
+	out := captureCombinedOutput(t, func() {
 		rootCmd.SetArgs(withConfirmForTest(t, []string{
 			"mr", "create",
 			"--project", "foo/bar",

@@ -273,36 +273,30 @@ func TestPrintErrorJSON(t *testing.T) {
 	defer func() { Compact = origCompact }()
 	Compact = false
 
-	stdout, stderr := captureStdoutStderr(func() {
+	stdout, _ := captureStdoutStderr(func() {
 		PrintErrorJSON("not found", 404)
 		PrintErrorJSON("local", 0)
 	})
-	if stdout != "" {
+	if !strings.Contains(stdout, `"ok": false`) || !strings.Contains(stdout, `"code": "E_NOT_FOUND"`) {
 		t.Errorf("stdout = %q", stdout)
 	}
-	if !strings.Contains(stderr, `"ok": false`) || !strings.Contains(stderr, `"code": "E_NOT_FOUND"`) {
-		t.Errorf("stderr = %q", stderr)
+	if !strings.Contains(stdout, `"duration_ms": 0`) {
+		t.Errorf("expected duration_ms in stdout = %q", stdout)
 	}
-	if !strings.Contains(stderr, `"duration_ms": 0`) {
-		t.Errorf("expected duration_ms in stderr = %q", stderr)
-	}
-	if !strings.Contains(stderr, `"code": "E_UNKNOWN"`) {
-		t.Errorf("status 0 stderr = %q", stderr)
+	if !strings.Contains(stdout, `"code": "E_UNKNOWN"`) {
+		t.Errorf("status 0 stdout = %q", stdout)
 	}
 }
 
 func TestPrintErrorJSONWithCode(t *testing.T) {
-	stdout, stderr := captureStdoutStderr(func() {
+	stdout, _ := captureStdoutStderr(func() {
 		PrintErrorJSONWithCode("cancelled", 0, ErrCancelled)
 	})
-	if stdout != "" {
+	if !strings.Contains(stdout, `"code": "E_CANCELLED"`) {
 		t.Errorf("stdout = %q", stdout)
 	}
-	if !strings.Contains(stderr, `"code": "E_CANCELLED"`) {
-		t.Errorf("stderr = %q", stderr)
-	}
-	if !strings.Contains(stderr, "confirmation") {
-		t.Errorf("expected cancelled hint in %q", stderr)
+	if !strings.Contains(stdout, "confirmation") {
+		t.Errorf("expected cancelled hint in %q", stdout)
 	}
 }
 
@@ -320,17 +314,14 @@ func TestEmitErrorPayload_Fallback(t *testing.T) {
 	emitJSONMarshal = func(any) ([]byte, error) { return nil, errors.New("boom") }
 	defer func() { emitJSONMarshal = orig }()
 
-	stdout, stderr := captureStdoutStderr(func() {
+	stdout, _ := captureStdoutStderr(func() {
 		emitErrorPayload("fail", 500, ErrServer)
 	})
-	if stdout != "" {
-		t.Errorf("stdout = %q", stdout)
+	if !strings.Contains(stdout, `"code":"E_SERVER"`) {
+		t.Errorf("fallback stdout = %q", stdout)
 	}
-	if !strings.Contains(stderr, `"code":"E_SERVER"`) {
-		t.Errorf("fallback stderr = %q", stderr)
-	}
-	if !strings.Contains(stderr, `"duration_ms":0`) {
-		t.Errorf("fallback stderr missing duration_ms = %q", stderr)
+	if !strings.Contains(stdout, `"duration_ms":0`) {
+		t.Errorf("fallback stdout missing duration_ms = %q", stdout)
 	}
 }
 

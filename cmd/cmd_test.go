@@ -269,7 +269,7 @@ func TestFormat_JSONAliasConflictsWithText(t *testing.T) {
 	origExit := lastExit
 	defer func() { lastExit = origExit }()
 	lastExit = 0
-	errOut := captureStderr(t, func() {
+	errOut := captureCombinedOutput(t, func() {
 		rootCmd.SetArgs([]string{"reference", "--format", "text", "--json"})
 		_ = rootCmd.Execute()
 	})
@@ -329,7 +329,7 @@ func TestHandleAPIError_JSON(t *testing.T) {
 	defer func() { lastExit = origExit }()
 	lastExit = 0
 
-	out := captureStderr(t, func() {
+	out := captureCombinedOutput(t, func() {
 		apiErr := &api.APIError{StatusCode: 404}
 		_ = handleAPIError(apiErr, true)
 	})

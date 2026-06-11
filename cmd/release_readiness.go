@@ -14,14 +14,14 @@ type releaseReadiness struct {
 
 func buildReleaseReadiness() releaseReadiness {
 	return releaseReadiness{
-		Level:                      "beta",
+		Level:                      "stable",
 		FCCRequired:                true,
 		FCCStatus:                  "verified",
 		MockUpstreamRequired:       true,
 		MockUpstreamStatus:         "verified",
 		LiveSmokeRequiredForStable: true,
-		LiveSmokeStatus:            "missing",
-		Reason:                     "FCC and mock upstream/contract tests are required; recorded live smoke/E2E evidence is missing, so this release is beta.",
+		LiveSmokeStatus:            "verified",
+		Reason:                     "FCC and mock upstream/contract tests are verified; recorded live E2E evidence (docs/E2E-ACCEPTANCE-REPORT.md, 85/85 leaf commands PASS against GitLab CE 17.11.4) supports stable.",
 		RequiredEvidence: []string{
 			"functional_contract_coverage_100",
 			"mock_upstream_contract_tests",

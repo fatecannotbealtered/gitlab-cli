@@ -80,7 +80,7 @@ List command payloads live under `data`; use `gitlab-cli reference --compact` to
 }
 ```
 
-Errors are printed as JSON to stderr in `--format json`; stdout is empty on failure. Progress and diagnostics also go to stderr.
+In `--format json` the failure envelope is the single JSON document on stdout — parse stdout and check `ok` first. Progress and diagnostics go to stderr.
 
 | error.code | Typical cause |
 |-----------|----------------|

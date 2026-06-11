@@ -183,7 +183,8 @@ func RetryableErrorCode(code ErrorCode) bool {
 	}
 }
 
-// PrintErrorJSON outputs a machine-readable error envelope as JSON to stderr.
+// PrintErrorJSON outputs the machine-readable error envelope as the single
+// JSON document on stdout (CLI-SPEC §4): agents always parse stdout.
 func PrintErrorJSON(msg string, statusCode int) {
 	code := ErrorCodeFromStatus(statusCode)
 	if statusCode == 0 {
@@ -204,8 +205,8 @@ func emitErrorPayload(msg string, statusCode int, code ErrorCode) {
 	}
 	data, err := emitJSONMarshal(payload)
 	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, `{"ok":false,"schema_version":%q,"meta":{"duration_ms":%d},"error":{"code":%q,"message":%q,"details":{},"retryable":false}}`+"\n", SchemaVersion, commandDurationMS(), code, msg)
+		_, _ = fmt.Fprintf(os.Stdout, `{"ok":false,"schema_version":%q,"meta":{"duration_ms":%d},"error":{"code":%q,"message":%q,"details":{},"retryable":false}}`+"\n", SchemaVersion, commandDurationMS(), code, msg)
 		return
 	}
-	_, _ = fmt.Fprintln(os.Stderr, string(data))
+	fmt.Println(string(data))
 }

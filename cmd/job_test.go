@@ -1199,7 +1199,7 @@ func TestJob_Wait_ContextCancelledDuringSleep(t *testing.T) {
 	}
 	t.Cleanup(func() { jobWaitCmd.RunE = origRunE })
 
-	stderr := captureStderr(t, func() {
+	stderr := captureCombinedOutput(t, func() {
 		rootCmd.SetArgs([]string{"job", "wait", "--project", "42", "99", "--interval", "1"})
 		_ = rootCmd.Execute()
 	})

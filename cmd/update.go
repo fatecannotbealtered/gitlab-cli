@@ -217,7 +217,7 @@ func runUpdate(cmd *cobra.Command, _ []string) error {
 	result["skill_sync_status"] = "synced"
 	result["hint"] = fmt.Sprintf("run \"gitlab-cli changelog --since %s\" to see what changed", normalizeVersion(plan.CurrentVersion))
 	if applied.PendingPath != "" {
-		result["pendingPath"] = applied.PendingPath
+		result["pending_path"] = applied.PendingPath
 	}
 	printUpdateResult(result)
 	return nil
@@ -658,10 +658,10 @@ func copyFile(src, dst string, mode os.FileMode) error {
 func updateResultMap(plan updatePlan, status string) map[string]any {
 	return map[string]any{
 		"status":             status,
-		"currentVersion":     plan.CurrentVersion,
-		"targetVersion":      plan.TargetVersion,
-		"updateAvailable":    plan.UpdateAvailable,
-		"releaseUrl":         plan.ReleaseURL,
+		"current_version":    plan.CurrentVersion,
+		"target_version":     plan.TargetVersion,
+		"update_available":   plan.UpdateAvailable,
+		"release_url":        plan.ReleaseURL,
 		"asset":              plan.AssetName,
 		"signature_status":   "not_checked",
 		"skill_sync_command": plan.SkillSyncCommand,
@@ -675,8 +675,8 @@ func printUpdateResult(result map[string]any) {
 		return
 	}
 	status, _ := result["status"].(string)
-	current, _ := result["currentVersion"].(string)
-	target, _ := result["targetVersion"].(string)
+	current, _ := result["current_version"].(string)
+	target, _ := result["target_version"].(string)
 	switch status {
 	case "up_to_date":
 		output.Success(fmt.Sprintf("gitlab-cli is up to date (%s)", current))

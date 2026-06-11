@@ -167,7 +167,7 @@ func TestRequireConfirm_NonTTY_ExitCancelled(t *testing.T) {
 	lastExit = 0
 	jsonMode = true
 
-	stderr := captureStderr(t, func() {
+	stderr := captureCombinedOutput(t, func() {
 		rootCmd.SetArgs([]string{"issue", "close", "5", "--project", "group/proj", "--json"})
 		_ = rootCmd.Execute()
 	})
