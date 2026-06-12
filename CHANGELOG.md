@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Working FCC enumeration guard (`TestFCC_EveryLeafCommandHasTest`): enumerates every leaf command from live `reference` output and asserts each has a command-level test; skips while `fcc_status` is honestly declared non-verified, so the claim cannot be flipped without coverage.
+- Command-level tests for `changelog` (`--json` and `--since`).
 - `changelog [--since <version>]`, derived from `CHANGELOG.md`, so agents can refresh knowledge after an update.
 - Root `AGENTS.md`, `NOTICE.md`, `CODE_OF_CONDUCT.md`, `docs/COMPATIBILITY.md`, and `docs/OPEN_SOURCE_CHECKLIST.md` to align the open-source repo layout.
 - `context`, `doctor`, and `reference` now report tool version, risk tier, security metadata, and Skill minimum-version expectations.
@@ -33,6 +35,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Saved `config.json` and `profiles.json` credentials are encrypted at rest with AES-256-GCM and a machine-bound PBKDF2-SHA256 key.
 - Release checksums are signed with Sigstore/Cosign, and install/update paths report signature verification status separately from checksum verification.
 - The npm install script now hard-fails if checksum verification cannot be completed.
+
+### Fixed
+
+- The previous `TestUnit_EveryLeafCommandHasTest` was a silent no-op: it parsed `commands` at the envelope top level instead of under `data`, enumerated zero leaves, and always passed. Replaced by the guard above, which fails on a zero leaf count.
 
 
 ## [1.2.0] - 2026-06-07
