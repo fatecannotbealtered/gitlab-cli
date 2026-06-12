@@ -217,6 +217,12 @@ func denyDirRead(t *testing.T, dir string) {
 		t.Cleanup(func() {
 			_ = exec.Command("icacls", dir, "/grant", os.Getenv("USERNAME")+":(OI)(CI)F").Run()
 		})
+		// Privileged processes (e.g. GitHub Actions runners run elevated)
+		// bypass deny ACLs via SeBackupPrivilege, so the deny may not bite.
+		// The scenario is then untestable on this machine: skip, don't fail.
+		if _, err := os.ReadDir(dir); err == nil {
+			t.Skip("process bypasses deny ACL (privileged); cannot simulate unreadable dir")
+		}
 	default:
 		if err := os.Chmod(dir, 0000); err != nil {
 			t.Fatalf("Chmod: %v", err)
