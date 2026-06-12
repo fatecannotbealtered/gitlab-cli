@@ -63,16 +63,32 @@ func BuildCommandCases(f *Fixture) []CommandCase {
 		return ""
 	}
 
+	authHomeEnv := func(f *Fixture) map[string]string {
+		home := TempConfigDirForAuth(f)
+		return map[string]string{"HOME": home, "USERPROFILE": home}
+	}
+
 	return []CommandCase{
-		// auth
+		// auth — write commands exercise the dry-run contract path here; the
+		// full login→keyring→recover→logout cycle is covered by the recorded
+		// manual live smoke (docs/E2E-ACCEPTANCE-REPORT.md).
 		{Path: "auth login", Args: func(f *Fixture) []string {
-			return j("auth", "login", "--host", host, "--token", token)
-		}, ExtraEnv: func(f *Fixture) map[string]string {
-			home := TempConfigDirForAuth(f)
-			return map[string]string{"HOME": home, "USERPROFILE": home}
-		}},
+			return dry("auth", "login", "--host", host, "--token", token)
+		}, ExtraEnv: authHomeEnv},
 		{Path: "auth logout", Args: func(f *Fixture) []string { return dry("auth", "logout") }},
 		{Path: "auth status", Args: func(f *Fixture) []string { return j("auth", "status") }},
+		{Path: "auth profile list", Args: func(f *Fixture) []string {
+			return j("auth", "profile", "list")
+		}, ExtraEnv: authHomeEnv},
+		{Path: "auth profile use", Args: func(f *Fixture) []string {
+			return dry("auth", "profile", "use", "default")
+		}, ExtraEnv: authHomeEnv},
+		{Path: "auth profile remove", Args: func(f *Fixture) []string {
+			return dry("auth", "profile", "remove", "default")
+		}, ExtraEnv: authHomeEnv},
+
+		// lifecycle
+		{Path: "changelog", Args: func(f *Fixture) []string { return j("changelog") }},
 
 		// top-level read
 		{Path: "context", Args: func(f *Fixture) []string { return j("context") }, WorkDir: func(f *Fixture) string { return f.GitCloneDir }, SkipIf: skipNoGit},

@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Re-recorded live E2E acceptance against GitLab EE 18.8.10 (was CE 17.11.4): 90 leaf commands, 89 PASS / 1 SKIP-by-design, plus manual keyring and confirm-chain smoke (`docs/E2E-ACCEPTANCE-REPORT.md`, 2026-06-12).
+- Integration cases for the four leaves the rewritten guard found uncovered: `auth profile list/use/remove` and `changelog`; the `auth login` case now exercises the dry-run contract path (bare invocation correctly exits 5).
+- `TestLeafPathsParsesEnvelope` guard-of-the-guard: fails when e2e leaf enumeration returns an implausibly small tree instead of silently passing.
 - Working FCC enumeration guard (`TestFCC_EveryLeafCommandHasTest`): enumerates every leaf command from live `reference` output and asserts each has a command-level test; skips while `fcc_status` is honestly declared non-verified, so the claim cannot be flipped without coverage.
 - Command-level tests for `changelog` (`--json` and `--since`).
 - `changelog [--since <version>]`, derived from `CHANGELOG.md`, so agents can refresh knowledge after an update.
@@ -41,6 +44,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - The previous `TestUnit_EveryLeafCommandHasTest` was a silent no-op: it parsed `commands` at the envelope top level instead of under `data`, enumerated zero leaves, and always passed. Replaced by the guard above, which fails on a zero leaf count.
+- The e2e `LeafPaths()` enumerator had the same wrong-envelope-level bug: it read top-level `commands`, returned 0 leaves, and `TestAllCommands_EveryLeaf` fataled before running a single sub-test — the first acceptance run executed zero commands while appearing to spend 13 minutes testing. Now parses `data.commands`.
+- E2E runner config lost `clone_url` on re-registration, so every pipeline failed (`localhost:8929` unreachable inside the runner container) and bootstrap waited out its 20-minute deadline; restored `clone_url = "http://gitlab:8929"` and documented it in `docs/E2E.md`.
 
 
 ## [1.2.0] - 2026-06-07
