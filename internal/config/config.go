@@ -189,7 +189,8 @@ func Delete() error {
 	return nil
 }
 
-// ClearStoredCredentials removes config.json and profiles.json (logout).
+// ClearStoredCredentials removes config.json, profiles.json, and the keyring
+// master key (logout).
 func ClearStoredCredentials() error {
 	if err := Delete(); err != nil {
 		return err
@@ -198,6 +199,8 @@ func ClearStoredCredentials() error {
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("deleting profiles: %w", err)
 	}
+	// Best-effort: no key exists for machine-bound or env-only setups.
+	_ = keyringDelete(keyringService, keyringMasterAccount)
 	return nil
 }
 

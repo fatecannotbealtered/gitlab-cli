@@ -31,6 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- The credential-file AES master key is now a random 32-byte secret held by the OS keyring (envelope `kdf: keyring-master-key-v1`), so exfiltrated `config.json`/`profiles.json` carry nothing decryptable. Machine-bound derivation remains the fallback and still decrypts legacy files; `context.data.credentials.storage` reports the active backend, and logout removes the keyring key.
+- Synced `.agent/` SEC-SPEC from the template: credential-at-rest is now the keyring three-part pattern (password discarded after login / secrets in the OS keyring / zero-secret config), file encryption demoted to a visible fallback, env vars as the recommended secret channel, and an honest note on Windows `0600` semantics.
 - Confirm tokens are now signed with a machine-local HMAC key (`confirm.secret`, created on first use with 0600 permissions) so they cannot be fabricated without running `--dry-run` on the same machine.
 - Saved `config.json` and `profiles.json` credentials are encrypted at rest with AES-256-GCM and a machine-bound PBKDF2-SHA256 key.
 - Release checksums are signed with Sigstore/Cosign, and install/update paths report signature verification status separately from checksum verification.

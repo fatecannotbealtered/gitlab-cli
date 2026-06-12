@@ -43,7 +43,8 @@ func encodeEncryptedJSON(v any) ([]byte, error) {
 	if _, err := rand.Read(salt); err != nil {
 		return nil, fmt.Errorf("generating salt: %w", err)
 	}
-	key := pbkdf2SHA256(machineBoundSecret(), salt, encryptedIterations, 32)
+	secret, kdfName := masterKeySource()
+	key := pbkdf2SHA256(secret, salt, encryptedIterations, 32)
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, fmt.Errorf("creating cipher: %w", err)
@@ -61,7 +62,7 @@ func encodeEncryptedJSON(v any) ([]byte, error) {
 		Version:    encryptedFileVersion,
 		Encrypted:  true,
 		Cipher:     encryptedCipher,
-		KDF:        encryptedKDF,
+		KDF:        kdfName,
 		Iterations: encryptedIterations,
 		Salt:       base64.StdEncoding.EncodeToString(salt),
 		Nonce:      base64.StdEncoding.EncodeToString(nonce),
@@ -110,9 +111,6 @@ func decryptEnvelope(data []byte) ([]byte, error) {
 	if env.Cipher != encryptedCipher {
 		return nil, fmt.Errorf("unsupported credential cipher %q", env.Cipher)
 	}
-	if env.KDF != encryptedKDF {
-		return nil, fmt.Errorf("unsupported credential kdf %q", env.KDF)
-	}
 	if env.Iterations <= 0 {
 		return nil, fmt.Errorf("invalid credential kdf iterations")
 	}
@@ -129,7 +127,11 @@ func decryptEnvelope(data []byte) ([]byte, error) {
 		return nil, fmt.Errorf("decoding encrypted data: %w", err)
 	}
 
-	key := pbkdf2SHA256(machineBoundSecret(), salt, env.Iterations, 32)
+	secret, err := masterKeyForKDF(env.KDF)
+	if err != nil {
+		return nil, err
+	}
+	key := pbkdf2SHA256(secret, salt, env.Iterations, 32)
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, fmt.Errorf("creating cipher: %w", err)
@@ -146,6 +148,19 @@ func decryptEnvelope(data []byte) ([]byte, error) {
 		return nil, fmt.Errorf("decrypting credentials: %w", err)
 	}
 	return plain, nil
+}
+
+// readEnvelopeHeader returns the encrypted-file header of path, when present.
+func readEnvelopeHeader(path string) (encryptedFile, bool) {
+	var env encryptedFile
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return env, false
+	}
+	if err := json.Unmarshal(data, &env); err != nil || !env.Encrypted {
+		return env, false
+	}
+	return env, true
 }
 
 func machineBoundSecret() []byte {

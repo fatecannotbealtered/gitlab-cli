@@ -83,6 +83,7 @@ type contextResult struct {
 type contextCredentials struct {
 	Configured       bool   `json:"configured"`
 	Source           string `json:"source"`
+	Storage          string `json:"storage,omitempty"`
 	EncryptedAtRest  bool   `json:"encrypted_at_rest"`
 	PlaintextExposed bool   `json:"plaintext_exposed"`
 }
@@ -165,6 +166,7 @@ func runContext(cmd *cobra.Command, _ []string) error {
 	}
 	result.Config["host"] = cfg.Host
 	result.Credentials.Configured = true
+	result.Credentials.Storage = config.CredentialStorageBackend()
 	result.Credentials.PlaintextExposed = !result.Credentials.EncryptedAtRest
 
 	// newClient uses MustLoad which validates host+token; since we already checked
