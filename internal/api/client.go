@@ -498,9 +498,7 @@ var uploadCreateFormFile = func(w *multipart.Writer, fieldName, fileName string)
 }
 
 // uploadCopyFile copies upload content into the multipart body; overridden in tests. // test hook
-var uploadCopyFile = func(dst io.Writer, src io.Reader) (int64, error) {
-	return io.Copy(dst, src)
-}
+var uploadCopyFile = io.Copy
 
 func (c *Client) Upload(ctx context.Context, path, fieldName, filePath string) ([]byte, error) {
 	for attempt := 0; ; attempt++ {

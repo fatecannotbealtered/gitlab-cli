@@ -150,7 +150,8 @@ func printChangelogText(cmd *cobra.Command, result changelogResult) {
 			if len(items) == 0 {
 				continue
 			}
-			_, _ = fmt.Fprintf(out, "### %s\n", strings.Title(cat))
+			// categories are fixed ASCII words; uppercase the first byte instead of pulling in x/text
+			_, _ = fmt.Fprintf(out, "### %s\n", strings.ToUpper(cat[:1])+cat[1:])
 			for _, item := range items {
 				_, _ = fmt.Fprintf(out, "- %s\n", item)
 			}
