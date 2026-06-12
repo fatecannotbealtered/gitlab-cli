@@ -1,10 +1,10 @@
 ---
 name: gitlab-cli
-version: "1.2.0"
+version: "1.2.1"
 description: GitLab CLI for AI Agents. JSON is the default; use --compact for token efficiency and --format text/raw only when needed. Read reference/*.md for the module you need — do not load the whole skill upfront.
 license: MIT
 user-invocable: true
-metadata: {"requires":{"bins":["gitlab-cli"],"min_version":"1.2.0"}}
+metadata: {"requires":{"bins":["gitlab-cli"],"min_version":"1.2.1"}}
 ---
 
 # gitlab-cli
@@ -56,7 +56,7 @@ gitlab-cli context --compact      # who/where/project; exit 3 if not authed (--n
 gitlab-cli doctor --compact       # auth + latency + version/min_version check
 ```
 
-First-time setup: ask user for GitLab URL + PAT (`api` scope), then `gitlab-cli auth login --host <URL> --profile default` (token via env recommended).
+First-time setup: ask user for GitLab URL + PAT (`api` scope). `auth login` is a write command — in JSON mode run `gitlab-cli auth login --host <URL> --token <PAT> --dry-run`, then retry with `--confirm <confirm_token>` (the token lands in the OS-keyring-backed credential store; prefer env vars for short-lived sessions). Interactive humans can just run `gitlab-cli auth login --format text`.
 
 ## Agent defaults
 

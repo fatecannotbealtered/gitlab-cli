@@ -60,7 +60,7 @@ const (
 const (
 	toolRiskTier    = "T1"
 	toolBlastRadius = "Can read and mutate GitLab project state including issues, merge requests, CI jobs, releases, repository files, branches, and CI/CD variables with the configured token permissions."
-	skillMinVersion = "1.2.0"
+	skillMinVersion = "1.2.1"
 )
 
 // fieldsFlag is set by commands that opt into the global --fields flag.

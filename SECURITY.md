@@ -22,7 +22,8 @@ A response and triage decision will normally arrive within **5 business days**.
 ## What this CLI handles
 
 - A user-supplied **GitLab Personal Access Token (PAT)** with `api` scope.
-- Saved credentials are stored in `~/.gitlab-cli/config.json` and `~/.gitlab-cli/profiles.json` as AES-256-GCM encrypted envelopes (`0600`, directory `0700`) and/or read from environment variables.
+- Saved credentials are stored in `~/.gitlab-cli/config.json` and `~/.gitlab-cli/profiles.json` as AES-256-GCM encrypted envelopes (`0600`, directory `0700`; on Windows these are best-effort, not ACL-equivalent) and/or read from environment variables.
+- The AES master key is a random 32-byte secret held by the OS keyring (Windows Credential Manager / macOS Keychain / Linux Secret Service; envelope `kdf: keyring-master-key-v1`), so exfiltrated credential files carry nothing decryptable on their own. Machine-bound key derivation remains the fallback when no keyring service exists and still decrypts legacy files; `context.data.credentials.storage` reports the active backend, and `auth logout` removes the keyring entry.
 - The token is **never logged** by this CLI: every audit-log entry redacts `--token`, `-t`, `--private-token`, `--oauth-token`, `--job-token`, `--password`, `--value`, and `--variable` flag values.
 - All network traffic goes to the host configured by the user. HTTPS is required by default; `http://` is allowed only if the user explicitly opts in for local development.
 

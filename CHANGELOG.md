@@ -5,7 +5,7 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.2.1] - 2026-06-12
 
 ### Added
 
@@ -22,7 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Synced the `.agent/` spec copies from the ai-native-cli-spec template: stdout failure envelope (§4), HMAC confirm-token requirement (§7), signature_status/signature_verified fields (§14), Skill frontmatter `version` rule.
 - Unified the golangci-lint v2 toolchain: Makefile installs from the `/v2` module path and CI uses `golangci-lint-action@v8` to match the v2 config format.
-- `release_readiness` now declares `stable` with `live_smoke_status: verified`, citing the recorded acceptance evidence in `docs/E2E-ACCEPTANCE-REPORT.md` (85/85 leaf commands PASS).
+- `release_readiness` now declares `stable` with `live_smoke_status: verified`, citing the recorded acceptance evidence in `docs/E2E-ACCEPTANCE-REPORT.md` (2026-06-12: 90 leaf commands, 89 PASS / 1 SKIP-by-design against GitLab EE 18.8.10).
 - Top-level `update` JSON keys are now snake_case (`current_version`, `target_version`, `update_available`, `release_url`, `pending_path`); text output reads the same keys.
 - List-style JSON commands now use a consistent `items` / `count` / `hasMore` list envelope.
 - JSON IDs are emitted as strings across flattened GitLab resources.
