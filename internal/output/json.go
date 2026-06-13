@@ -31,11 +31,13 @@ type Meta struct {
 }
 
 type Envelope struct {
-	OK            bool           `json:"ok"`
-	SchemaVersion string         `json:"schema_version"`
-	Data          any            `json:"data,omitempty"`
-	Meta          Meta           `json:"meta,omitempty"`
-	Error         *EnvelopeError `json:"error,omitempty"`
+	OK            bool   `json:"ok"`
+	SchemaVersion string `json:"schema_version"`
+	Data          any    `json:"data,omitempty"`
+	// Meta is always emitted (no omitempty): every response carries meta, and
+	// duration_ms:0 is a valid value an agent should always see.
+	Meta  Meta           `json:"meta"`
+	Error *EnvelopeError `json:"error,omitempty"`
 }
 
 type EnvelopeError struct {

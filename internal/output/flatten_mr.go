@@ -12,6 +12,9 @@ type FlatMR struct {
 	Author string `json:"author"`
 	WebURL string `json:"webUrl"`
 	Draft  bool   `json:"draft"`
+	// Description carries the full MR body. It is only emitted by single-MR reads
+	// (MRDetailToMap); list output omits it for token efficiency.
+	Description string `json:"description,omitempty"`
 }
 
 // ToFlatMR converts a MergeRequest to FlatMR.
@@ -21,20 +24,31 @@ func ToFlatMR(mr *api.MergeRequest) FlatMR {
 		author = mr.Author.Username
 	}
 	return FlatMR{
-		IID:    mr.IID,
-		Title:  mr.Title,
-		State:  mr.State,
-		Source: mr.SourceBranch,
-		Target: mr.TargetBranch,
-		Author: author,
-		WebURL: mr.WebURL,
-		Draft:  mr.Draft,
+		IID:         mr.IID,
+		Title:       mr.Title,
+		State:       mr.State,
+		Source:      mr.SourceBranch,
+		Target:      mr.TargetBranch,
+		Author:      author,
+		WebURL:      mr.WebURL,
+		Draft:       mr.Draft,
+		Description: mr.Description,
 	}
 }
 
-// MRToMap converts a FlatMR to a map for field filtering.
+// MRToMap converts a FlatMR to a map for field filtering (list shape, no body).
 func MRToMap(m FlatMR) map[string]any {
-	return MarkUntrusted(map[string]any{
+	return mrToMap(m, false)
+}
+
+// MRDetailToMap is the single-MR read shape: it adds the full description body
+// (tagged _untrusted) that MRToMap omits for token efficiency.
+func MRDetailToMap(m FlatMR) map[string]any {
+	return mrToMap(m, true)
+}
+
+func mrToMap(m FlatMR, withDescription bool) map[string]any {
+	out := map[string]any{
 		"iid":    ID(m.IID),
 		"title":  m.Title,
 		"state":  m.State,
@@ -43,7 +57,14 @@ func MRToMap(m FlatMR) map[string]any {
 		"author": m.Author,
 		"webUrl": m.WebURL,
 		"draft":  m.Draft,
-	}, "title")
+	}
+	// author is an attacker-controllable username; tag it untrusted with title.
+	untrusted := []string{"title", "author"}
+	if withDescription && m.Description != "" {
+		out["description"] = m.Description
+		untrusted = append(untrusted, "description")
+	}
+	return MarkUntrusted(out, untrusted...)
 }
 
 // FlatMRNote is a token-efficient representation of a GitLab MR note.
@@ -75,5 +96,5 @@ func MRNoteToMap(n FlatMRNote) map[string]any {
 		"author":  n.Author,
 		"body":    n.Body,
 		"created": n.Created,
-	}, "body")
+	}, "body", "author")
 }

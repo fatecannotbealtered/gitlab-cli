@@ -210,7 +210,7 @@ var mrGetCmd = &cobra.Command{
 		}
 		if jsonMode {
 			fields := getFieldsFlag(cmd)
-			output.PrintJSON(output.FilterMap(output.MRToMap(output.ToFlatMR(mr)), fields))
+			output.PrintJSON(output.FilterMap(output.MRDetailToMap(output.ToFlatMR(mr)), fields))
 			return nil
 		}
 		printMRDetail(mr)

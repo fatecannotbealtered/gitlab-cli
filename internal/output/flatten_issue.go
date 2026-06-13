@@ -11,11 +11,24 @@ type FlatIssue struct {
 	Assignee  string `json:"assignee,omitempty"`
 	Labels    string `json:"labels,omitempty"`
 	Milestone string `json:"milestone,omitempty"`
-	WebURL    string `json:"webUrl,omitempty"`
+	// Description carries the full issue body. It is only emitted by single-issue
+	// reads (IssueDetailToMap); list output omits it for token efficiency.
+	Description string `json:"description,omitempty"`
+	WebURL      string `json:"webUrl,omitempty"`
 }
 
-// IssueToMap converts a FlatIssue to a map for field filtering.
+// IssueToMap converts a FlatIssue to a map for field filtering (list shape, no body).
 func IssueToMap(f FlatIssue) map[string]any {
+	return issueToMap(f, false)
+}
+
+// IssueDetailToMap is the single-issue read shape: it adds the full description
+// body (tagged _untrusted) that IssueToMap omits for token efficiency.
+func IssueDetailToMap(f FlatIssue) map[string]any {
+	return issueToMap(f, true)
+}
+
+func issueToMap(f FlatIssue, withDescription bool) map[string]any {
 	m := map[string]any{
 		"iid":   ID(f.IID),
 		"title": f.Title,
@@ -36,7 +49,14 @@ func IssueToMap(f FlatIssue) map[string]any {
 	if f.WebURL != "" {
 		m["webUrl"] = f.WebURL
 	}
-	return MarkUntrusted(m, "title", "labels", "milestone")
+	// author/assignee display-adjacent usernames are attacker-controllable, so
+	// tag them untrusted alongside title/labels/milestone.
+	untrusted := []string{"title", "labels", "milestone", "author", "assignee"}
+	if withDescription && f.Description != "" {
+		m["description"] = f.Description
+		untrusted = append(untrusted, "description")
+	}
+	return MarkUntrusted(m, untrusted...)
 }
 
 // ─── Label ───────────────────────────────────────────────────────────────────

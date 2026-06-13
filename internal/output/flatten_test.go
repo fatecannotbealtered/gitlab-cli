@@ -1,6 +1,7 @@
 package output
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -40,6 +41,69 @@ func TestMRToMap_Keys(t *testing.T) {
 	}
 	m := MRToMap(f)
 	assertKeys(t, "MRToMap", m, []string{"iid", "title", "state", "source", "target", "author", "webUrl", "draft"})
+}
+
+func untrustedSet(m map[string]any) map[string]bool {
+	set := map[string]bool{}
+	if raw, ok := m[UntrustedKey].([]string); ok {
+		for _, f := range raw {
+			set[f] = true
+		}
+	}
+	return set
+}
+
+// IssueDetailToMap (the single-issue read shape) must include the body and tag
+// it untrusted along with the attacker-controllable usernames; the list shape
+// must omit the body for token efficiency.
+func TestIssueDetailToMap_BodyAndUntrusted(t *testing.T) {
+	f := FlatIssue{IID: 2, Title: "t", State: "opened", Author: "alice", Assignee: "bob", Description: "hello body"}
+
+	list := IssueToMap(f)
+	if _, ok := list["description"]; ok {
+		t.Fatal("IssueToMap (list) should omit description for token efficiency")
+	}
+
+	detail := IssueDetailToMap(f)
+	if detail["description"] != "hello body" {
+		t.Fatalf("IssueDetailToMap missing description, got %v", detail["description"])
+	}
+	u := untrustedSet(detail)
+	for _, field := range []string{"title", "author", "assignee", "description"} {
+		if !u[field] {
+			t.Errorf("IssueDetailToMap should tag %q as _untrusted", field)
+		}
+	}
+}
+
+func TestMRDetailToMap_BodyAndUntrusted(t *testing.T) {
+	f := FlatMR{IID: 1, Title: "t", State: "opened", Source: "feat", Target: "main", Author: "alice", Description: "mr body"}
+
+	if _, ok := MRToMap(f)["description"]; ok {
+		t.Fatal("MRToMap (list) should omit description")
+	}
+
+	detail := MRDetailToMap(f)
+	if detail["description"] != "mr body" {
+		t.Fatalf("MRDetailToMap missing description, got %v", detail["description"])
+	}
+	u := untrustedSet(detail)
+	for _, field := range []string{"title", "author", "description"} {
+		if !u[field] {
+			t.Errorf("MRDetailToMap should tag %q as _untrusted", field)
+		}
+	}
+}
+
+// Every envelope must carry meta (no omitempty); duration_ms:0 is a valid value.
+func TestEnvelopeAlwaysHasMeta(t *testing.T) {
+	data, err := json.Marshal(SuccessEnvelope(map[string]any{"x": 1}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"meta"`) || !strings.Contains(string(data), `"duration_ms"`) {
+		t.Fatalf("envelope missing meta/duration_ms: %s", data)
+	}
 }
 
 func TestPipelineToMap_Keys(t *testing.T) {

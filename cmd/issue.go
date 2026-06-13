@@ -177,7 +177,7 @@ var issueGetCmd = &cobra.Command{
 		}
 		if jsonMode {
 			fields := getFieldsFlag(cmd)
-			output.PrintJSON(output.FilterMap(output.IssueToMap(toFlatIssue(iss)), fields))
+			output.PrintJSON(output.FilterMap(output.IssueDetailToMap(toFlatIssue(iss)), fields))
 			return nil
 		}
 		printIssueSummary(iss)
@@ -456,11 +456,12 @@ var issueLabelCmd = &cobra.Command{
 
 func toFlatIssue(iss *api.Issue) output.FlatIssue {
 	f := output.FlatIssue{
-		IID:    iss.IID,
-		Title:  iss.Title,
-		State:  iss.State,
-		Labels: strings.Join(iss.Labels, ","),
-		WebURL: iss.WebURL,
+		IID:         iss.IID,
+		Title:       iss.Title,
+		State:       iss.State,
+		Labels:      strings.Join(iss.Labels, ","),
+		Description: iss.Description,
+		WebURL:      iss.WebURL,
 	}
 	if iss.Author != nil {
 		f.Author = iss.Author.Username

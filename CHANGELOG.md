@@ -5,6 +5,17 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `issue get` and `mr get` now return the full `description` body (tagged `_untrusted`), so an agent can read what an issue/MR actually says. List output still omits the body for token efficiency.
+
+### Changed
+
+- `author`/`assignee` usernames on issues and MRs, and `author` on MR notes, are now tagged `_untrusted` (attacker-controllable display-adjacent fields), matching the tagging already applied to titles and bodies.
+- `meta` is now always emitted in the envelope (removed a misleading `omitempty`); every response carries `meta.duration_ms`, and `0` is a valid value an agent should always see.
+
 ## [1.2.1] - 2026-06-12
 
 ### Added
