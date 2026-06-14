@@ -82,6 +82,115 @@ func TestProjectMembers_JSON(t *testing.T) {
 	}
 }
 
+func TestProjectCreate_DryRun_JSON(t *testing.T) {
+	origDR := dryRun
+	origJM := jsonMode
+	origExit := lastExit
+	defer func() { dryRun = origDR; jsonMode = origJM; lastExit = origExit }()
+	dryRun = true
+	jsonMode = true
+	lastExit = 0
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "test-token")
+
+	out := captureStdout(t, func() {
+		rootCmd.SetArgs([]string{"project", "create", "--name", "My App", "--visibility", "private", "--dry-run", "--json"})
+		_ = rootCmd.Execute()
+	})
+	if lastExit != ExitOK {
+		t.Errorf("expected exit 0 for dry-run, got %d", lastExit)
+	}
+	for _, want := range []string{`"confirm_token"`, `"action": "create project"`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in dry-run output, got:\n%s", want, out)
+		}
+	}
+}
+
+func TestProjectCreate_JSON(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"id":77,"name":"My App","path_with_namespace":"alice/my-app","visibility":"private","web_url":"https://gitlab.example.com/alice/my-app","default_branch":"main"}`))
+	}))
+	defer srv.Close()
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origDR := dryRun
+	origJM := jsonMode
+	defer func() { dryRun = origDR; jsonMode = origJM }()
+	dryRun = false
+	out := captureStdout(t, func() {
+		rootCmd.SetArgs(withConfirmForTest(t, []string{"project", "create", "--name", "My App", "--visibility", "private", "--json"}))
+		_ = rootCmd.Execute()
+	})
+	if !strings.Contains(out, `"alice/my-app"`) || !strings.Contains(out, `"private"`) {
+		t.Errorf("expected created project JSON, got:\n%s", out)
+	}
+}
+
+func TestProjectCreate_MissingName(t *testing.T) {
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	origDR := dryRun
+	defer func() { lastExit = origExit; dryRun = origDR }()
+	lastExit = 0
+	dryRun = false
+	_ = projectCreateCmd.Flags().Set("name", "")
+	rootCmd.SetArgs([]string{"project", "create", "--visibility", "private"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitBadArgs {
+		t.Errorf("exit = %d, want %d", lastExit, ExitBadArgs)
+	}
+}
+
+func TestProjectCreate_InvalidVisibility(t *testing.T) {
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	origDR := dryRun
+	defer func() { lastExit = origExit; dryRun = origDR }()
+	lastExit = 0
+	dryRun = false
+	_ = projectCreateCmd.Flags().Set("name", "X")
+	_ = projectCreateCmd.Flags().Set("visibility", "")
+	rootCmd.SetArgs([]string{"project", "create", "--name", "X", "--visibility", "bogus"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitBadArgs {
+		t.Errorf("exit = %d, want %d", lastExit, ExitBadArgs)
+	}
+}
+
+func TestProjectCreate_APIError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"message":{"name":["has already been taken"]}}`))
+	}))
+	defer srv.Close()
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
+	origExit := lastExit
+	origDR := dryRun
+	defer func() { lastExit = origExit; dryRun = origDR }()
+	lastExit = 0
+	dryRun = false
+	_ = projectCreateCmd.Flags().Set("visibility", "")
+	_ = projectCreateCmd.Flags().Set("name", "")
+	out := captureStdout(t, func() {
+		rootCmd.SetArgs(withConfirmForTest(t, []string{"project", "create", "--name", "Dup", "--json"}))
+		_ = rootCmd.Execute()
+	})
+	_ = out
+	if lastExit == ExitOK {
+		t.Errorf("expected non-zero exit for API error, got %d", lastExit)
+	}
+}
+
 func TestProjectList_MissingAuth(t *testing.T) {
 	origExit := lastExit
 	defer func() { lastExit = origExit }()

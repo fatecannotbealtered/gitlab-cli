@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -99,20 +98,30 @@ var jobLogCmd = &cobra.Command{
 		}
 
 		if jsonMode {
-			var buf bytes.Buffer
-			if err := client.Jobs.LogStream(ctx, project, jobID, &buf, 0); err != nil {
-				return handleAPIError(err, jsonMode)
+			// NDJSON stream (CLI-SPEC §5): one {type:"chunk"} line per new trace
+			// range, then a final {type:"summary"} line. GitLab has no native
+			// trace streaming, so LogStreamStatus polls with a byte offset.
+			totalBytes := 0
+			chunks := 0
+			status, streamErr := client.Jobs.LogStreamStatus(ctx, project, jobID, 0, func(b []byte, offset int) error {
+				chunks++
+				totalBytes += len(b)
+				return output.PrintNDJSON("chunk", output.MarkUntrusted(map[string]any{
+					"jobId":  output.ID(jobID),
+					"offset": offset,
+					"bytes":  len(b),
+					"data":   string(b),
+				}, "data"))
+			})
+			if streamErr != nil {
+				return handleAPIError(streamErr, jsonMode)
 			}
-			j, err := client.Jobs.Get(apiCtx(), project, jobID)
-			if err != nil {
-				return handleAPIError(err, jsonMode)
-			}
-			output.PrintJSON(output.MarkUntrusted(map[string]any{
-				"id":     output.ID(j.ID),
-				"status": j.Status,
-				"log":    buf.String(),
-			}, "log"))
-			return nil
+			return output.PrintNDJSON("summary", map[string]any{
+				"jobId":      output.ID(jobID),
+				"status":     status,
+				"chunks":     chunks,
+				"totalBytes": totalBytes,
+			})
 		}
 
 		return client.Jobs.LogStream(ctx, project, jobID, os.Stdout, 0)

@@ -121,8 +121,10 @@ Full contracts (exit codes, error JSON, list envelope, audit): **[reference/cont
 | List open MRs | `gitlab-cli mr list --project G --compact` |
 | Merge MR | `gitlab-cli mr merge --project G 42 --dangerous --dry-run`, then retry with `--dangerous --confirm <confirm_token>` |
 | Comment on MR | `gitlab-cli mr comment add --project G 42 --body "..."` |
+| Reply in MR thread | `gitlab-cli mr discussion list --project G 42`, then `mr discussion reply --discussion-id <id> --body "..."` |
+| Create project | `gitlab-cli project create --name "My App" --visibility private --dry-run`, then `--confirm <confirm_token>` |
 | Wait for CI | `gitlab-cli pipeline wait --project G ID --timeout 600` |
-| Job log | `gitlab-cli job log --project G JOB_ID` |
+| Job log | `gitlab-cli job log --project G JOB_ID` (add `--follow --json` for NDJSON stream) |
 
 ## vs glab
 

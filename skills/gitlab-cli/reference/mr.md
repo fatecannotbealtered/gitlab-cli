@@ -13,6 +13,9 @@ gitlab-cli mr diff --project G 42                       # {"diff":"..."}
 gitlab-cli mr diff --project G 42 --format raw          # unified diff bytes
 
 gitlab-cli mr comment list --project G 42 --compact
+
+# Threaded discussions (richer than flat comments: each thread keeps its notes)
+gitlab-cli mr discussion list --project G 42 --compact
 ```
 
 ## Write
@@ -43,6 +46,10 @@ gitlab-cli mr reopen --project G 42
 gitlab-cli mr comment add --project G 42 --body "LGTM, nit: rename foo"
 gitlab-cli mr comment add --project G 42 --body-file review.txt
 gitlab-cli mr comment delete --project G 42 --note-id 99 --confirm <confirm_token>
+
+# Discussion threads: reply into an existing thread (discussion-id from `discussion list`)
+gitlab-cli mr discussion reply --project G 42 --discussion-id <id> --body "addressed" --dry-run
+gitlab-cli mr discussion reply --project G 42 --discussion-id <id> --body "addressed" --confirm <confirm_token>
 ```
 
 ## MR data payload (excerpt)
@@ -64,6 +71,21 @@ gitlab-cli mr comment delete --project G 42 --note-id 99 --confirm <confirm_toke
 
 ```json
 {"items":[...],"count":5,"limit":20,"hasMore":true,"all":false}
+```
+
+## Discussion thread payload (excerpt)
+
+`mr discussion list` returns threads, each with its ordered notes. Note `body`
+and `author` are **untrusted** (each note tagged `_untrusted`):
+
+```json
+{
+  "id": "a1b2c3",
+  "individualNote": false,
+  "notes": [
+    {"id": 101, "author": "alice", "body": "please extract helper", "created": "...", "_untrusted": ["body","author"]}
+  ]
+}
 ```
 
 ## Workflows

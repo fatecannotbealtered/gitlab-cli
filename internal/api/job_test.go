@@ -395,3 +395,36 @@ func TestJob_LogStream_DefaultInterval(t *testing.T) {
 		t.Fatalf("LogStream: %v", err)
 	}
 }
+
+func TestJob_LogStreamStatus(t *testing.T) {
+	var polls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/trace"):
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("line\n"))
+		case strings.HasSuffix(r.URL.Path, "/jobs/99"):
+			polls.Add(1)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":99,"status":"success"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	c := newTestClient(srv.URL)
+	var chunks int
+	status, err := c.Jobs.LogStreamStatus(context.Background(), "g/p", 99, time.Millisecond, func(b []byte, offset int) error {
+		chunks++
+		if offset != 0 || string(b) != "line\n" {
+			t.Errorf("unexpected chunk offset=%d body=%q", offset, b)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("LogStreamStatus: %v", err)
+	}
+	if status != "success" || chunks != 1 {
+		t.Errorf("status=%q chunks=%d", status, chunks)
+	}
+}

@@ -98,3 +98,38 @@ func MRNoteToMap(n FlatMRNote) map[string]any {
 		"created": n.Created,
 	}, "body", "author")
 }
+
+// FlatMRDiscussion is a token-efficient representation of an MR discussion thread.
+type FlatMRDiscussion struct {
+	ID             string       `json:"id"`
+	IndividualNote bool         `json:"individualNote"`
+	Notes          []FlatMRNote `json:"notes"`
+}
+
+// ToFlatMRDiscussion converts an api.MergeRequestDiscussion to FlatMRDiscussion.
+func ToFlatMRDiscussion(d *api.MergeRequestDiscussion) FlatMRDiscussion {
+	notes := make([]FlatMRNote, len(d.Notes))
+	for i := range d.Notes {
+		notes[i] = ToFlatMRNote(&d.Notes[i])
+	}
+	return FlatMRDiscussion{
+		ID:             d.ID,
+		IndividualNote: d.IndividualNote,
+		Notes:          notes,
+	}
+}
+
+// MRDiscussionToMap converts a FlatMRDiscussion to a map. The nested notes carry
+// the attacker-controllable body/author fields, each already tagged _untrusted by
+// MRNoteToMap, so an agent never confuses thread text for instructions.
+func MRDiscussionToMap(d FlatMRDiscussion) map[string]any {
+	notes := make([]map[string]any, len(d.Notes))
+	for i, n := range d.Notes {
+		notes[i] = MRNoteToMap(n)
+	}
+	return map[string]any{
+		"id":             d.ID,
+		"individualNote": d.IndividualNote,
+		"notes":          notes,
+	}
+}

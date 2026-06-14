@@ -30,6 +30,16 @@ func init() {
 	projectGetCmd.Flags().String("fields", "", "Comma-separated fields to include in JSON output")
 	projectCmd.AddCommand(projectGetCmd)
 
+	// create
+	projectCreateCmd.Flags().String("name", "", "Project name (required)")
+	projectCreateCmd.Flags().String("path", "", "Project path (slug); defaults from name")
+	projectCreateCmd.Flags().String("description", "", "Project description")
+	projectCreateCmd.Flags().String("visibility", "", "Visibility: private|internal|public")
+	projectCreateCmd.Flags().Int("namespace-id", 0, "Namespace (group/user) ID to create the project under")
+	projectCreateCmd.Flags().String("idempotency-key", "", "Idempotency-Key sent to GitLab so a retried create cannot duplicate the project")
+	projectCmd.AddCommand(projectCreateCmd)
+	markWrite(projectCreateCmd)
+
 	// members
 	projectMembersCmd.Flags().String("query", "", "Search query for members")
 	projectMembersCmd.Flags().Int("limit", 20, "Max results (1-100)")
@@ -121,6 +131,71 @@ var projectGetCmd = &cobra.Command{
 		fmt.Printf("Default Branch: %s\n", p.DefaultBranch)
 		if p.WebURL != "" {
 			fmt.Printf("URL:            %s\n", p.WebURL)
+		}
+		return nil
+	},
+}
+
+// ─── create ───────────────────────────────────────────────────────────────────
+
+var projectCreateCmd = &cobra.Command{
+	Use:   "create",
+	Short: "Create a new project",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		name, _ := cmd.Flags().GetString("name")
+		if name == "" {
+			return failArg("--name is required")
+		}
+		path, _ := cmd.Flags().GetString("path")
+		description, _ := cmd.Flags().GetString("description")
+		visibility, _ := cmd.Flags().GetString("visibility")
+		namespaceID, _ := cmd.Flags().GetInt("namespace-id")
+
+		// Validate visibility at the boundary so a typo fails fast with E_VALIDATION
+		// instead of surfacing as a GitLab 400 after the confirm round-trip.
+		if visibility != "" && visibility != "private" && visibility != "internal" && visibility != "public" {
+			return failArg("--visibility must be one of private|internal|public")
+		}
+
+		confirmDetail := map[string]any{"name": name}
+		if path != "" {
+			confirmDetail["path"] = path
+		}
+		if visibility != "" {
+			confirmDetail["visibility"] = visibility
+		}
+		if namespaceID != 0 {
+			confirmDetail["namespaceId"] = namespaceID
+		}
+		if key := idempotencyKeyOf(cmd); key != "" {
+			confirmDetail["idempotencyKey"] = key
+		}
+		if done, err := prepareWrite(cmd, "create project", confirmDetail); done || err != nil {
+			return err
+		}
+
+		client, _, err := newClient()
+		if err != nil {
+			return err
+		}
+
+		p, err := client.Projects.Create(idempotentCtx(cmd), &api.ProjectCreateRequest{
+			Name:        name,
+			Path:        path,
+			Description: description,
+			Visibility:  visibility,
+			NamespaceID: namespaceID,
+		})
+		if err != nil {
+			return handleAPIError(err, jsonMode)
+		}
+		if jsonMode {
+			output.PrintJSON(output.ProjectToMap(output.ToFlatProject(p)))
+			return nil
+		}
+		output.Success(fmt.Sprintf("Created project %s (#%d)", p.PathWithNamespace, p.ID))
+		if p.WebURL != "" {
+			output.Info(p.WebURL)
 		}
 		return nil
 	},

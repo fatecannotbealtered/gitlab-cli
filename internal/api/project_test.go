@@ -157,3 +157,38 @@ func TestProjectListOpts_EncodeMembership(t *testing.T) {
 		t.Error("nil encode should be empty")
 	}
 }
+
+func TestProject_Create(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("method = %q, want POST", r.Method)
+		}
+		if r.URL.Path != "/api/v4/projects" {
+			t.Errorf("path = %q, want /api/v4/projects", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"id":7,"name":"My App","path_with_namespace":"alice/my-app","visibility":"private","web_url":"https://gitlab.example.com/alice/my-app","default_branch":"main"}`))
+	}))
+	defer srv.Close()
+
+	c := newProjectTestClient(srv.URL)
+	p, err := c.Projects.Create(testCtx, &ProjectCreateRequest{Name: "My App", Visibility: "private"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if p.ID != 7 || p.PathWithNamespace != "alice/my-app" {
+		t.Errorf("unexpected: %+v", p)
+	}
+}
+
+func TestProject_Create_ParseError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`not json`))
+	}))
+	defer srv.Close()
+	c := newProjectTestClient(srv.URL)
+	if _, err := c.Projects.Create(testCtx, &ProjectCreateRequest{Name: "X"}); err == nil || !strings.Contains(err.Error(), "parsing created project") {
+		t.Fatalf("expected parse error, got %v", err)
+	}
+}

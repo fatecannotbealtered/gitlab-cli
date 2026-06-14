@@ -12,6 +12,11 @@ gitlab-cli project list --owned --visibility private
 gitlab-cli project get group/myproject --fields id,name,webUrl
 gitlab-cli project members group/myproject
 gitlab-cli project members 42 --query alice --limit 10
+
+# Create (write: dry-run → confirm; --idempotency-key makes a retried create safe)
+gitlab-cli project create --name "My App" --visibility private --dry-run
+gitlab-cli project create --name "My App" --visibility private --confirm <confirm_token>
+gitlab-cli project create --name "My App" --namespace-id 87 --path my-app --idempotency-key proj-myapp-001
 ```
 
 Access levels: 10=Guest, 20=Reporter, 30=Developer, 40=Maintainer, 50=Owner.

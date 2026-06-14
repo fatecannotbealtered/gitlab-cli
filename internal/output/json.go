@@ -101,6 +101,29 @@ func PrintJSON(v any) {
 	}
 }
 
+// NDJSONLine is one line of a streaming NDJSON response (CLI-SPEC §5). Each line
+// is an independent envelope carrying ok, schema_version, and a type tag; the
+// final line of a stream uses type "summary".
+type NDJSONLine struct {
+	OK            bool   `json:"ok"`
+	SchemaVersion string `json:"schema_version"`
+	Type          string `json:"type"`
+	Data          any    `json:"data,omitempty"`
+}
+
+// PrintNDJSON writes one NDJSON line (always compact, one object per line) to
+// stdout. typ is the line type (e.g. "chunk", "summary").
+func PrintNDJSON(typ string, data any) error {
+	line := NDJSONLine{OK: true, SchemaVersion: SchemaVersion, Type: typ, Data: data}
+	encoded, err := json.Marshal(line)
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "json marshal error: %v\n", err)
+		return err
+	}
+	fmt.Println(string(encoded))
+	return nil
+}
+
 // ErrorCode classifies errors for machine consumption.
 type ErrorCode string
 

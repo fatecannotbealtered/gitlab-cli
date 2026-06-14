@@ -44,6 +44,17 @@ type ProjectMember struct {
 	WebURL      string `json:"web_url"`
 }
 
+// ProjectCreateRequest is the POST body for creating a project. omitempty keeps
+// the body minimal so GitLab applies its own defaults (e.g. namespace, visibility)
+// for any field the caller leaves unset.
+type ProjectCreateRequest struct {
+	Name        string `json:"name"`
+	Path        string `json:"path,omitempty"`
+	Description string `json:"description,omitempty"`
+	Visibility  string `json:"visibility,omitempty"` // private|internal|public
+	NamespaceID int    `json:"namespace_id,omitempty"`
+}
+
 // ProjectListOpts holds query parameters for listing projects.
 type ProjectListOpts struct {
 	Owned      bool
@@ -113,6 +124,22 @@ func (a *ProjectAPI) Get(ctx context.Context, idOrPath string) (*Project, error)
 	var p Project
 	if err := json.Unmarshal(data, &p); err != nil {
 		return nil, fmt.Errorf("parsing project: %w", err)
+	}
+	return &p, nil
+}
+
+// Create creates a new project.
+//
+// POST /api/v4/projects
+func (a *ProjectAPI) Create(ctx context.Context, req *ProjectCreateRequest) (*Project, error) {
+	path := a.client.APIPath("/projects")
+	data, err := a.client.Post(ctx, path, req)
+	if err != nil {
+		return nil, err
+	}
+	var p Project
+	if err := json.Unmarshal(data, &p); err != nil {
+		return nil, fmt.Errorf("parsing created project: %w", err)
 	}
 	return &p, nil
 }

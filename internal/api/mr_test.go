@@ -502,3 +502,47 @@ func TestMR_GetRawDiff_Error(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+func TestMR_ListDiscussions(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("method = %q, want GET", r.Method)
+		}
+		if !strings.HasSuffix(r.URL.Path, "/merge_requests/7/discussions") {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`[{"id":"abc","individual_note":false,"notes":[{"id":1,"body":"hi","author":{"username":"alice"}}]}]`))
+	}))
+	defer srv.Close()
+	c := newMRTestClient(srv.URL)
+	ds, err := c.MergeRequests.ListDiscussions(testCtx, "g/p", 7, 20)
+	if err != nil {
+		t.Fatalf("ListDiscussions: %v", err)
+	}
+	if len(ds) != 1 || ds[0].ID != "abc" || len(ds[0].Notes) != 1 {
+		t.Errorf("unexpected: %+v", ds)
+	}
+}
+
+func TestMR_ReplyDiscussion(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("method = %q, want POST", r.Method)
+		}
+		if !strings.HasSuffix(r.URL.Path, "/discussions/abc/notes") {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"id":42,"body":"done","author":{"username":"alice"}}`))
+	}))
+	defer srv.Close()
+	c := newMRTestClient(srv.URL)
+	note, err := c.MergeRequests.ReplyDiscussion(testCtx, "g/p", 7, "abc", "done")
+	if err != nil {
+		t.Fatalf("ReplyDiscussion: %v", err)
+	}
+	if note.ID != 42 || note.Body != "done" {
+		t.Errorf("unexpected: %+v", note)
+	}
+}

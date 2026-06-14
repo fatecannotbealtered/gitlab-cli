@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -798,9 +799,24 @@ func TestJob_Log_Follow_JSON(t *testing.T) {
 		rootCmd.SetArgs([]string{"job", "log", "--project", "42", "99", "--follow", "--json"})
 		_ = rootCmd.Execute()
 	})
-	for _, want := range []string{`"log"`, "chunk1", `"success"`} {
+	// NDJSON stream: per-chunk {type:"chunk"} lines + final {type:"summary"} line.
+	for _, want := range []string{`"type":"chunk"`, "chunk1", `"type":"summary"`, `"status":"success"`} {
 		if !strings.Contains(out, want) {
-			t.Errorf("missing %q in output:\n%s", want, out)
+			t.Errorf("missing %q in NDJSON output:\n%s", want, out)
+		}
+	}
+	// Every emitted line must be an independent valid JSON envelope.
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		var m map[string]any
+		if err := json.Unmarshal([]byte(line), &m); err != nil {
+			t.Errorf("NDJSON line is not valid JSON: %q (%v)", line, err)
+			continue
+		}
+		if m["ok"] != true || m["schema_version"] == nil || m["type"] == nil {
+			t.Errorf("NDJSON line missing ok/schema_version/type: %q", line)
 		}
 	}
 }
@@ -1231,18 +1247,14 @@ func TestJob_Log_Follow_JSON_LogStreamError(t *testing.T) {
 }
 
 func TestJob_Log_Follow_JSON_GetError(t *testing.T) {
-	var gets atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/trace"):
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte("done\n"))
 		case strings.HasSuffix(r.URL.Path, "/jobs/99"):
-			if gets.Add(1) == 1 {
-				w.WriteHeader(http.StatusOK)
-				_, _ = w.Write([]byte(`{"id":99,"name":"build","status":"success","stage":"build","ref":"main"}`))
-				return
-			}
+			// The in-loop status fetch fails, so the NDJSON stream aborts with a
+			// non-zero exit even though a chunk was already streamed.
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = w.Write([]byte(`{"message":"404 Not Found"}`))
 		default:

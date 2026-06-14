@@ -112,6 +112,34 @@ func (a *JobAPI) ArtifactsTo(ctx context.Context, projectID string, jobID int, w
 // job reaches a terminal state or ctx is cancelled.
 // interval is the poll interval; defaults to 3s if zero.
 func (a *JobAPI) LogStream(ctx context.Context, projectID string, jobID int, w io.Writer, interval time.Duration) error {
+	return a.LogStreamFunc(ctx, projectID, jobID, interval, func(chunk []byte, _ int) error {
+		_, err := w.Write(chunk)
+		return err
+	})
+}
+
+// LogChunkFunc receives each new trace chunk along with the byte offset at which
+// the chunk starts. Returning an error aborts the stream.
+type LogChunkFunc func(chunk []byte, offset int) error
+
+// LogStreamFunc polls the job trace endpoint and invokes onChunk for every new
+// byte range until the job reaches a terminal state or ctx is cancelled. It is
+// the shared engine behind both the plain io.Writer stream and the NDJSON
+// streaming command (which needs per-chunk offsets, not just a flat byte sink).
+// It returns the job's terminal status (empty if the stream ended without one,
+// e.g. on cancellation).
+func (a *JobAPI) LogStreamFunc(ctx context.Context, projectID string, jobID int, interval time.Duration, onChunk LogChunkFunc) error {
+	_, err := a.logStreamFunc(ctx, projectID, jobID, interval, onChunk)
+	return err
+}
+
+// LogStreamStatus is LogStreamFunc but also returns the terminal job status, so
+// the NDJSON command can emit it in the summary line.
+func (a *JobAPI) LogStreamStatus(ctx context.Context, projectID string, jobID int, interval time.Duration, onChunk LogChunkFunc) (string, error) {
+	return a.logStreamFunc(ctx, projectID, jobID, interval, onChunk)
+}
+
+func (a *JobAPI) logStreamFunc(ctx context.Context, projectID string, jobID int, interval time.Duration, onChunk LogChunkFunc) (string, error) {
 	if interval == 0 {
 		interval = 3 * time.Second
 	}
@@ -122,7 +150,7 @@ func (a *JobAPI) LogStream(ctx context.Context, projectID string, jobID int, w i
 	for {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return "", ctx.Err()
 		default:
 		}
 
@@ -130,12 +158,12 @@ func (a *JobAPI) LogStream(ctx context.Context, projectID string, jobID int, w i
 			"Range": fmt.Sprintf("bytes=%d-", offset),
 		})
 		if err != nil {
-			return err
+			return "", err
 		}
 		if sc == 206 || sc == 200 {
 			if len(body) > 0 {
-				if _, err := w.Write(body); err != nil {
-					return err
+				if err := onChunk(body, offset); err != nil {
+					return "", err
 				}
 				offset += len(body)
 			}
@@ -144,20 +172,20 @@ func (a *JobAPI) LogStream(ctx context.Context, projectID string, jobID int, w i
 
 		statusData, err := a.client.Get(ctx, jobPath)
 		if err != nil {
-			return err
+			return "", err
 		}
 		var j Job
 		if err := json.Unmarshal(statusData, &j); err != nil {
-			return fmt.Errorf("parsing job status: %w", err)
+			return "", fmt.Errorf("parsing job status: %w", err)
 		}
 		switch j.Status {
 		case "success", "failed", "canceled", "skipped", "manual":
-			return nil
+			return j.Status, nil
 		}
 
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return "", ctx.Err()
 		case <-time.After(interval):
 		}
 	}

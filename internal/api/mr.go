@@ -48,6 +48,15 @@ type MergeRequestNote struct {
 	System    bool   `json:"system"`
 }
 
+// MergeRequestDiscussion mirrors a GitLab MR discussion thread: an ordered set
+// of notes. IndividualNote is true for standalone comments and false for true
+// threaded (resolvable) discussions.
+type MergeRequestDiscussion struct {
+	ID             string             `json:"id"`
+	IndividualNote bool               `json:"individual_note"`
+	Notes          []MergeRequestNote `json:"notes"`
+}
+
 // MergeRequestListOpts holds query parameters for listing MRs.
 type MergeRequestListOpts struct {
 	State        string // opened|closed|merged|all
@@ -272,6 +281,40 @@ func (a *MergeRequestAPI) AddNote(ctx context.Context, projectID string, iid int
 	var note MergeRequestNote
 	if err := json.Unmarshal(data, &note); err != nil {
 		return nil, fmt.Errorf("parsing note: %w", err)
+	}
+	return &note, nil
+}
+
+// ListDiscussions returns threaded discussions for an MR. Unlike ListNotes
+// (a flat note list), each discussion carries its full note thread, so a reply
+// can target the right thread by discussion_id.
+//
+// GET /api/v4/projects/:id/merge_requests/:iid/discussions
+func (a *MergeRequestAPI) ListDiscussions(ctx context.Context, projectID string, iid, limit int) ([]MergeRequestDiscussion, error) {
+	path := a.client.APIPath(a.projectPath(projectID) + "/" + strconv.Itoa(iid) + "/discussions")
+	data, _, err := PaginateGET(ctx, a.client, path+"?per_page="+strconv.Itoa(listPerPage(limit)), limit)
+	if err != nil {
+		return nil, err
+	}
+	var discussions []MergeRequestDiscussion
+	if err := json.Unmarshal(data, &discussions); err != nil {
+		return nil, fmt.Errorf("parsing discussions: %w", err)
+	}
+	return discussions, nil
+}
+
+// ReplyDiscussion adds a note to an existing discussion thread.
+//
+// POST /api/v4/projects/:id/merge_requests/:iid/discussions/:discussion_id/notes
+func (a *MergeRequestAPI) ReplyDiscussion(ctx context.Context, projectID string, iid int, discussionID, body string) (*MergeRequestNote, error) {
+	path := a.client.APIPath(a.projectPath(projectID) + "/" + strconv.Itoa(iid) + "/discussions/" + url.PathEscape(discussionID) + "/notes")
+	data, err := a.client.Post(ctx, path, map[string]string{"body": body})
+	if err != nil {
+		return nil, err
+	}
+	var note MergeRequestNote
+	if err := json.Unmarshal(data, &note); err != nil {
+		return nil, fmt.Errorf("parsing discussion reply: %w", err)
 	}
 	return &note, nil
 }
