@@ -1,6 +1,6 @@
 {
   "name": "@fatecannotbealtered-/gitlab-cli",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "description": "GitLab CLI for AI Agents - manage merge requests, issues, pipelines, jobs, repositories, releases, labels, milestones, and CI variables",
   "keywords": [
     "gitlab",
@@ -28,12 +28,12 @@
     "gitlab-cli": "scripts/run.js"
   },
   "optionalDependencies": {
-    "@fatecannotbealtered-/gitlab-cli-darwin-arm64": "1.2.1",
-    "@fatecannotbealtered-/gitlab-cli-darwin-x64": "1.2.1",
-    "@fatecannotbealtered-/gitlab-cli-linux-arm64": "1.2.1",
-    "@fatecannotbealtered-/gitlab-cli-linux-x64": "1.2.1",
-    "@fatecannotbealtered-/gitlab-cli-win32-arm64": "1.2.1",
-    "@fatecannotbealtered-/gitlab-cli-win32-x64": "1.2.1"
+    "@fatecannotbealtered-/gitlab-cli-darwin-arm64": "1.2.2",
+    "@fatecannotbealtered-/gitlab-cli-darwin-x64": "1.2.2",
+    "@fatecannotbealtered-/gitlab-cli-linux-arm64": "1.2.2",
+    "@fatecannotbealtered-/gitlab-cli-linux-x64": "1.2.2",
+    "@fatecannotbealtered-/gitlab-cli-win32-arm64": "1.2.2",
+    "@fatecannotbealtered-/gitlab-cli-win32-x64": "1.2.2"
   },
   "files": [
     "scripts/run.js",
