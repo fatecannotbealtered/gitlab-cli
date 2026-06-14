@@ -5,6 +5,19 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.3] - 2026-06-14
+
+### Added
+
+- `project create`; `mr discussion list` / `mr discussion reply` (threaded discussions); `job log --follow` now streams the trace as CLI-SPEC §5 NDJSON.
+- `--idempotency-key` on create commands -> forwarded as the upstream `Idempotency-Key` header and bound into the confirm scope.
+- `reference` now exposes a real per-command `output_schema` + `examples[]`, guarded against regression.
+
+### Changed
+
+- Confirm tokens are now single-use (E_CONFLICT on replay) and bind the upstream resource version where available: `repo file` update/delete bind `last_commit_id` (optimistic concurrency), `issue`/`mr` update bind `updated_at`, `mr merge` binds the head `sha` -- drift returns `E_CONFLICT`.
+- T2 `--dangerous` second gate now required (both dry-run and confirm) for `repo branch delete`, `repo file delete`, `release delete`, `variable create/update/delete`, and `mr merge`.
+
 ## [1.2.2] - 2026-06-14
 
 ### Added
