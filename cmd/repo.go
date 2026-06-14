@@ -641,6 +641,16 @@ func init() {
 	repoCommitGetCmd.Flags().String("project", "", "Project ID or path (required)")
 	repoCommitGetCmd.Flags().String("fields", "", "Comma-separated fields for JSON output")
 
+	// commit create (atomic multi-file commit)
+	repoCommitCmd.AddCommand(repoCommitCreateCmd)
+	repoCommitCreateCmd.Flags().String("project", "", "Project ID or path (required)")
+	repoCommitCreateCmd.Flags().String("branch", "", "Target branch (required)")
+	repoCommitCreateCmd.Flags().String("message", "", "Commit message (required)")
+	repoCommitCreateCmd.Flags().String("start-branch", "", "Create the target branch from this ref if it does not exist")
+	repoCommitCreateCmd.Flags().StringArray("action", nil, "Repeatable file action 'type:field=value;...' (create|update|delete|move)")
+	repoCommitCreateCmd.Flags().String("idempotency-key", "", "Idempotency-Key sent to GitLab so a retried commit cannot duplicate it")
+	markWrite(repoCommitCreateCmd)
+
 	// tree
 	repoCmd.AddCommand(repoTreeCmd)
 	repoTreeCmd.Flags().String("project", "", "Project ID or path (required)")

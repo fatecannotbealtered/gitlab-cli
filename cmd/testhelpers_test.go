@@ -8,7 +8,9 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/fatecannotbealtered/gitlab-cli/internal/output"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 func init() {
@@ -205,12 +207,20 @@ func withConfirmForTest(t *testing.T, args []string) []string {
 	resetRootPersistentFlags(t)
 	defer restoreRootPersistentFlagsForTest(t, state)
 
+	// Slice flags (StringArray/StringSlice, e.g. --action, --ids) append across
+	// reused FlagSet parses, so the dry-run inside this helper would otherwise
+	// double the resolved target set on the confirm run and invalidate the token.
+	// Reset them on the resolved command before each parse so dry-run and confirm
+	// see the same batch.
+	resetSliceFlagsForTest(t, args)
+
 	previewArgs := append([]string{}, args...)
 	previewArgs = append(previewArgs, "--dry-run", "--json")
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs(previewArgs)
 		_ = rootCmd.Execute()
 	})
+	resetSliceFlagsForTest(t, args)
 
 	var env struct {
 		OK   bool `json:"ok"`
@@ -226,6 +236,39 @@ func withConfirmForTest(t *testing.T, args []string) []string {
 	}
 	confirmed := append([]string{}, args...)
 	return append(confirmed, "--confirm", env.Data.ConfirmToken)
+}
+
+// resetCompactForTest restores the global compact-JSON state after a test that
+// passes --compact, so it does not leak into later tests that assert on indented
+// JSON. output.Compact is only re-synced on the next Execute()'s OnInitialize, so
+// a test that errors out before another Execute would otherwise leave it set.
+func resetCompactForTest(t *testing.T) {
+	t.Helper()
+	t.Cleanup(func() {
+		compactJSON = false
+		output.Compact = false
+		if flag := rootCmd.PersistentFlags().Lookup("compact"); flag != nil {
+			_ = flag.Value.Set("false")
+			flag.Changed = false
+		}
+	})
+}
+
+// resetSliceFlagsForTest clears repeatable slice flags (StringArray/StringSlice)
+// on the command the args resolve to, so a reused FlagSet does not accumulate
+// values across multiple Execute() calls within one test.
+func resetSliceFlagsForTest(t *testing.T, args []string) {
+	t.Helper()
+	cmd, _, err := rootCmd.Find(args)
+	if err != nil || cmd == nil {
+		return
+	}
+	cmd.Flags().VisitAll(func(f *pflag.Flag) {
+		if sv, ok := f.Value.(pflag.SliceValue); ok {
+			_ = sv.Replace([]string{})
+			f.Changed = false
+		}
+	})
 }
 
 func argsTargetWriteCommandForTest(args []string) bool {

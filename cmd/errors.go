@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"fmt"
+
 	"github.com/fatecannotbealtered/gitlab-cli/internal/output"
 	"github.com/spf13/cobra"
 )
@@ -9,6 +11,11 @@ import (
 func failArg(msg string) error {
 	emitError(msg, ExitBadArgs, output.ErrValidation)
 	return ErrSilent
+}
+
+// failArgf is failArg with printf-style formatting.
+func failArgf(format string, args ...any) error {
+	return failArg(fmt.Sprintf(format, args...))
 }
 
 // failNotFound reports a missing resource (exit 4).

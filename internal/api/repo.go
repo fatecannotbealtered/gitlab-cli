@@ -250,6 +250,43 @@ func (a *RepoAPI) ListCommits(ctx context.Context, projectID string, opts *Commi
 	return out, nil
 }
 
+// CommitAction is one entry of the actions[] array on POST /repository/commits.
+// action is one of create/update/delete/move; the other fields are populated per
+// action (see GitLab commits API). Content may be base64 (set Encoding).
+type CommitAction struct {
+	Action       string `json:"action"`
+	FilePath     string `json:"file_path"`
+	PreviousPath string `json:"previous_path,omitempty"`
+	Content      string `json:"content,omitempty"`
+	Encoding     string `json:"encoding,omitempty"`
+	LastCommitID string `json:"last_commit_id,omitempty"`
+}
+
+// CommitCreateOpts is the POST body for an atomic multi-file commit.
+type CommitCreateOpts struct {
+	Branch        string         `json:"branch"`
+	CommitMessage string         `json:"commit_message"`
+	StartBranch   string         `json:"start_branch,omitempty"`
+	Actions       []CommitAction `json:"actions"`
+}
+
+// CreateCommit creates a single atomic commit applying all actions[] in one
+// upstream request (POST /projects/:id/repository/commits). This is the native
+// bulk endpoint (class A): create/update/delete/move many files land as one
+// commit, server-side atomic. GitLab caps a single commit at 1000 actions.
+func (a *RepoAPI) CreateCommit(ctx context.Context, projectID string, opts CommitCreateOpts) (*Commit, error) {
+	path := a.client.APIPath("/projects/" + EncodeProjectPath(projectID) + "/repository/commits")
+	data, err := a.client.Post(ctx, path, opts)
+	if err != nil {
+		return nil, err
+	}
+	var c Commit
+	if err := json.Unmarshal(data, &c); err != nil {
+		return nil, fmt.Errorf("parsing created commit: %w", err)
+	}
+	return &c, nil
+}
+
 // GetCommit returns a single commit by SHA.
 func (a *RepoAPI) GetCommit(ctx context.Context, projectID, sha string) (*Commit, error) {
 	path := a.client.APIPath("/projects/" + EncodeProjectPath(projectID) + "/repository/commits/" + url.PathEscape(sha))

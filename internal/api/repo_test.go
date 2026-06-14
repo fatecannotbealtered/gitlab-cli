@@ -113,6 +113,44 @@ func TestRepo_CreateFile(t *testing.T) {
 	}
 }
 
+func TestRepo_CreateCommit(t *testing.T) {
+	var gotBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("method = %q, want POST", r.Method)
+		}
+		if !strings.HasSuffix(r.URL.Path, "/repository/commits") {
+			t.Errorf("path = %q, want .../repository/commits", r.URL.Path)
+		}
+		raw, _ := io.ReadAll(r.Body)
+		gotBody = string(raw)
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"id":"abc","short_id":"abc1","title":"sync"}`))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	commit, err := c.Repos.CreateCommit(testCtx, "1", CommitCreateOpts{
+		Branch:        "main",
+		CommitMessage: "sync",
+		Actions: []CommitAction{
+			{Action: "create", FilePath: "a.txt", Content: "hi"},
+			{Action: "delete", FilePath: "old.txt"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateCommit: %v", err)
+	}
+	if commit.ShortID != "abc1" {
+		t.Errorf("short id = %q, want abc1", commit.ShortID)
+	}
+	for _, want := range []string{`"actions"`, `"create"`, `"a.txt"`, `"delete"`, `"old.txt"`} {
+		if !strings.Contains(gotBody, want) {
+			t.Errorf("request body missing %q, got: %s", want, gotBody)
+		}
+	}
+}
+
 func TestRepo_UpdateFile(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPut {
