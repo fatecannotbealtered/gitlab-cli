@@ -1,5 +1,21 @@
 # gitlab-cli Full-Command E2E Acceptance Report
 
+## 2026-06-14 — v1.2.3 new commands + write-safety (live)
+
+Re-run against the live Docker GitLab EE 18.8.10 (`gitlab-cli-e2e`, http://localhost:8929) with a root PAT. New commands and write-safety upgrades verified live:
+
+| Command / behavior | Result | Notes |
+|---|---|---|
+| `project create` (dry-run → confirm) | PASS | created `root/livesmoke-1114` (id 6), then deleted; `--idempotency-key` accepted |
+| confirm token **single-use** replay | PASS | re-confirming the same token → `E_CONFLICT` (live proof of the safe-retry gate) |
+| `mr discussion list 1 --project …` | PASS | threaded notes, `_untrusted: [body, author]` |
+| `mr discussion reply` (dry-run → confirm) | PASS | posted note id 11 to a discussion thread |
+| `job log <id> --follow` | PASS | streamed CLI-SPEC §5 NDJSON `{type:"chunk"}` lines from the real runner trace |
+
+All v1.2.3 new commands are live-verified. Test artifacts cleaned up.
+
+---
+
 **Acceptance date:** 2026-06-12
 **Environment:** Windows · Docker `gitlab-cli-e2e` + `gitlab-cli-e2e-runner` · http://localhost:8929
 **GitLab version:** EE 18.8.10 (container healthy; previous acceptance was CE 17.11.4 — this run re-validates across a major upstream version)
