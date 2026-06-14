@@ -162,7 +162,7 @@ func TestRepo_DeleteFile(t *testing.T) {
 	defer srv.Close()
 
 	c := newTestClient(srv.URL)
-	err := c.Repos.DeleteFile(testCtx, "1", "f.txt", "main", "delete file")
+	err := c.Repos.DeleteFile(testCtx, "1", "f.txt", "main", "delete file", "")
 	if err != nil {
 		t.Fatalf("DeleteFile: %v", err)
 	}

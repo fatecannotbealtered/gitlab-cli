@@ -176,6 +176,13 @@ func commandToRef(cmd *cobra.Command, prefix, pathPrefix string) refCommand {
 	if node.RiskLevel == "high" || node.RiskLevel == "critical" {
 		node.PermissionTier = "dangerous"
 	}
+	// Write-dangerous commands carry the gated tier as a single source of truth
+	// shared with the runtime --dangerous gate (dangerousCommandPaths), so the
+	// advertised tier can never drift from what is enforced.
+	if node.Write && isDangerousCommandPath(node.Path) {
+		node.PermissionTier = "write-dangerous"
+		node.RequiresConfirmation = true
+	}
 	node.BlastRadius = blastRadiusForCommand(node.Path, node.Write, node.RiskLevel)
 	node.PositionalArgs = parsePositionalArgs(cmd.Use)
 	node.SupportsFields = cmdHasFieldsFlag(cmd)

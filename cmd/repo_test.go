@@ -122,7 +122,7 @@ func TestRepoBranchDelete_DryRun_JSON(t *testing.T) {
 	t.Setenv("GITLAB_CLI_TOKEN", "test-token")
 
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"repo", "branch", "delete", "--project", "1", "--name", "feature", "--dry-run", "--json"})
+		rootCmd.SetArgs([]string{"repo", "branch", "delete", "--project", "1", "--name", "feature", "--dry-run", "--dangerous", "--json"})
 		_ = rootCmd.Execute()
 	})
 	for _, want := range []string{`"confirm_token"`, `"action": "repo branch delete"`} {
@@ -160,13 +160,22 @@ func TestRepoFileCreate_DryRun_JSON(t *testing.T) {
 }
 
 func TestRepoFileUpdate_DryRun_JSON(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/repository/files/") && !strings.HasSuffix(r.URL.Path, "/raw") {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"file_name":"README.md","last_commit_id":"deadbeefcafe"}`))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
 	origDR := dryRun
 	origJM := jsonMode
 	defer func() { dryRun = origDR; jsonMode = origJM }()
 	dryRun = true
 	jsonMode = true
 
-	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
 	t.Setenv("GITLAB_CLI_TOKEN", "test-token")
 
 	out := captureStdout(t, func() {
@@ -187,13 +196,22 @@ func TestRepoFileUpdate_DryRun_JSON(t *testing.T) {
 }
 
 func TestRepoFileDelete_DryRun_JSON(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/repository/files/") && !strings.HasSuffix(r.URL.Path, "/raw") {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"file_name":"README.md","last_commit_id":"deadbeefcafe"}`))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
 	origDR := dryRun
 	origJM := jsonMode
 	defer func() { dryRun = origDR; jsonMode = origJM }()
 	dryRun = true
 	jsonMode = true
 
-	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
 	t.Setenv("GITLAB_CLI_TOKEN", "test-token")
 
 	out := captureStdout(t, func() {
@@ -201,7 +219,7 @@ func TestRepoFileDelete_DryRun_JSON(t *testing.T) {
 			"repo", "file", "delete",
 			"--project", "1", "--path", "README.md",
 			"--branch", "main", "--commit-message", "delete readme",
-			"--dry-run", "--json",
+			"--dry-run", "--dangerous", "--json",
 		})
 		_ = rootCmd.Execute()
 	})
@@ -355,9 +373,20 @@ func TestRepo_File_Create_DryRun_JSON(t *testing.T) {
 }
 
 func TestRepo_File_Update_DryRun_JSON(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/repository/files/") && !strings.HasSuffix(r.URL.Path, "/raw") {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"file_name":"README.md","last_commit_id":"deadbeefcafe"}`))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
 	origDR := dryRun
 	origJM := jsonMode
 	defer func() { dryRun = origDR; jsonMode = origJM }()
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
 
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{
@@ -377,16 +406,27 @@ func TestRepo_File_Update_DryRun_JSON(t *testing.T) {
 }
 
 func TestRepo_File_Delete_DryRun_JSON(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/repository/files/") && !strings.HasSuffix(r.URL.Path, "/raw") {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"file_name":"README.md","last_commit_id":"deadbeefcafe"}`))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
 	origDR := dryRun
 	origJM := jsonMode
 	defer func() { dryRun = origDR; jsonMode = origJM }()
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
 
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{
 			"repo", "file", "delete",
 			"--project", "group/proj", "--path", "README.md",
 			"--branch", "main", "--commit-message", "delete readme",
-			"--dry-run", "--json",
+			"--dry-run", "--dangerous", "--json",
 		})
 		_ = rootCmd.Execute()
 	})
@@ -448,7 +488,7 @@ func TestRepo_Branch_Delete_DryRun_JSON(t *testing.T) {
 		rootCmd.SetArgs([]string{
 			"repo", "branch", "delete",
 			"--project", "group/proj", "--name", "feat/x",
-			"--dry-run", "--json",
+			"--dry-run", "--dangerous", "--json",
 		})
 		_ = rootCmd.Execute()
 	})
@@ -572,6 +612,11 @@ func TestRepo_File_Create_JSON(t *testing.T) {
 
 func TestRepo_File_Update_JSON(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/repository/files/") && !strings.HasSuffix(r.URL.Path, "/raw") {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"file_name":"README.md","last_commit_id":"deadbeefcafe"}`))
+			return
+		}
 		if r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/repository/files/") {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"file_path":"README.md","branch":"main"}`))
@@ -604,6 +649,11 @@ func TestRepo_File_Update_JSON(t *testing.T) {
 
 func TestRepo_File_Delete_JSON(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/repository/files/") && !strings.HasSuffix(r.URL.Path, "/raw") {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"file_name":"README.md","last_commit_id":"deadbeefcafe"}`))
+			return
+		}
 		if r.Method == http.MethodDelete && strings.Contains(r.URL.Path, "/repository/files/") {
 			w.WriteHeader(http.StatusNoContent)
 			return
@@ -620,14 +670,12 @@ func TestRepo_File_Delete_JSON(t *testing.T) {
 	dryRun = false
 	lastExit = 0
 	captureStdout(t, func() {
-		args := []string{
+		rootCmd.SetArgs(withConfirmForTest(t, []string{
 			"repo", "file", "delete",
 			"--project", "foo/bar", "--path", "README.md",
 			"--branch", "main", "--commit-message", "delete readme",
-			"--json",
-		}
-		args = append(args, confirmArgsForTest(t, "repo file delete", map[string]any{"project": "foo/bar", "path": "README.md", "branch": "main", "commitMessage": "delete readme"})...)
-		rootCmd.SetArgs(args)
+			"--json", "--dangerous",
+		}))
 		_ = rootCmd.Execute()
 	})
 	if lastExit != ExitOK {
@@ -679,7 +727,7 @@ func TestRepo_Branch_Delete_JSON(t *testing.T) {
 	dryRun = false
 	lastExit = 0
 	captureStdout(t, func() {
-		args := []string{"repo", "branch", "delete", "--project", "foo/bar", "--name", "feat", "--json"}
+		args := []string{"repo", "branch", "delete", "--project", "foo/bar", "--name", "feat", "--json", "--dangerous"}
 		args = append(args, confirmArgsForTest(t, "repo branch delete", map[string]any{"project": "foo/bar", "name": "feat"})...)
 		rootCmd.SetArgs(args)
 		_ = rootCmd.Execute()
@@ -1248,7 +1296,11 @@ func TestRepo_File_Update_NewClientError(t *testing.T) {
 	origExit := lastExit
 	defer func() { lastExit = origExit }()
 	lastExit = 0
-	rootCmd.SetArgs(withConfirmForTest(t, []string{"repo", "file", "update", "--project", "g/p", "--path", "a.md", "--branch", "main", "--content", "x", "--commit-message", "upd"}))
+	// newClient() runs before the version GET and prepareWrite, so a hand-built
+	// confirm token is enough — auth fails before the token is ever validated.
+	args := []string{"repo", "file", "update", "--project", "g/p", "--path", "a.md", "--branch", "main", "--content", "x", "--commit-message", "upd"}
+	args = append(args, confirmArgsForTest(t, "repo file update", map[string]any{"project": "g/p", "path": "a.md", "branch": "main", "lastCommitId": ""})...)
+	rootCmd.SetArgs(args)
 	_ = rootCmd.Execute()
 	if lastExit != ExitAuth {
 		t.Errorf("exit = %d, want %d", lastExit, ExitAuth)
@@ -1257,6 +1309,11 @@ func TestRepo_File_Update_NewClientError(t *testing.T) {
 
 func TestRepo_File_Update_APIError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/repository/files/") && !strings.HasSuffix(r.URL.Path, "/raw") {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"file_name":"a.md","last_commit_id":"deadbeefcafe"}`))
+			return
+		}
 		w.WriteHeader(http.StatusBadRequest)
 		_, _ = w.Write([]byte(`{"message":"400 Bad Request"}`))
 	}))
@@ -1277,6 +1334,11 @@ func TestRepo_File_Update_APIError(t *testing.T) {
 func TestRepo_File_Delete_PlainText(t *testing.T) {
 	setTextFormatForTest(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/repository/files/") && !strings.HasSuffix(r.URL.Path, "/raw") {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"file_name":"README.md","last_commit_id":"deadbeefcafe"}`))
+			return
+		}
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer srv.Close()
@@ -1284,9 +1346,7 @@ func TestRepo_File_Delete_PlainText(t *testing.T) {
 	t.Setenv("GITLAB_CLI_HOST", srv.URL)
 	t.Setenv("GITLAB_CLI_TOKEN", "test")
 	out := captureCombinedOutput(t, func() {
-		args := []string{"repo", "file", "delete", "--project", "g/p", "--path", "README.md", "--branch", "main", "--commit-message", "del"}
-		args = append(args, confirmArgsForTest(t, "repo file delete", map[string]any{"project": "g/p", "path": "README.md", "branch": "main", "commitMessage": "del"})...)
-		rootCmd.SetArgs(args)
+		rootCmd.SetArgs(withConfirmForTest(t, []string{"repo", "file", "delete", "--project", "g/p", "--path", "README.md", "--branch", "main", "--commit-message", "del", "--dangerous"}))
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, "Deleted") {
@@ -1296,13 +1356,22 @@ func TestRepo_File_Delete_PlainText(t *testing.T) {
 
 func TestRepo_File_Delete_ConfirmRejected(t *testing.T) {
 	withNonInteractiveStdin(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/repository/files/") && !strings.HasSuffix(r.URL.Path, "/raw") {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"file_name":"README.md","last_commit_id":"deadbeefcafe"}`))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
 	resetRepoCmdFlags(t)
-	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
 	t.Setenv("GITLAB_CLI_TOKEN", "test")
 	origExit := lastExit
 	defer func() { lastExit = origExit }()
 	lastExit = 0
-	rootCmd.SetArgs([]string{"repo", "file", "delete", "--project", "g/p", "--path", "README.md", "--branch", "main", "--commit-message", "del", "--confirm", "wrong"})
+	rootCmd.SetArgs([]string{"repo", "file", "delete", "--project", "g/p", "--path", "README.md", "--branch", "main", "--commit-message", "del", "--dangerous", "--confirm", "wrong"})
 	_ = rootCmd.Execute()
 	if lastExit != ExitConflict {
 		t.Errorf("exit = %d, want %d", lastExit, ExitConflict)
@@ -1311,6 +1380,11 @@ func TestRepo_File_Delete_ConfirmRejected(t *testing.T) {
 
 func TestRepo_File_Delete_APIError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/repository/files/") && !strings.HasSuffix(r.URL.Path, "/raw") {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"file_name":"README.md","last_commit_id":"deadbeefcafe"}`))
+			return
+		}
 		w.WriteHeader(http.StatusNotFound)
 		_, _ = w.Write([]byte(`{"message":"404 Not Found"}`))
 	}))
@@ -1321,9 +1395,7 @@ func TestRepo_File_Delete_APIError(t *testing.T) {
 	origExit := lastExit
 	defer func() { lastExit = origExit }()
 	lastExit = 0
-	args := []string{"repo", "file", "delete", "--project", "g/p", "--path", "README.md", "--branch", "main", "--commit-message", "del"}
-	args = append(args, confirmArgsForTest(t, "repo file delete", map[string]any{"project": "g/p", "path": "README.md", "branch": "main", "commitMessage": "del"})...)
-	rootCmd.SetArgs(args)
+	rootCmd.SetArgs(withConfirmForTest(t, []string{"repo", "file", "delete", "--project", "g/p", "--path", "README.md", "--branch", "main", "--commit-message", "del", "--dangerous"}))
 	_ = rootCmd.Execute()
 	if lastExit == ExitOK {
 		t.Errorf("expected non-zero exit, got %d", lastExit)
@@ -1385,7 +1457,7 @@ func TestRepo_Branch_Delete_PlainText(t *testing.T) {
 	t.Setenv("GITLAB_CLI_HOST", srv.URL)
 	t.Setenv("GITLAB_CLI_TOKEN", "test")
 	out := captureCombinedOutput(t, func() {
-		args := []string{"repo", "branch", "delete", "--project", "g/p", "--name", "feat"}
+		args := []string{"repo", "branch", "delete", "--project", "g/p", "--name", "feat", "--dangerous"}
 		args = append(args, confirmArgsForTest(t, "repo branch delete", map[string]any{"project": "g/p", "name": "feat"})...)
 		rootCmd.SetArgs(args)
 		_ = rootCmd.Execute()
@@ -1403,7 +1475,7 @@ func TestRepo_Branch_Delete_ConfirmRejected(t *testing.T) {
 	origExit := lastExit
 	defer func() { lastExit = origExit }()
 	lastExit = 0
-	rootCmd.SetArgs([]string{"repo", "branch", "delete", "--project", "g/p", "--name", "feat", "--confirm", "wrong"})
+	rootCmd.SetArgs([]string{"repo", "branch", "delete", "--project", "g/p", "--name", "feat", "--dangerous", "--confirm", "wrong"})
 	_ = rootCmd.Execute()
 	if lastExit != ExitConflict {
 		t.Errorf("exit = %d, want %d", lastExit, ExitConflict)
@@ -1569,7 +1641,7 @@ func TestRepo_File_Delete_NewClientError(t *testing.T) {
 	origExit := lastExit
 	defer func() { lastExit = origExit }()
 	lastExit = 0
-	args := []string{"repo", "file", "delete", "--project", "g/p", "--path", "a.md", "--branch", "main", "--commit-message", "del"}
+	args := []string{"repo", "file", "delete", "--project", "g/p", "--path", "a.md", "--branch", "main", "--commit-message", "del", "--dangerous"}
 	args = append(args, confirmArgsForTest(t, "repo file delete", map[string]any{"project": "g/p", "path": "a.md", "branch": "main", "commitMessage": "del"})...)
 	rootCmd.SetArgs(args)
 	_ = rootCmd.Execute()
@@ -1637,7 +1709,7 @@ func TestRepo_Branch_Delete_NewClientError(t *testing.T) {
 	origExit := lastExit
 	defer func() { lastExit = origExit }()
 	lastExit = 0
-	args := []string{"repo", "branch", "delete", "--project", "g/p", "--name", "feat"}
+	args := []string{"repo", "branch", "delete", "--project", "g/p", "--name", "feat", "--dangerous"}
 	args = append(args, confirmArgsForTest(t, "repo branch delete", map[string]any{"project": "g/p", "name": "feat"})...)
 	rootCmd.SetArgs(args)
 	_ = rootCmd.Execute()
@@ -1750,7 +1822,9 @@ func TestRepo_Branch_Delete_APIError(t *testing.T) {
 	origExit := lastExit
 	defer func() { lastExit = origExit }()
 	lastExit = 0
-	rootCmd.SetArgs([]string{"repo", "branch", "delete", "--project", "g/p", "--name", "feat", "--confirm", "feat"})
+	args := []string{"repo", "branch", "delete", "--project", "g/p", "--name", "feat", "--dangerous"}
+	args = append(args, confirmArgsForTest(t, "repo branch delete", map[string]any{"project": "g/p", "name": "feat"})...)
+	rootCmd.SetArgs(args)
 	_ = rootCmd.Execute()
 	if lastExit == ExitOK {
 		t.Errorf("expected non-zero exit, got %d", lastExit)

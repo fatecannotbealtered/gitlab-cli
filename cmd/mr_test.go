@@ -139,14 +139,21 @@ func TestMR_Close_DryRun_JSON(t *testing.T) {
 }
 
 func TestMR_Merge_DryRun_JSON(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"iid":7,"sha":"abc123","updated_at":"2024-01-01T00:00:00Z"}`))
+	}))
+	defer srv.Close()
 	origDR := dryRun
 	origJM := jsonMode
 	defer func() { dryRun = origDR; jsonMode = origJM }()
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
 
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{
 			"mr", "merge", "7",
-			"--dry-run", "--json",
+			"--dry-run", "--dangerous", "--json",
 			"--project", "group/proj",
 		})
 		_ = rootCmd.Execute()
@@ -225,9 +232,16 @@ func TestMR_Get_JSON(t *testing.T) {
 }
 
 func TestMR_Update_DryRun_JSON(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"iid":1,"sha":"abc123","updated_at":"2024-01-01T00:00:00Z"}`))
+	}))
+	defer srv.Close()
 	origDR := dryRun
 	origJM := jsonMode
 	defer func() { dryRun = origDR; jsonMode = origJM }()
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
 
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"mr", "update", "1", "--project", "group/proj", "--title", "new title", "--dry-run", "--json"})
@@ -502,9 +516,7 @@ func TestMR_Merge_JSON(t *testing.T) {
 	defer func() { dryRun = origDR; jsonMode = origJM }()
 	dryRun = false
 	out := captureStdout(t, func() {
-		args := []string{"mr", "merge", "1", "--project", "foo/bar", "--json"}
-		args = append(args, mrMergeConfirmArgsForTest(t, "foo/bar", 1)...)
-		rootCmd.SetArgs(args)
+		rootCmd.SetArgs(withConfirmForTest(t, []string{"mr", "merge", "1", "--project", "foo/bar", "--json", "--dangerous"}))
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, `"merged"`) {
@@ -625,9 +637,7 @@ func TestMR_Merge_PlainText(t *testing.T) {
 	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
-		args := []string{"mr", "merge", "1", "--project", "foo/bar"}
-		args = append(args, mrMergeConfirmArgsForTest(t, "foo/bar", 1)...)
-		rootCmd.SetArgs(args)
+		rootCmd.SetArgs(withConfirmForTest(t, []string{"mr", "merge", "1", "--project", "foo/bar", "--dangerous"}))
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, "Merged") {
@@ -1433,7 +1443,11 @@ func TestMR_Update_NewClientError(t *testing.T) {
 	origExit := lastExit
 	defer func() { lastExit = origExit }()
 	lastExit = 0
-	rootCmd.SetArgs(withConfirmForTest(t, []string{"mr", "update", "1", "--project", "g/p", "--title", "x"}))
+	// newClient() runs before the version GET and prepareWrite, so a hand-built
+	// confirm token suffices — auth fails before the token is ever validated.
+	args := []string{"mr", "update", "1", "--project", "g/p", "--title", "x"}
+	args = append(args, confirmArgsForTest(t, "update mr", map[string]any{"project": "g/p", "iid": 1, "updatedAt": ""})...)
+	rootCmd.SetArgs(args)
 	_ = rootCmd.Execute()
 	if lastExit != ExitAuth {
 		t.Errorf("exit = %d, want %d", lastExit, ExitAuth)
@@ -1466,6 +1480,11 @@ func TestMR_Update_WithAssignee(t *testing.T) {
 
 func TestMR_Update_AssigneeAPIError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/merge_requests/") && !strings.Contains(r.URL.Path, "/users") {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"iid":1,"updated_at":"2024-01-01T00:00:00Z"}`))
+			return
+		}
 		w.WriteHeader(http.StatusNotFound)
 		_, _ = w.Write([]byte(`{"message":"404 Not Found"}`))
 	}))
@@ -1486,6 +1505,11 @@ func TestMR_Update_AssigneeAPIError(t *testing.T) {
 
 func TestMR_Update_APIError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/merge_requests/") {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"iid":1,"updated_at":"2024-01-01T00:00:00Z"}`))
+			return
+		}
 		w.WriteHeader(http.StatusBadRequest)
 		_, _ = w.Write([]byte(`{"message":"400 Bad Request"}`))
 	}))
@@ -1516,9 +1540,7 @@ func TestMR_Merge_WithConfirm(t *testing.T) {
 	t.Setenv("GITLAB_CLI_HOST", srv.URL)
 	t.Setenv("GITLAB_CLI_TOKEN", "tok")
 	out := captureCombinedOutput(t, func() {
-		args := []string{"mr", "merge", "1", "--project", "g/p"}
-		args = append(args, mrMergeConfirmArgsForTest(t, "g/p", 1)...)
-		rootCmd.SetArgs(args)
+		rootCmd.SetArgs(withConfirmForTest(t, []string{"mr", "merge", "1", "--project", "g/p", "--dangerous"}))
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, "Merged") {
@@ -1531,7 +1553,9 @@ func TestMR_Merge_NewClientError(t *testing.T) {
 	origExit := lastExit
 	defer func() { lastExit = origExit }()
 	lastExit = 0
-	args := []string{"mr", "merge", "1", "--project", "g/p"}
+	// newClient() runs before the version GET and prepareWrite, so a hand-built
+	// confirm token suffices — auth fails before the token is ever validated.
+	args := []string{"mr", "merge", "1", "--project", "g/p", "--dangerous"}
 	args = append(args, mrMergeConfirmArgsForTest(t, "g/p", 1)...)
 	rootCmd.SetArgs(args)
 	_ = rootCmd.Execute()
@@ -1848,14 +1872,19 @@ func TestMR_Update_InvalidIID(t *testing.T) {
 
 func TestMR_Merge_ConfirmRejected(t *testing.T) {
 	withNonInteractiveStdin(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"iid":1,"sha":"abc123","updated_at":"2024-01-01T00:00:00Z"}`))
+	}))
+	defer srv.Close()
 	resetRootPersistentFlags(t)
 	resetMRCmdFlags(t)
-	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
 	t.Setenv("GITLAB_CLI_TOKEN", "tok")
 	origExit := lastExit
 	defer func() { lastExit = origExit }()
 	lastExit = 0
-	rootCmd.SetArgs([]string{"mr", "merge", "1", "--project", "g/p", "--confirm", "wrong"})
+	rootCmd.SetArgs([]string{"mr", "merge", "1", "--project", "g/p", "--dangerous", "--confirm", "wrong"})
 	_ = rootCmd.Execute()
 	if lastExit != ExitConflict {
 		t.Errorf("exit = %d, want %d", lastExit, ExitConflict)

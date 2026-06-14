@@ -127,9 +127,11 @@ var releaseCreateCmd = &cobra.Command{
 
 		milestones := parseMilestones(milestoneStr)
 
-		if done, err := prepareWrite(cmd, "release create", map[string]any{
-			"project": project, "tag": tag, "name": name,
-		}); done || err != nil {
+		confirmDetail := map[string]any{"project": project, "tag": tag, "name": name}
+		if key := idempotencyKeyOf(cmd); key != "" {
+			confirmDetail["idempotencyKey"] = key
+		}
+		if done, err := prepareWrite(cmd, "release create", confirmDetail); done || err != nil {
 			return err
 		}
 
@@ -138,7 +140,7 @@ var releaseCreateCmd = &cobra.Command{
 			return err
 		}
 
-		r, err := client.Releases.Create(apiCtx(), project, api.ReleaseCreateBody{
+		r, err := client.Releases.Create(idempotentCtx(cmd), project, api.ReleaseCreateBody{
 			TagName:     tag,
 			Name:        name,
 			Description: description,
@@ -262,6 +264,7 @@ func init() {
 	releaseCreateCmd.Flags().String("description", "", "Release description")
 	releaseCreateCmd.Flags().String("ref", "", "Branch or SHA to tag")
 	releaseCreateCmd.Flags().String("milestone", "", "Comma-separated milestone titles")
+	releaseCreateCmd.Flags().String("idempotency-key", "", "Idempotency-Key sent to GitLab so a retried create cannot duplicate the release")
 	markWrite(releaseCreateCmd)
 
 	releaseCmd.AddCommand(releaseUpdateCmd)

@@ -135,9 +135,13 @@ var repoFileCreateCmd = &cobra.Command{
 			return failArg(err.Error())
 		}
 
-		if done, err := prepareWrite(cmd, "repo file create", map[string]any{
+		confirmDetail := map[string]any{
 			"project": project, "path": path, "branch": branch,
-		}); done || err != nil {
+		}
+		if key := idempotencyKeyOf(cmd); key != "" {
+			confirmDetail["idempotencyKey"] = key
+		}
+		if done, err := prepareWrite(cmd, "repo file create", confirmDetail); done || err != nil {
 			return err
 		}
 
@@ -146,7 +150,7 @@ var repoFileCreateCmd = &cobra.Command{
 			return err
 		}
 
-		if err := client.Repos.CreateFile(apiCtx(), project, path, api.FileWriteBody{
+		if err := client.Repos.CreateFile(idempotentCtx(cmd), project, path, api.FileWriteBody{
 			Branch:        branch,
 			Content:       finalContent,
 			CommitMessage: commitMsg,
@@ -190,14 +194,23 @@ var repoFileUpdateCmd = &cobra.Command{
 			return failArg(err.Error())
 		}
 
-		if done, err := prepareWrite(cmd, "repo file update", map[string]any{
-			"project": project, "path": path, "branch": branch,
-		}); done || err != nil {
+		client, _, err := newClient()
+		if err != nil {
 			return err
 		}
 
-		client, _, err := newClient()
+		// Optimistic concurrency: bind last_commit_id into the confirm scope. The
+		// value is captured at dry-run and re-captured here; if the file changed
+		// between the two steps the token no longer matches and confirm fails with
+		// E_CONFLICT, so an update never clobbers a concurrent edit.
+		lastCommitID, err := repoFileLastCommitID(client, project, path, branch)
 		if err != nil {
+			return err
+		}
+		confirmDetail := map[string]any{
+			"project": project, "path": path, "branch": branch, "lastCommitId": lastCommitID,
+		}
+		if done, err := prepareWrite(cmd, "repo file update", confirmDetail); done || err != nil {
 			return err
 		}
 
@@ -206,6 +219,7 @@ var repoFileUpdateCmd = &cobra.Command{
 			Content:       finalContent,
 			CommitMessage: commitMsg,
 			Encoding:      finalEncoding,
+			LastCommitID:  lastCommitID,
 		}); err != nil {
 			return handleAPIError(err, jsonMode)
 		}
@@ -234,22 +248,29 @@ var repoFileDeleteCmd = &cobra.Command{
 			return failArg("--project, --path, --branch, and --commit-message are required")
 		}
 
-		confirmPayload := map[string]any{
-			"project":       project,
-			"path":          path,
-			"branch":        branch,
-			"commitMessage": commitMsg,
-		}
-		if done, err := prepareWrite(cmd, "repo file delete", confirmPayload); done || err != nil {
-			return err
-		}
-
 		client, _, err := newClient()
 		if err != nil {
 			return err
 		}
 
-		if err := client.Repos.DeleteFile(apiCtx(), project, path, branch, commitMsg); err != nil {
+		// Optimistic concurrency: bind last_commit_id so a delete cannot race a
+		// concurrent edit (mismatch → token no longer matches → E_CONFLICT).
+		lastCommitID, err := repoFileLastCommitID(client, project, path, branch)
+		if err != nil {
+			return err
+		}
+		confirmPayload := map[string]any{
+			"project":       project,
+			"path":          path,
+			"branch":        branch,
+			"commitMessage": commitMsg,
+			"lastCommitId":  lastCommitID,
+		}
+		if done, err := prepareWrite(cmd, "repo file delete", confirmPayload); done || err != nil {
+			return err
+		}
+
+		if err := client.Repos.DeleteFile(apiCtx(), project, path, branch, commitMsg, lastCommitID); err != nil {
 			return handleAPIError(err, jsonMode)
 		}
 
@@ -330,7 +351,11 @@ var repoBranchCreateCmd = &cobra.Command{
 			return failArg("--project, --name, and --ref are required")
 		}
 
-		if done, err := prepareWrite(cmd, "repo branch create", map[string]any{"project": project, "name": name, "ref": ref}); done || err != nil {
+		confirmDetail := map[string]any{"project": project, "name": name, "ref": ref}
+		if key := idempotencyKeyOf(cmd); key != "" {
+			confirmDetail["idempotencyKey"] = key
+		}
+		if done, err := prepareWrite(cmd, "repo branch create", confirmDetail); done || err != nil {
 			return err
 		}
 
@@ -339,7 +364,7 @@ var repoBranchCreateCmd = &cobra.Command{
 			return err
 		}
 
-		b, err := client.Repos.CreateBranch(apiCtx(), project, name, ref)
+		b, err := client.Repos.CreateBranch(idempotentCtx(cmd), project, name, ref)
 		if err != nil {
 			return handleAPIError(err, jsonMode)
 		}
@@ -559,6 +584,7 @@ func init() {
 	repoFileCreateCmd.Flags().String("content-file", "", "Read content from local file")
 	repoFileCreateCmd.Flags().String("commit-message", "", "Commit message (required)")
 	repoFileCreateCmd.Flags().String("encoding", "", "Encoding: text|base64 (auto-detected if omitted)")
+	repoFileCreateCmd.Flags().String("idempotency-key", "", "Idempotency-Key sent to GitLab so a retried create cannot duplicate the commit")
 	markWrite(repoFileCreateCmd)
 
 	repoFileCmd.AddCommand(repoFileUpdateCmd)
@@ -591,6 +617,7 @@ func init() {
 	repoBranchCreateCmd.Flags().String("project", "", "Project ID or path (required)")
 	repoBranchCreateCmd.Flags().String("name", "", "Branch name (required)")
 	repoBranchCreateCmd.Flags().String("ref", "", "Source branch or SHA (required)")
+	repoBranchCreateCmd.Flags().String("idempotency-key", "", "Idempotency-Key sent to GitLab so a retried create cannot duplicate the branch")
 	markWrite(repoBranchCreateCmd)
 
 	repoBranchCmd.AddCommand(repoBranchDeleteCmd)
@@ -643,6 +670,18 @@ func resolveContent(content, contentFile, encoding string) (string, string, erro
 		encoding = "text"
 	}
 	return content, encoding, nil
+}
+
+// repoFileLastCommitID fetches the current last_commit_id of a file on a branch.
+// It is the optimistic-concurrency token GitLab exposes for repository files: the
+// value is bound into the confirm scope so an update/delete confirmed against a
+// stale dry-run is rejected once the file has moved on.
+func repoFileLastCommitID(client *api.Client, project, path, branch string) (string, error) {
+	f, err := client.Repos.GetFile(apiCtx(), project, path, branch)
+	if err != nil {
+		return "", handleAPIError(err, jsonMode)
+	}
+	return f.LastCommitID, nil
 }
 
 func boolStr(b bool) string {

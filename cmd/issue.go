@@ -44,6 +44,7 @@ func init() {
 	issueCreateCmd.Flags().String("label", "", "Labels (comma-separated)")
 	issueCreateCmd.Flags().Int("milestone-id", 0, "Milestone ID")
 	issueCreateCmd.Flags().Bool("confidential", false, "Mark as confidential")
+	issueCreateCmd.Flags().String("idempotency-key", "", "Idempotency-Key sent to GitLab so a retried create cannot duplicate the issue")
 	issueCreateCmd.Flags().String("fields", "", "Comma-separated fields for JSON output")
 	issueCmd.AddCommand(issueCreateCmd)
 	markWrite(issueCreateCmd)
@@ -205,7 +206,13 @@ var issueCreateCmd = &cobra.Command{
 		milestoneID, _ := cmd.Flags().GetInt("milestone-id")
 		confidential, _ := cmd.Flags().GetBool("confidential")
 
-		if done, err := prepareWrite(cmd, "create issue", map[string]any{"project": project, "title": title}); done || err != nil {
+		// Bind the idempotency key into the confirm scope so a token issued for one
+		// key cannot drive a create under a different key.
+		confirmDetail := map[string]any{"project": project, "title": title}
+		if key := idempotencyKeyOf(cmd); key != "" {
+			confirmDetail["idempotencyKey"] = key
+		}
+		if done, err := prepareWrite(cmd, "create issue", confirmDetail); done || err != nil {
 			return err
 		}
 
@@ -229,7 +236,7 @@ var issueCreateCmd = &cobra.Command{
 			opts.AssigneeIDs = []int{uid}
 		}
 
-		iss, err := client.Issues.Create(apiCtx(), project, opts)
+		iss, err := client.Issues.Create(idempotentCtx(cmd), project, opts)
 		if err != nil {
 			return handleAPIError(err, jsonMode)
 		}
@@ -265,12 +272,21 @@ var issueUpdateCmd = &cobra.Command{
 		removeLabels, _ := cmd.Flags().GetString("remove-labels")
 		milestoneID, _ := cmd.Flags().GetInt("milestone-id")
 
-		if done, err := prepareWrite(cmd, "update issue", map[string]any{"project": project, "iid": iid}); done || err != nil {
+		client, _, err := newClient()
+		if err != nil {
 			return err
 		}
 
-		client, _, err := newClient()
+		// Resource-version binding: capture updated_at and bind it into the confirm
+		// scope. If the issue changes between dry-run and confirm the token no longer
+		// matches, so the update is rejected with E_CONFLICT rather than overwriting
+		// a concurrent edit.
+		cur, err := client.Issues.Get(apiCtx(), project, iid)
 		if err != nil {
+			return handleAPIError(err, jsonMode)
+		}
+		confirmDetail := map[string]any{"project": project, "iid": iid, "updatedAt": cur.UpdatedAt}
+		if done, err := prepareWrite(cmd, "update issue", confirmDetail); done || err != nil {
 			return err
 		}
 

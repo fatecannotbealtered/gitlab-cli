@@ -44,6 +44,7 @@ func init() {
 	variableCreateCmd.Flags().Bool("raw", false, "Disable variable expansion")
 	variableCreateCmd.Flags().String("env-scope", "*", "Environment scope")
 	variableCreateCmd.Flags().String("description", "", "Variable description")
+	variableCreateCmd.Flags().String("idempotency-key", "", "Idempotency-Key sent to GitLab so a retried create cannot duplicate the variable")
 	variableCmd.AddCommand(variableCreateCmd)
 	markWrite(variableCreateCmd)
 
@@ -208,12 +209,16 @@ var variableCreateCmd = &cobra.Command{
 		envScope, _ := cmd.Flags().GetString("env-scope")
 		description, _ := cmd.Flags().GetString("description")
 
-		if done, err := prepareWrite(cmd, "create variable", map[string]any{
+		confirmDetail := map[string]any{
 			"project":  project,
 			"key":      key,
 			"type":     varType,
 			"envScope": envScope,
-		}); done || err != nil {
+		}
+		if k := idempotencyKeyOf(cmd); k != "" {
+			confirmDetail["idempotencyKey"] = k
+		}
+		if done, err := prepareWrite(cmd, "create variable", confirmDetail); done || err != nil {
 			return err
 		}
 
@@ -222,7 +227,7 @@ var variableCreateCmd = &cobra.Command{
 			return err
 		}
 
-		v, err := client.Variables.Create(apiCtx(), project, &api.VariableCreateOpts{
+		v, err := client.Variables.Create(idempotentCtx(cmd), project, &api.VariableCreateOpts{
 			Key:              key,
 			Value:            value,
 			VariableType:     varType,

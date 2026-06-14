@@ -14,6 +14,8 @@ gitlab-cli issue comment list 12 --project G --compact
 
 ```bash
 gitlab-cli issue create --project G --title "Bug: ..." --label bug
+gitlab-cli issue create --project G --title "Bug: ..." --idempotency-key bug-001   # idempotent create
+# update binds updated_at: if the issue changed since --dry-run, confirm → exit 6/E_CONFLICT
 gitlab-cli issue update 12 --project G --add-labels urgent
 gitlab-cli issue assign 12 alice --project G
 gitlab-cli issue assign 12 me --project G

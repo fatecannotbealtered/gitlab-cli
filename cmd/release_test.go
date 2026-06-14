@@ -137,7 +137,7 @@ func TestReleaseDelete_DryRun_JSON(t *testing.T) {
 		rootCmd.SetArgs([]string{
 			"release", "delete",
 			"--project", "1", "--tag", "v1.0",
-			"--dry-run", "--json",
+			"--dry-run", "--dangerous", "--json",
 		})
 		_ = rootCmd.Execute()
 	})
@@ -314,7 +314,7 @@ func TestRelease_Delete_DryRun_JSON(t *testing.T) {
 		rootCmd.SetArgs([]string{
 			"release", "delete",
 			"--project", "group/proj", "--tag", "v1.0",
-			"--dry-run", "--json",
+			"--dry-run", "--dangerous", "--json",
 		})
 		_ = rootCmd.Execute()
 	})
@@ -392,7 +392,7 @@ func TestRelease_Delete_JSON(t *testing.T) {
 	dryRun = false
 	lastExit = 0
 	captureStdout(t, func() {
-		args := []string{"release", "delete", "--project", "foo/bar", "--tag", "v1.0", "--json"}
+		args := []string{"release", "delete", "--project", "foo/bar", "--tag", "v1.0", "--json", "--dangerous"}
 		args = append(args, confirmArgsForTest(t, "release delete", map[string]any{"project": "foo/bar", "tag": "v1.0"})...)
 		rootCmd.SetArgs(args)
 		_ = rootCmd.Execute()
@@ -750,7 +750,7 @@ func TestRelease_Delete_PlainText(t *testing.T) {
 	t.Setenv("GITLAB_CLI_HOST", srv.URL)
 	t.Setenv("GITLAB_CLI_TOKEN", "test")
 	out := captureCombinedOutput(t, func() {
-		args := []string{"release", "delete", "--project", "g/p", "--tag", "v1.0"}
+		args := []string{"release", "delete", "--project", "g/p", "--tag", "v1.0", "--dangerous"}
 		args = append(args, confirmArgsForTest(t, "release delete", map[string]any{"project": "g/p", "tag": "v1.0"})...)
 		rootCmd.SetArgs(args)
 		_ = rootCmd.Execute()
@@ -765,7 +765,7 @@ func TestRelease_Delete_NewClientError(t *testing.T) {
 	origExit := lastExit
 	defer func() { lastExit = origExit }()
 	lastExit = 0
-	args := []string{"release", "delete", "--project", "g/p", "--tag", "v1.0"}
+	args := []string{"release", "delete", "--project", "g/p", "--tag", "v1.0", "--dangerous"}
 	args = append(args, confirmArgsForTest(t, "release delete", map[string]any{"project": "g/p", "tag": "v1.0"})...)
 	rootCmd.SetArgs(args)
 	_ = rootCmd.Execute()
@@ -786,7 +786,7 @@ func TestRelease_Delete_APIError(t *testing.T) {
 	origExit := lastExit
 	defer func() { lastExit = origExit }()
 	lastExit = 0
-	args := []string{"release", "delete", "--project", "g/p", "--tag", "v1.0"}
+	args := []string{"release", "delete", "--project", "g/p", "--tag", "v1.0", "--dangerous"}
 	args = append(args, confirmArgsForTest(t, "release delete", map[string]any{"project": "g/p", "tag": "v1.0"})...)
 	rootCmd.SetArgs(args)
 	_ = rootCmd.Execute()
@@ -831,7 +831,7 @@ func TestRelease_Delete_ConfirmRejected(t *testing.T) {
 	origExit := lastExit
 	defer func() { lastExit = origExit }()
 	lastExit = 0
-	rootCmd.SetArgs([]string{"release", "delete", "--project", "g/p", "--tag", "v1.0", "--confirm", "wrong"})
+	rootCmd.SetArgs([]string{"release", "delete", "--project", "g/p", "--tag", "v1.0", "--dangerous", "--confirm", "wrong"})
 	_ = rootCmd.Execute()
 	if lastExit != ExitConflict {
 		t.Errorf("exit = %d, want %d", lastExit, ExitConflict)

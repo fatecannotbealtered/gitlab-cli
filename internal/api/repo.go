@@ -132,6 +132,9 @@ type FileWriteBody struct {
 	Content       string `json:"content"`
 	CommitMessage string `json:"commit_message"`
 	Encoding      string `json:"encoding,omitempty"`
+	// LastCommitID enables GitLab's optimistic concurrency: the update is rejected
+	// if the file has moved past this commit since it was read.
+	LastCommitID string `json:"last_commit_id,omitempty"`
 }
 
 // CreateFile creates a new file in the repository.
@@ -148,12 +151,17 @@ func (a *RepoAPI) UpdateFile(ctx context.Context, projectID, filePath string, bo
 	return err
 }
 
-// DeleteFile deletes a file from the repository.
-func (a *RepoAPI) DeleteFile(ctx context.Context, projectID, filePath, branch, commitMessage string) error {
+// DeleteFile deletes a file from the repository. A non-empty lastCommitID enables
+// GitLab's optimistic concurrency: the delete is rejected if the file has moved
+// past that commit.
+func (a *RepoAPI) DeleteFile(ctx context.Context, projectID, filePath, branch, commitMessage, lastCommitID string) error {
 	path := a.client.APIPath("/projects/" + EncodeProjectPath(projectID) + "/repository/files/" + url.PathEscape(filePath))
 	body := map[string]string{
 		"branch":         branch,
 		"commit_message": commitMessage,
+	}
+	if lastCommitID != "" {
+		body["last_commit_id"] = lastCommitID
 	}
 	return a.client.DeleteWithBody(ctx, path, body)
 }

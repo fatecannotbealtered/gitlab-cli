@@ -21,6 +21,31 @@ import (
 // APIBasePath is the GitLab REST API v4 base path.
 const APIBasePath = "/api/v4"
 
+// idempotencyKeyCtxKey is the context key under which an optional Idempotency-Key
+// is carried into request construction. GitLab honours the Idempotency-Key header
+// on POST creates so a retried create cannot duplicate the resource.
+type idempotencyKeyCtxKey struct{}
+
+// WithIdempotencyKey returns a context that carries key as the Idempotency-Key
+// header for any request built from it. An empty key is a no-op.
+func WithIdempotencyKey(ctx context.Context, key string) context.Context {
+	if strings.TrimSpace(key) == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, idempotencyKeyCtxKey{}, key)
+}
+
+// idempotencyKeyFromContext extracts the Idempotency-Key carried by ctx, if any.
+func idempotencyKeyFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	if v, ok := ctx.Value(idempotencyKeyCtxKey{}).(string); ok {
+		return v
+	}
+	return ""
+}
+
 const (
 	defaultMaxRetries = 3
 	maxRateLimitWait  = 60 * time.Second
@@ -295,6 +320,9 @@ func (c *Client) doWithRetry(ctx context.Context, method, path string, body any)
 		}
 
 		c.applyJSONHeaders(req, body != nil)
+		if key := idempotencyKeyFromContext(ctx); key != "" {
+			req.Header.Set("Idempotency-Key", key)
+		}
 
 		resp, err := c.httpClient.Do(req)
 		if err != nil {

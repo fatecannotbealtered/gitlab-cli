@@ -195,7 +195,7 @@ func TestAgentSafe_DryRunDelete_NoForceRequired(t *testing.T) {
 		rootCmd.SetArgs([]string{
 			"repo", "branch", "delete",
 			"--project", "group/proj", "--name", "feat/x",
-			"--dry-run", "--json",
+			"--dry-run", "--dangerous", "--json",
 		})
 		_ = rootCmd.Execute()
 	})

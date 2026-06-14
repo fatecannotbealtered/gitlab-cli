@@ -219,7 +219,7 @@ func TestRequireConfirm_ConfirmToken_AllowsExecution(t *testing.T) {
 		rootCmd.SetArgs([]string{
 			"repo", "branch", "delete",
 			"--project", "group/proj", "--name", "feat/x",
-			"--confirm", token, "--json",
+			"--dangerous", "--confirm", token, "--json",
 		})
 		_ = rootCmd.Execute()
 	})
@@ -252,7 +252,7 @@ func TestDryRun_Delete_NoForceRequired(t *testing.T) {
 		rootCmd.SetArgs([]string{
 			"release", "delete",
 			"--project", "group/proj", "--tag", "v1.0.0",
-			"--dry-run", "--json",
+			"--dry-run", "--dangerous", "--json",
 		})
 		_ = rootCmd.Execute()
 	})

@@ -99,9 +99,16 @@ func TestIssue_Create_DryRun_JSON(t *testing.T) {
 }
 
 func TestIssue_Update_DryRun_JSON(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"iid":1,"updated_at":"2024-01-01T00:00:00Z"}`)
+	}))
+	defer srv.Close()
 	origDR := dryRun
 	origJM := jsonMode
 	defer func() { dryRun = origDR; jsonMode = origJM }()
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "test")
 
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"issue", "update", "1", "--project", "foo/bar", "--title", "fixed", "--dry-run", "--json"})
@@ -1059,6 +1066,11 @@ func TestIssue_Create_APIError_JSON(t *testing.T) {
 
 func TestIssue_Update_APIError_JSON(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"iid":1,"updated_at":"2024-01-01T00:00:00Z"}`))
+			return
+		}
 		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = w.Write([]byte(`{"message":"500"}`))
 	}))
@@ -1113,7 +1125,24 @@ func TestIssue_Update_InvalidIID(t *testing.T) {
 }
 
 func TestIssue_Update_MissingAuth(t *testing.T) {
-	testIssueMissingAuth(t, "issue", "update", "1", "--project", "foo/bar", "--title", "x")
+	// issue update fetches the client (and the version GET) before prepareWrite, so
+	// the dry-run-based withConfirmForTest helper cannot run without auth. newClient()
+	// fails first, so a hand-built token suffices to reach the auth failure.
+	isolateConfigHome(t)
+	t.Setenv("GITLAB_CLI_HOST", "")
+	t.Setenv("GITLAB_CLI_TOKEN", "")
+	t.Setenv("GITLAB_HOST", "")
+	t.Setenv("GITLAB_TOKEN", "")
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	args := []string{"issue", "update", "1", "--project", "foo/bar", "--title", "x"}
+	args = append(args, confirmArgsForTest(t, "update issue", map[string]any{"project": "foo/bar", "iid": 1, "updatedAt": ""})...)
+	rootCmd.SetArgs(args)
+	_ = rootCmd.Execute()
+	if lastExit != ExitAuth {
+		t.Errorf("exit code = %d, want %d (ExitAuth)", lastExit, ExitAuth)
+	}
 }
 
 func TestIssue_Update_WithAssignee(t *testing.T) {
@@ -1144,6 +1173,11 @@ func TestIssue_Update_WithAssignee(t *testing.T) {
 
 func TestIssue_Update_APIError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"iid":1,"updated_at":"2024-01-01T00:00:00Z"}`))
+			return
+		}
 		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = w.Write([]byte(`{"message":"500"}`))
 	}))

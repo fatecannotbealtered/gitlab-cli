@@ -25,6 +25,7 @@ type rootPersistentFlagStateForTest struct {
 	forceMode          bool
 	confirmFlag        string
 	dryRun             bool
+	dangerousMode      bool
 	formatMode         string
 	jsonAlias          bool
 	jsonMode           bool
@@ -41,6 +42,7 @@ func snapshotRootPersistentFlagsForTest() rootPersistentFlagStateForTest {
 		forceMode:          forceMode,
 		confirmFlag:        confirmFlag,
 		dryRun:             dryRun,
+		dangerousMode:      dangerousMode,
 		formatMode:         formatMode,
 		jsonAlias:          jsonAlias,
 		jsonMode:           jsonMode,
@@ -49,7 +51,7 @@ func snapshotRootPersistentFlagsForTest() rootPersistentFlagStateForTest {
 		activeCmd:          activeCmd,
 		preserveTextFormat: preserveTextFormatForReset,
 	}
-	for _, name := range []string{"json", "format", "force", "dry-run", "confirm", "quiet", "compact"} {
+	for _, name := range []string{"json", "format", "force", "dry-run", "dangerous", "confirm", "quiet", "compact"} {
 		if flag := rootCmd.PersistentFlags().Lookup(name); flag != nil {
 			state.values[name] = flag.Value.String()
 			state.changed[name] = flag.Changed
@@ -71,6 +73,7 @@ func restoreRootPersistentFlagsForTest(t *testing.T, state rootPersistentFlagSta
 	forceMode = state.forceMode
 	confirmFlag = state.confirmFlag
 	dryRun = state.dryRun
+	dangerousMode = state.dangerousMode
 	formatMode = state.formatMode
 	jsonAlias = state.jsonAlias
 	jsonMode = state.jsonMode
@@ -97,6 +100,7 @@ func resetRootPersistentFlags(t *testing.T) {
 		{"format", "json"},
 		{"force", "false"},
 		{"dry-run", "false"},
+		{"dangerous", "false"},
 		{"confirm", ""},
 		{"quiet", "false"},
 		{"compact", "false"},
@@ -111,6 +115,7 @@ func resetRootPersistentFlags(t *testing.T) {
 	forceMode = false
 	confirmFlag = ""
 	dryRun = false
+	dangerousMode = false
 	formatMode = formatJSON
 	jsonAlias = false
 	jsonMode = true

@@ -54,6 +54,7 @@ func init() {
 	mrCreateCmd.Flags().Bool("remove-source-branch", false, "Remove source branch after merge")
 	mrCreateCmd.Flags().Bool("auto", false, "Derive project and source-branch from git context")
 	mrCreateCmd.Flags().Bool("find-existing", false, "Return existing open MR for source branch instead of creating")
+	mrCreateCmd.Flags().String("idempotency-key", "", "Idempotency-Key sent to GitLab so a retried create cannot duplicate the merge request")
 	mrCmd.AddCommand(mrCreateCmd)
 	markWrite(mrCreateCmd)
 
@@ -306,12 +307,16 @@ var mrCreateCmd = &cobra.Command{
 
 		findExisting, _ := cmd.Flags().GetBool("find-existing")
 
-		if done, err := prepareWrite(cmd, "create mr", map[string]any{
+		confirmDetail := map[string]any{
 			"project":      project,
 			"title":        title,
 			"sourceBranch": srcBranch,
 			"targetBranch": tgtBranch,
-		}); done || err != nil {
+		}
+		if key := idempotencyKeyOf(cmd); key != "" {
+			confirmDetail["idempotencyKey"] = key
+		}
+		if done, err := prepareWrite(cmd, "create mr", confirmDetail); done || err != nil {
 			return err
 		}
 
@@ -363,7 +368,7 @@ var mrCreateCmd = &cobra.Command{
 			req.AssigneeID = uid
 		}
 
-		mr, err := client.MergeRequests.Create(apiCtx(), project, req)
+		mr, err := client.MergeRequests.Create(idempotentCtx(cmd), project, req)
 		if err != nil {
 			return handleAPIError(err, jsonMode)
 		}
@@ -408,12 +413,18 @@ var mrUpdateCmd = &cobra.Command{
 		removeLabels, _ := cmd.Flags().GetString("remove-labels")
 		tgtBranch, _ := cmd.Flags().GetString("target-branch")
 
-		if done, err := prepareWrite(cmd, "update mr", map[string]any{"project": project, "iid": iid}); done || err != nil {
+		client, _, err := newClient()
+		if err != nil {
 			return err
 		}
 
-		client, _, err := newClient()
+		// Resource-version binding: capture updated_at into the confirm scope so a
+		// stale confirm (the MR moved on after dry-run) fails with E_CONFLICT.
+		cur, err := client.MergeRequests.Get(apiCtx(), project, iid)
 		if err != nil {
+			return handleAPIError(err, jsonMode)
+		}
+		if done, err := prepareWrite(cmd, "update mr", map[string]any{"project": project, "iid": iid, "updatedAt": cur.UpdatedAt}); done || err != nil {
 			return err
 		}
 
@@ -467,6 +478,22 @@ var mrMergeCmd = &cobra.Command{
 		msg, _ := cmd.Flags().GetString("merge-commit-message")
 		sha, _ := cmd.Flags().GetString("sha")
 
+		client, _, err := newClient()
+		if err != nil {
+			return err
+		}
+
+		// Resource-version binding: capture the MR's updated_at and head sha, bind
+		// both into the confirm scope. The head sha is also sent to GitLab so the
+		// merge only proceeds if the branch tip still matches what dry-run saw —
+		// any new push (or other change) flips the token to E_CONFLICT.
+		cur, err := client.MergeRequests.Get(apiCtx(), project, iid)
+		if err != nil {
+			return handleAPIError(err, jsonMode)
+		}
+		if sha == "" {
+			sha = cur.SHA
+		}
 		confirmPayload := map[string]any{
 			"project":                  project,
 			"iid":                      iid,
@@ -474,15 +501,12 @@ var mrMergeCmd = &cobra.Command{
 			"shouldRemoveSourceBranch": removeSrc,
 			"mergeCommitMessage":       msg,
 			"sha":                      sha,
+			"updatedAt":                cur.UpdatedAt,
 		}
 		if done, err := prepareWrite(cmd, "merge mr", confirmPayload); done || err != nil {
 			return err
 		}
 
-		client, _, err := newClient()
-		if err != nil {
-			return err
-		}
 		mr, err := client.MergeRequests.Merge(apiCtx(), project, iid, &api.MergeRequestMergeRequest{
 			Squash:                   squash,
 			ShouldRemoveSourceBranch: removeSrc,

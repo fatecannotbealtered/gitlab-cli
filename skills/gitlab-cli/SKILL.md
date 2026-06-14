@@ -63,7 +63,10 @@ First-time setup: ask user for GitLab URL + PAT (`api` scope). `auth login` is a
 | Rule | Detail |
 |------|--------|
 | Output | JSON is default; add `--compact` for token efficiency; use `--format text` for human-readable output and `--format raw` for bytes/logs/diffs |
-| Writes | `--dry-run` first, inspect `data.preview`, then retry with `--confirm <confirm_token>` from `data.confirm_token` |
+| Writes | `--dry-run` first, inspect `data.preview`, then retry with `--confirm <confirm_token>` from `data.confirm_token`. A confirm token is single-use: a replayed token returns exit `6`/`E_CONFLICT` (`already used`) — re-run `--dry-run` to see current state |
+| Write-dangerous | `permissionTier: write-dangerous` commands (`repo branch delete`, `repo file delete`, `release delete`, `variable create/update/delete`, `mr merge`) also require `--dangerous` in BOTH the `--dry-run` and `--confirm` steps; missing it returns exit `5`/`E_CONFIRMATION_REQUIRED` |
+| Idempotency | Create commands accept `--idempotency-key <key>`; it is sent as the `Idempotency-Key` HTTP header (so a retried create cannot duplicate) and bound into the confirm token |
+| Concurrency | `repo file update/delete` bind `last_commit_id` and `issue/mr update`, `mr merge` bind `updated_at` (merge also the head `sha`): if the resource changed since `--dry-run`, confirm returns exit `6`/`E_CONFLICT` instead of clobbering |
 | Force | Avoid `--force`; needs `GITLAB_CLI_ALLOW_FORCE=1` in agent-safe mode |
 | Secrets | Never `--show-values` unless user asks + `GITLAB_CLI_ALLOW_SHOW_VALUES=1` |
 | Discovery | `gitlab-cli reference` for `write`, `requiresConfirmation`, `riskLevel`, `permissionTier`, `blastRadius` |
@@ -116,7 +119,7 @@ Full contracts (exit codes, error JSON, list envelope, audit): **[reference/cont
 | Task | Command |
 |------|---------|
 | List open MRs | `gitlab-cli mr list --project G --compact` |
-| Merge MR | `gitlab-cli mr merge --project G 42 --dry-run`, then retry with `--confirm <confirm_token>` |
+| Merge MR | `gitlab-cli mr merge --project G 42 --dangerous --dry-run`, then retry with `--dangerous --confirm <confirm_token>` |
 | Comment on MR | `gitlab-cli mr comment add --project G 42 --body "..."` |
 | Wait for CI | `gitlab-cli pipeline wait --project G ID --timeout 600` |
 | Job log | `gitlab-cli job log --project G JOB_ID` |

@@ -137,7 +137,7 @@ func TestVariable_Create_DryRun_JSON(t *testing.T) {
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{
 			"variable", "create",
-			"--dry-run", "--json",
+			"--dry-run", "--dangerous", "--json",
 			"--project", "group/proj",
 			"--key", "MY_SECRET",
 			"--value", "supersecret",
@@ -162,7 +162,7 @@ func TestVariable_Update_DryRun_JSON(t *testing.T) {
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{
 			"variable", "update",
-			"--dry-run", "--json",
+			"--dry-run", "--dangerous", "--json",
 			"--project", "group/proj",
 			"--key", "MY_SECRET",
 			"--value", "newval",
@@ -184,7 +184,7 @@ func TestVariable_Delete_DryRun_JSON(t *testing.T) {
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{
 			"variable", "delete",
-			"--dry-run", "--json",
+			"--dry-run", "--dangerous", "--json",
 			"--project", "group/proj",
 			"--key", "MY_SECRET",
 		})
@@ -216,7 +216,7 @@ func TestVariable_Create_JSON(t *testing.T) {
 	defer func() { dryRun = origDR; jsonMode = origJM }()
 	dryRun = false
 	out := captureStdout(t, func() {
-		args := []string{"variable", "create", "--project", "foo/bar", "--key", "FOO", "--value", "secret", "--json"}
+		args := []string{"variable", "create", "--project", "foo/bar", "--key", "FOO", "--value", "secret", "--json", "--dangerous"}
 		args = append(args, confirmArgsForTest(t, "create variable", map[string]any{"project": "foo/bar", "key": "FOO", "type": "env_var", "envScope": "*"})...)
 		rootCmd.SetArgs(args)
 		_ = rootCmd.Execute()
@@ -242,7 +242,7 @@ func TestVariable_Update_JSON(t *testing.T) {
 	defer func() { dryRun = origDR; jsonMode = origJM }()
 	dryRun = false
 	out := captureStdout(t, func() {
-		args := []string{"variable", "update", "--project", "foo/bar", "--key", "FOO", "--value", "newval", "--json"}
+		args := []string{"variable", "update", "--project", "foo/bar", "--key", "FOO", "--value", "newval", "--json", "--dangerous"}
 		args = append(args, confirmArgsForTest(t, "update variable", map[string]any{"project": "foo/bar", "key": "FOO", "envScope": ""})...)
 		rootCmd.SetArgs(args)
 		_ = rootCmd.Execute()
@@ -271,7 +271,7 @@ func TestVariable_Delete_JSON(t *testing.T) {
 	dryRun = false
 	lastExit = 0
 	captureStdout(t, func() {
-		args := []string{"variable", "delete", "--project", "foo/bar", "--key", "FOO", "--json"}
+		args := []string{"variable", "delete", "--project", "foo/bar", "--key", "FOO", "--json", "--dangerous"}
 		args = append(args, confirmArgsForTest(t, "delete variable", map[string]any{"project": "foo/bar", "key": "FOO", "envScope": ""})...)
 		rootCmd.SetArgs(args)
 		_ = rootCmd.Execute()
@@ -338,7 +338,7 @@ func TestVariable_Create_PlainText(t *testing.T) {
 	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
-		args := []string{"variable", "create", "--project", "foo/bar", "--key", "FOO", "--value", "secret"}
+		args := []string{"variable", "create", "--project", "foo/bar", "--key", "FOO", "--value", "secret", "--dangerous"}
 		args = append(args, confirmArgsForTest(t, "create variable", map[string]any{"project": "foo/bar", "key": "FOO", "type": "env_var", "envScope": "*"})...)
 		rootCmd.SetArgs(args)
 		_ = rootCmd.Execute()
@@ -384,7 +384,7 @@ func TestVariable_Update_PlainText(t *testing.T) {
 	setTextFormatForTest(t)
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	out := captureStdout(t, func() {
-		args := []string{"variable", "update", "--project", "foo/bar", "--key", "FOO", "--value", "newval"}
+		args := []string{"variable", "update", "--project", "foo/bar", "--key", "FOO", "--value", "newval", "--dangerous"}
 		args = append(args, confirmArgsForTest(t, "update variable", map[string]any{"project": "foo/bar", "key": "FOO", "envScope": ""})...)
 		rootCmd.SetArgs(args)
 		_ = rootCmd.Execute()
@@ -625,7 +625,7 @@ func TestVariable_Create_MissingAuth(t *testing.T) {
 	defer func() { lastExit = origExit; dryRun = origDR }()
 	lastExit = 0
 	dryRun = false
-	args := []string{"variable", "create", "--project", "foo/bar", "--key", "FOO", "--value", "secret"}
+	args := []string{"variable", "create", "--project", "foo/bar", "--key", "FOO", "--value", "secret", "--dangerous"}
 	args = append(args, confirmArgsForTest(t, "create variable", map[string]any{"project": "foo/bar", "key": "FOO", "type": "env_var", "envScope": "*"})...)
 	rootCmd.SetArgs(args)
 	_ = rootCmd.Execute()
@@ -647,7 +647,7 @@ func TestVariable_Create_ShowValues_JSON(t *testing.T) {
 	defer func() { dryRun = origDR; _ = variableCmd.PersistentFlags().Set("show-values", "false") }()
 	dryRun = false
 	out := captureStdout(t, func() {
-		args := []string{"variable", "create", "--project", "foo/bar", "--key", "FOO", "--value", "secret", "--json", "--show-values"}
+		args := []string{"variable", "create", "--project", "foo/bar", "--key", "FOO", "--value", "secret", "--json", "--show-values", "--dangerous"}
 		args = append(args, confirmArgsForTest(t, "create variable", map[string]any{"project": "foo/bar", "key": "FOO", "type": "env_var", "envScope": "*"})...)
 		rootCmd.SetArgs(args)
 		_ = rootCmd.Execute()
@@ -670,7 +670,7 @@ func TestVariable_Create_APIError(t *testing.T) {
 	defer func() { dryRun = origDR; lastExit = origExit }()
 	dryRun = false
 	lastExit = 0
-	args := []string{"variable", "create", "--project", "foo/bar", "--key", "FOO", "--value", "secret"}
+	args := []string{"variable", "create", "--project", "foo/bar", "--key", "FOO", "--value", "secret", "--dangerous"}
 	args = append(args, confirmArgsForTest(t, "create variable", map[string]any{"project": "foo/bar", "key": "FOO", "type": "env_var", "envScope": "*"})...)
 	rootCmd.SetArgs(args)
 	_ = rootCmd.Execute()
@@ -740,6 +740,7 @@ func TestVariable_Update_AllFlags(t *testing.T) {
 			"--raw", "true",
 			"--env-scope", "prod",
 			"--description", "desc",
+			"--dangerous",
 		}
 		args = append(args, confirmArgsForTest(t, "update variable", map[string]any{"project": "foo/bar", "key": "FOO", "envScope": "prod"})...)
 		rootCmd.SetArgs(args)
@@ -760,7 +761,7 @@ func TestVariable_Update_MissingAuth(t *testing.T) {
 	defer func() { lastExit = origExit; dryRun = origDR }()
 	lastExit = 0
 	dryRun = false
-	args := []string{"variable", "update", "--project", "foo/bar", "--key", "FOO", "--value", "new"}
+	args := []string{"variable", "update", "--project", "foo/bar", "--key", "FOO", "--value", "new", "--dangerous"}
 	args = append(args, confirmArgsForTest(t, "update variable", map[string]any{"project": "foo/bar", "key": "FOO", "envScope": ""})...)
 	rootCmd.SetArgs(args)
 	_ = rootCmd.Execute()
@@ -782,7 +783,7 @@ func TestVariable_Update_ShowValues_JSON(t *testing.T) {
 	defer func() { dryRun = origDR; _ = variableCmd.PersistentFlags().Set("show-values", "false") }()
 	dryRun = false
 	out := captureStdout(t, func() {
-		args := []string{"variable", "update", "--project", "foo/bar", "--key", "FOO", "--value", "newval", "--json", "--show-values"}
+		args := []string{"variable", "update", "--project", "foo/bar", "--key", "FOO", "--value", "newval", "--json", "--show-values", "--dangerous"}
 		args = append(args, confirmArgsForTest(t, "update variable", map[string]any{"project": "foo/bar", "key": "FOO", "envScope": ""})...)
 		rootCmd.SetArgs(args)
 		_ = rootCmd.Execute()
@@ -806,7 +807,7 @@ func TestVariable_Update_APIError(t *testing.T) {
 	defer func() { dryRun = origDR; lastExit = origExit }()
 	dryRun = false
 	lastExit = 0
-	args := []string{"variable", "update", "--project", "foo/bar", "--key", "FOO", "--value", "new"}
+	args := []string{"variable", "update", "--project", "foo/bar", "--key", "FOO", "--value", "new", "--dangerous"}
 	args = append(args, confirmArgsForTest(t, "update variable", map[string]any{"project": "foo/bar", "key": "FOO", "envScope": ""})...)
 	rootCmd.SetArgs(args)
 	_ = rootCmd.Execute()
@@ -857,7 +858,7 @@ func TestVariable_Delete_MissingAuth(t *testing.T) {
 	defer func() { lastExit = origExit; dryRun = origDR }()
 	lastExit = 0
 	dryRun = false
-	args := []string{"variable", "delete", "--project", "foo/bar", "--key", "FOO"}
+	args := []string{"variable", "delete", "--project", "foo/bar", "--key", "FOO", "--dangerous"}
 	args = append(args, confirmArgsForTest(t, "delete variable", map[string]any{"project": "foo/bar", "key": "FOO", "envScope": ""})...)
 	rootCmd.SetArgs(args)
 	_ = rootCmd.Execute()
@@ -903,7 +904,7 @@ func TestVariable_Delete_WithFilter(t *testing.T) {
 	dryRun = false
 	lastExit = 0
 	captureStdout(t, func() {
-		args := []string{"variable", "delete", "--project", "foo/bar", "--key", "FOO", "--filter", "env_scope=production"}
+		args := []string{"variable", "delete", "--project", "foo/bar", "--key", "FOO", "--filter", "env_scope=production", "--dangerous"}
 		args = append(args, confirmArgsForTest(t, "delete variable", map[string]any{"project": "foo/bar", "key": "FOO", "envScope": "production"})...)
 		rootCmd.SetArgs(args)
 		_ = rootCmd.Execute()
@@ -927,7 +928,7 @@ func TestVariable_Delete_APIError(t *testing.T) {
 	defer func() { dryRun = origDR; lastExit = origExit }()
 	dryRun = false
 	lastExit = 0
-	args := []string{"variable", "delete", "--project", "foo/bar", "--key", "FOO"}
+	args := []string{"variable", "delete", "--project", "foo/bar", "--key", "FOO", "--dangerous"}
 	args = append(args, confirmArgsForTest(t, "delete variable", map[string]any{"project": "foo/bar", "key": "FOO", "envScope": ""})...)
 	rootCmd.SetArgs(args)
 	_ = rootCmd.Execute()
@@ -961,7 +962,7 @@ func TestVariable_Delete_PlainText(t *testing.T) {
 	setTextFormatForTest(t)
 	lastExit = 0
 	out := captureStdout(t, func() {
-		args := []string{"variable", "delete", "--project", "foo/bar", "--key", "FOO"}
+		args := []string{"variable", "delete", "--project", "foo/bar", "--key", "FOO", "--dangerous"}
 		args = append(args, confirmArgsForTest(t, "delete variable", map[string]any{"project": "foo/bar", "key": "FOO", "envScope": ""})...)
 		rootCmd.SetArgs(args)
 		_ = rootCmd.Execute()
@@ -986,7 +987,7 @@ func TestVariable_Update_PlainTextSuccess(t *testing.T) {
 	dryRun = false
 	setTextFormatForTest(t)
 	out := captureStdout(t, func() {
-		args := []string{"variable", "update", "--project", "foo/bar", "--key", "FOO", "--value", "new"}
+		args := []string{"variable", "update", "--project", "foo/bar", "--key", "FOO", "--value", "new", "--dangerous"}
 		args = append(args, confirmArgsForTest(t, "update variable", map[string]any{"project": "foo/bar", "key": "FOO", "envScope": ""})...)
 		rootCmd.SetArgs(args)
 		_ = rootCmd.Execute()

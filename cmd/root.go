@@ -42,14 +42,43 @@ var version = "dev"
 
 // Global flags.
 var (
-	jsonMode    = true
-	jsonAlias   bool
-	compactJSON bool
-	forceMode   bool
-	quietMode   bool
-	dryRun      bool
-	formatMode  = formatJSON
+	jsonMode      = true
+	jsonAlias     bool
+	compactJSON   bool
+	forceMode     bool
+	quietMode     bool
+	dryRun        bool
+	dangerousMode bool
+	formatMode    = formatJSON
 )
+
+// dangerousCommandPaths is the single source of truth for which command paths are
+// write-dangerous (irreversible, secret-bearing, or high-blast). They require
+// --dangerous in BOTH the --dry-run and --confirm steps, on top of the ordinary
+// confirm token. Both permissionTier (self-description in reference) and the
+// runtime gate read this set, so the advertised tier can never drift from what is
+// enforced.
+var dangerousCommandPaths = map[string]bool{
+	"gitlab-cli repo branch delete": true,
+	"gitlab-cli repo file delete":   true,
+	"gitlab-cli release delete":     true,
+	"gitlab-cli variable create":    true,
+	"gitlab-cli variable update":    true,
+	"gitlab-cli variable delete":    true,
+	"gitlab-cli mr merge":           true,
+}
+
+// isDangerousCommand reports whether the command is in the write-dangerous set
+// that requires the --dangerous second gate.
+func isDangerousCommand(cmd *cobra.Command) bool {
+	return cmd != nil && dangerousCommandPaths[cmd.CommandPath()]
+}
+
+// isDangerousCommandPath reports whether a command path (as emitted by reference,
+// without the leading "gitlab-cli ") is write-dangerous.
+func isDangerousCommandPath(path string) bool {
+	return dangerousCommandPaths["gitlab-cli "+strings.TrimSpace(path)]
+}
 
 const (
 	formatJSON = "json"
@@ -93,6 +122,22 @@ func apiCtx() context.Context {
 	return context.Background()
 }
 
+// idempotencyKeyOf returns the --idempotency-key flag value for a create command,
+// or "" if the flag is absent or unset.
+func idempotencyKeyOf(cmd *cobra.Command) string {
+	if cmd == nil || cmd.Flags().Lookup("idempotency-key") == nil {
+		return ""
+	}
+	v, _ := cmd.Flags().GetString("idempotency-key")
+	return strings.TrimSpace(v)
+}
+
+// idempotentCtx wraps apiCtx() with the command's --idempotency-key, if set, so
+// the create request carries the Idempotency-Key header.
+func idempotentCtx(cmd *cobra.Command) context.Context {
+	return api.WithIdempotencyKey(apiCtx(), idempotencyKeyOf(cmd))
+}
+
 // setExitCode sets the exit code (only increases severity, never decreases).
 func setExitCode(code int) {
 	if code > lastExit {
@@ -126,6 +171,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&forceMode, "force", false, "Deprecated; use --dry-run and --confirm <confirm_token>")
 	rootCmd.PersistentFlags().BoolVar(&quietMode, "quiet", false, "Suppress non-JSON stdout output (for scripts and AI Agents)")
 	rootCmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "Show what would be done without executing")
+	rootCmd.PersistentFlags().BoolVar(&dangerousMode, "dangerous", false, "Required for write-dangerous commands (irreversible/secret-bearing) in both the --dry-run and --confirm steps")
 	initConfirmFlag()
 	installUpdateNoticeHelp(rootCmd)
 
@@ -257,6 +303,13 @@ func dryRunOutput(action string, detail map[string]any) bool {
 }
 
 func prepareWrite(cmd *cobra.Command, action string, detail map[string]any) (bool, error) {
+	// T2 second gate: write-dangerous commands require --dangerous in BOTH the
+	// dry-run and confirm steps, on top of the --confirm token. prepareWrite runs
+	// for both steps, so a single check here enforces the contract that reference
+	// advertises as permissionTier=write-dangerous.
+	if isDangerousCommand(cmd) && !dangerousMode {
+		return false, failConfirmRequired(cmd.CommandPath() + " is write-dangerous and requires --dangerous in both the --dry-run and --confirm steps")
+	}
 	if dryRunOutput(action, detail) {
 		return true, nil
 	}
