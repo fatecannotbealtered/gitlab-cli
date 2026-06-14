@@ -141,6 +141,18 @@ func commandPathForConfirmAction(action string) string {
 		return "gitlab-cli issue assign"
 	case "label issue":
 		return "gitlab-cli issue label"
+	case "issue bulk close":
+		return "gitlab-cli issue bulk close"
+	case "issue bulk reopen":
+		return "gitlab-cli issue bulk reopen"
+	case "issue bulk update":
+		return "gitlab-cli issue bulk update"
+	case "issue bulk label":
+		return "gitlab-cli issue bulk label"
+	case "issue bulk assign":
+		return "gitlab-cli issue bulk assign"
+	case "issue bulk comment":
+		return "gitlab-cli issue bulk comment"
 	case "add comment":
 		return "gitlab-cli issue comment add"
 	case "delete comment":
@@ -179,6 +191,14 @@ func commandPathForConfirmAction(action string) string {
 		return "gitlab-cli mr unapprove"
 	case "merge mr":
 		return "gitlab-cli mr merge"
+	case "mr bulk merge":
+		return "gitlab-cli mr bulk merge"
+	case "mr bulk approve":
+		return "gitlab-cli mr bulk approve"
+	case "mr bulk close":
+		return "gitlab-cli mr bulk close"
+	case "mr bulk update":
+		return "gitlab-cli mr bulk update"
 	case "add mr comment":
 		return "gitlab-cli mr comment add"
 	case "create pipeline":
@@ -199,6 +219,8 @@ func commandPathForConfirmAction(action string) string {
 		return "gitlab-cli repo file update"
 	case "repo file delete":
 		return "gitlab-cli repo file delete"
+	case "repo commit create":
+		return "gitlab-cli repo commit create"
 	case "repo branch create":
 		return "gitlab-cli repo branch create"
 	case "repo branch delete":
@@ -211,6 +233,8 @@ func commandPathForConfirmAction(action string) string {
 		return "gitlab-cli variable update"
 	case "delete variable":
 		return "gitlab-cli variable delete"
+	case "variable bulk-import":
+		return "gitlab-cli variable bulk-import"
 	default:
 		return ""
 	}

@@ -66,6 +66,7 @@ var dangerousCommandPaths = map[string]bool{
 	"gitlab-cli variable update":    true,
 	"gitlab-cli variable delete":    true,
 	"gitlab-cli mr merge":           true,
+	"gitlab-cli mr bulk merge":      true,
 }
 
 // isDangerousCommand reports whether the command is in the write-dangerous set
