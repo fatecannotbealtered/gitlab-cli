@@ -51,25 +51,37 @@ type refCommand struct {
 	RiskLevel            string       `json:"riskLevel,omitempty"`
 	BlastRadius          string       `json:"blastRadius,omitempty"`
 	OutputType           string       `json:"outputType,omitempty"`
+	OutputSchema         string       `json:"output_schema,omitempty"`
 	Formats              []string     `json:"formats,omitempty"`
 	PositionalArgs       []string     `json:"positionalArgs,omitempty"`
 	SupportsFields       bool         `json:"supportsFields,omitempty"`
+	Examples             []string     `json:"examples,omitempty"`
 	Flags                []refFlag    `json:"flags,omitempty"`
 	Commands             []refCommand `json:"commands,omitempty"`
 }
 
+// referenceDataSchema is the machine-readable description of a command's data
+// payload: the JSON shape, the fields it may contain, and which of those fields
+// carry GitLab-controlled text that agents must treat as data, not instructions.
+type referenceDataSchema struct {
+	Shape           string   `json:"shape"`
+	Fields          []string `json:"fields"`
+	UntrustedFields []string `json:"untrusted_fields,omitempty"`
+}
+
 // refTree is the root JSON document for `reference --json`.
 type refTree struct {
-	SchemaVersion    string           `json:"schema_version"`
-	Tool             string           `json:"tool"`
-	Version          string           `json:"version"`
-	RiskTier         string           `json:"riskTier"`
-	BlastRadius      string           `json:"blastRadius"`
-	ReleaseReadiness releaseReadiness `json:"release_readiness"`
-	Security         map[string]any   `json:"security"`
-	GlobalFlags      []refFlag        `json:"globalFlags"`
-	ExitCodes        map[int]string   `json:"exitCodes"`
-	Commands         []refCommand     `json:"commands"`
+	SchemaVersion    string                         `json:"schema_version"`
+	Tool             string                         `json:"tool"`
+	Version          string                         `json:"version"`
+	RiskTier         string                         `json:"riskTier"`
+	BlastRadius      string                         `json:"blastRadius"`
+	ReleaseReadiness releaseReadiness               `json:"release_readiness"`
+	Security         map[string]any                 `json:"security"`
+	GlobalFlags      []refFlag                      `json:"globalFlags"`
+	ExitCodes        map[int]string                 `json:"exitCodes"`
+	Commands         []refCommand                   `json:"commands"`
+	Schemas          map[string]referenceDataSchema `json:"schemas"`
 }
 
 var positionalArgRe = regexp.MustCompile(`<([^>]+)>`)
@@ -101,6 +113,7 @@ func buildReferenceTree(root *cobra.Command) refTree {
 			7: "retryable",
 			8: "timeout",
 		},
+		Schemas: referenceSchemas(),
 	}
 	children := root.Commands()
 	sort.Slice(children, func(i, j int) bool {
@@ -187,6 +200,8 @@ func commandToRef(cmd *cobra.Command, prefix, pathPrefix string) refCommand {
 			node.OutputType = "json"
 		}
 		node.Formats = commandOutputFormats(cmd)
+		node.OutputSchema = schemaLabelForCommand(node.Path)
+		node.Examples = examplesForCommand(node.Path)
 	}
 	return node
 }
@@ -324,6 +339,19 @@ func walkCommands(cmd *cobra.Command, lines *[]string, prefix string) {
 		}
 		if len(meta) > 0 {
 			*lines = append(*lines, strings.Join(meta, " · "))
+			*lines = append(*lines, "")
+		}
+		leafPath := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(prefix+cmd.Name()), "gitlab-cli"))
+		if label := schemaLabelForCommand(leafPath); label != "" {
+			*lines = append(*lines, "Data schema: `"+label+"`")
+			*lines = append(*lines, "")
+		}
+		if examples := examplesForCommand(leafPath); len(examples) > 0 {
+			*lines = append(*lines, "Examples:")
+			*lines = append(*lines, "")
+			for _, ex := range examples {
+				*lines = append(*lines, "- `"+ex+"`")
+			}
 			*lines = append(*lines, "")
 		}
 	}
