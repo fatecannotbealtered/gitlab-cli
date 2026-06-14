@@ -5,6 +5,16 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Batch write commands (CLI-SPEC §15: plural input, one dry-run preview, one single-use confirm token covering the whole batch, aggregated per-item `items[]` + `{total,succeeded,failed}` summary, `--continue-on-error`):
+  - `repo commit create` — one atomic multi-file commit via the native `POST /repository/commits` `actions[]` endpoint (class A); repeatable `--action 'create|update|delete|move:path=...;content=...;previous_path=...'`, up to 1000 actions.
+  - `issue bulk close|reopen|update|label|assign|comment` — client-side loop over `--ids` (class B).
+  - `mr bulk merge|approve|close|update` — client-side loop over `--ids` (class B); `mr bulk merge` is write-dangerous and requires the `--dangerous` two-step gate (defaults `--continue-on-error` to false).
+  - `variable bulk-import --file` — import CI/CD variables from a `.env` or JSON file, creating new keys and updating existing ones.
+
 ## [1.2.3] - 2026-06-14
 
 ### Added

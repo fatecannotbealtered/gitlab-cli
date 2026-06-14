@@ -41,6 +41,23 @@ gitlab-cli repo tree --project G --path src --ref main
 gitlab-cli repo tree --project G --recursive --limit 100
 ```
 
+## Atomic multi-file commit (`repo commit create`)
+
+One commit applies many file actions atomically via the native `actions[]` endpoint (CLI-SPEC §15, class A). Each `--action` is `type:field=value;field=value` (repeatable), up to 1000 actions.
+
+```bash
+gitlab-cli repo commit create --project G --branch main --message "sync config" \
+  --action 'create:path=docs/a.md;content=hello' \
+  --action 'update:path=README.md;content_file=./README.md' \
+  --action 'delete:path=old.txt' \
+  --action 'move:path=new/x.go;previous_path=old/x.go' \
+  --dry-run
+gitlab-cli repo commit create --project G --branch main --message "sync config" \
+  --action 'create:path=docs/a.md;content=hello' --confirm <confirm_token>
+```
+
+Result: the resulting `commitId`/`shortId`/`webUrl` plus aggregated `items[]` (one per action) and `summary`. The commit is server-side atomic — all actions land in one commit or none do, so on failure every item reports the same error.
+
 ## Notes
 
 - `repo file get` → JSON metadata/content by default; use `--format raw` for unwrapped bytes or `--output` to save locally

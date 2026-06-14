@@ -29,6 +29,22 @@ gitlab-cli issue comment add 12 --project G --body "Repro steps: ..."
 gitlab-cli issue comment delete 12 --project G --note-id 99 --confirm <confirm_token>
 ```
 
+## Bulk (batch over many issues)
+
+One command, one `confirm_token`, aggregated `items[]` + `summary` (CLI-SPEC §15). `--ids` is comma-separated or repeatable.
+
+```bash
+gitlab-cli issue bulk close --project G --ids 1,2,3 --dry-run
+gitlab-cli issue bulk close --project G --ids 1,2,3 --confirm <confirm_token>
+gitlab-cli issue bulk reopen  --project G --ids 1,2 --confirm <confirm_token>
+gitlab-cli issue bulk update  --project G --ids 1,2 --add-labels triage --confirm <confirm_token>
+gitlab-cli issue bulk label   --project G --ids 1,2 --add bug --remove triage --confirm <confirm_token>
+gitlab-cli issue bulk assign alice --project G --ids 1,2 --confirm <confirm_token>
+gitlab-cli issue bulk comment --project G --ids 1,2 --body "triaged" --confirm <confirm_token>
+```
+
+Batch result: `data.items[]` carries `{target, ok, error{code,retryable}}`; `data.summary` is `{total,succeeded,failed}`. A per-item failure does not roll back the others. `--continue-on-error=false` stops at the first failure and lists the rest in `data.skipped`.
+
 ## Issue data payload (excerpt)
 
 ```json

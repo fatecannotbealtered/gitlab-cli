@@ -22,6 +22,17 @@ gitlab-cli variable delete --project G --key FOO --dangerous --confirm <confirm_
 gitlab-cli variable create --project G --key FOO --value bar --idempotency-key vars-foo-001 --dangerous --dry-run
 ```
 
+## Bulk import (`variable bulk-import`)
+
+Import many variables from a `.env` (KEY=value lines) or JSON (`{"KEY":"value"}`) file: new keys are created, existing keys updated (CLI-SPEC §15). One `confirm_token`, aggregated `items[]` + `summary`.
+
+```bash
+gitlab-cli variable bulk-import --project G --file .env --dry-run
+gitlab-cli variable bulk-import --project G --file vars.json --env-scope production --confirm <confirm_token>
+```
+
+Each `data.items[]` entry reports `{target:key, ok, action:created|updated, envScope}` or `error{code,retryable}`. Not write-dangerous (no `--dangerous`), but still a single confirmed batch. Note: a `.env`/JSON file may contain plaintext secrets — keep it out of logs and version control.
+
 ## Variable data payload (no value)
 
 ```json

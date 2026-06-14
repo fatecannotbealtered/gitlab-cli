@@ -80,6 +80,13 @@ func referenceSchemas() map[string]referenceDataSchema {
 		"repo_file":       {Shape: "object", Fields: []string{"project", "path", "ref", "bytes", "encoding", "content", "output", "_untrusted"}, UntrustedFields: []string{"content"}},
 		"repo_file_write": {Shape: "object", Fields: []string{"path", "branch", "action"}},
 
+		// ── Batch results (CLI-SPEC §15) ─────────────────────────────────────
+		// Aggregated per-item results: items[] carry target + ok + on failure
+		// error{code,retryable}; summary always reports {total,succeeded,failed}.
+		// repo commit is atomic class-A, so it also returns the resulting commit.
+		"batch_commit": {Shape: "object", Fields: []string{"commitId", "shortId", "branch", "webUrl", "items[]", "items[].target", "items[].ok", "items[].action", "summary", "_untrusted"}, UntrustedFields: []string{"items[].target"}},
+		"batch_result": {Shape: "object", Fields: []string{"items[]", "items[].target", "items[].ok", "items[].error", "items[].action", "summary", "skipped", "_untrusted"}, UntrustedFields: []string{"items[].target"}},
+
 		// ── Search ───────────────────────────────────────────────────────────
 		"search_project[]": {Shape: "list", Fields: []string{"items[]", "count", "limit", "page", "total", "hasMore", "all"}, UntrustedFields: []string{"items[].name", "items[].pathWithNamespace"}},
 		"search_issue[]":   {Shape: "list", Fields: []string{"items[]", "count", "limit", "page", "total", "hasMore", "all"}, UntrustedFields: []string{"items[].title"}},
@@ -133,6 +140,12 @@ var commandSchemaLabels = map[string]string{
 	"update":              "update",
 
 	"issue assign":         "issue",
+	"issue bulk assign":    "batch_result",
+	"issue bulk close":     "batch_result",
+	"issue bulk comment":   "batch_result",
+	"issue bulk label":     "batch_result",
+	"issue bulk reopen":    "batch_result",
+	"issue bulk update":    "batch_result",
 	"issue close":          "issue",
 	"issue comment add":    "issue_comment",
 	"issue comment delete": "deleted_comment",
@@ -145,6 +158,10 @@ var commandSchemaLabels = map[string]string{
 	"issue update":         "issue",
 
 	"mr approve":          "mr_approval",
+	"mr bulk approve":     "batch_result",
+	"mr bulk close":       "batch_result",
+	"mr bulk merge":       "batch_result",
+	"mr bulk update":      "batch_result",
 	"mr close":            "mr",
 	"mr comment add":      "mr_note",
 	"mr comment delete":   "deleted_comment",
@@ -197,6 +214,7 @@ var commandSchemaLabels = map[string]string{
 	"repo branch create": "branch",
 	"repo branch delete": "deleted_branch",
 	"repo branch list":   "branch[]",
+	"repo commit create": "batch_commit",
 	"repo commit get":    "commit",
 	"repo commit list":   "commit[]",
 	"repo file create":   "repo_file_write",
@@ -220,11 +238,12 @@ var commandSchemaLabels = map[string]string{
 	"user me":     "user",
 	"user search": "user[]",
 
-	"variable create": "variable",
-	"variable delete": "deleted_variable",
-	"variable get":    "variable",
-	"variable list":   "variable[]",
-	"variable update": "variable",
+	"variable bulk-import": "batch_result",
+	"variable create":      "variable",
+	"variable delete":      "deleted_variable",
+	"variable get":         "variable",
+	"variable list":        "variable[]",
+	"variable update":      "variable",
 }
 
 // commandExamples gives one runnable example per leaf. Read commands use
@@ -243,6 +262,12 @@ var commandExamples = map[string][]string{
 	"update":              {"gitlab-cli update --dry-run --compact", "gitlab-cli update --confirm <confirm_token> --compact"},
 
 	"issue assign":         {"gitlab-cli issue assign 42 alice --dry-run --compact", "gitlab-cli issue assign 42 alice --confirm <confirm_token> --compact"},
+	"issue bulk assign":    {"gitlab-cli issue bulk assign alice --project group/repo --ids 1,2,3 --dry-run --compact", "gitlab-cli issue bulk assign alice --project group/repo --ids 1,2,3 --confirm <confirm_token> --compact"},
+	"issue bulk close":     {"gitlab-cli issue bulk close --project group/repo --ids 1,2,3 --dry-run --compact", "gitlab-cli issue bulk close --project group/repo --ids 1,2,3 --confirm <confirm_token> --compact"},
+	"issue bulk comment":   {"gitlab-cli issue bulk comment --project group/repo --ids 1,2 --body \"triaged\" --dry-run --compact", "gitlab-cli issue bulk comment --project group/repo --ids 1,2 --body \"triaged\" --confirm <confirm_token> --compact"},
+	"issue bulk label":     {"gitlab-cli issue bulk label --project group/repo --ids 1,2 --add bug --dry-run --compact", "gitlab-cli issue bulk label --project group/repo --ids 1,2 --add bug --confirm <confirm_token> --compact"},
+	"issue bulk reopen":    {"gitlab-cli issue bulk reopen --project group/repo --ids 1,2 --dry-run --compact", "gitlab-cli issue bulk reopen --project group/repo --ids 1,2 --confirm <confirm_token> --compact"},
+	"issue bulk update":    {"gitlab-cli issue bulk update --project group/repo --ids 1,2 --add-labels triage --dry-run --compact", "gitlab-cli issue bulk update --project group/repo --ids 1,2 --add-labels triage --confirm <confirm_token> --compact"},
 	"issue close":          {"gitlab-cli issue close 42 --dry-run --compact", "gitlab-cli issue close 42 --confirm <confirm_token> --compact"},
 	"issue comment add":    {"gitlab-cli issue comment add 42 --body \"on it\" --dry-run --compact", "gitlab-cli issue comment add 42 --body \"on it\" --confirm <confirm_token> --compact"},
 	"issue comment delete": {"gitlab-cli issue comment delete 42 1001 --dry-run --compact", "gitlab-cli issue comment delete 42 1001 --confirm <confirm_token> --compact"},
@@ -255,6 +280,10 @@ var commandExamples = map[string][]string{
 	"issue update":         {"gitlab-cli issue update 42 --title \"New\" --dry-run --compact", "gitlab-cli issue update 42 --title \"New\" --confirm <confirm_token> --compact"},
 
 	"mr approve":          {"gitlab-cli mr approve 7 --dry-run --compact", "gitlab-cli mr approve 7 --confirm <confirm_token> --compact"},
+	"mr bulk approve":     {"gitlab-cli mr bulk approve --project group/repo --ids 7,8 --dry-run --compact", "gitlab-cli mr bulk approve --project group/repo --ids 7,8 --confirm <confirm_token> --compact"},
+	"mr bulk close":       {"gitlab-cli mr bulk close --project group/repo --ids 7,8 --dry-run --compact", "gitlab-cli mr bulk close --project group/repo --ids 7,8 --confirm <confirm_token> --compact"},
+	"mr bulk merge":       {"gitlab-cli mr bulk merge --project group/repo --ids 7,8 --dangerous --dry-run --compact", "gitlab-cli mr bulk merge --project group/repo --ids 7,8 --dangerous --confirm <confirm_token> --compact"},
+	"mr bulk update":      {"gitlab-cli mr bulk update --project group/repo --ids 7,8 --add-labels ready --dry-run --compact", "gitlab-cli mr bulk update --project group/repo --ids 7,8 --add-labels ready --confirm <confirm_token> --compact"},
 	"mr close":            {"gitlab-cli mr close 7 --dry-run --compact", "gitlab-cli mr close 7 --confirm <confirm_token> --compact"},
 	"mr comment add":      {"gitlab-cli mr comment add 7 --body \"LGTM\" --dry-run --compact", "gitlab-cli mr comment add 7 --body \"LGTM\" --confirm <confirm_token> --compact"},
 	"mr comment delete":   {"gitlab-cli mr comment delete 7 2002 --dry-run --compact", "gitlab-cli mr comment delete 7 2002 --confirm <confirm_token> --compact"},
@@ -307,6 +336,7 @@ var commandExamples = map[string][]string{
 	"repo branch create": {"gitlab-cli repo branch create feature --ref main --dry-run --compact", "gitlab-cli repo branch create feature --ref main --confirm <confirm_token> --compact"},
 	"repo branch delete": {"gitlab-cli repo branch delete feature --dangerous --dry-run --compact", "gitlab-cli repo branch delete feature --dangerous --confirm <confirm_token> --compact"},
 	"repo branch list":   {"gitlab-cli repo branch list --compact"},
+	"repo commit create": {"gitlab-cli repo commit create --project group/repo --branch main --message \"sync\" --action 'create:path=a.txt;content=hi' --action 'delete:path=old.txt' --dry-run --compact", "gitlab-cli repo commit create --project group/repo --branch main --message \"sync\" --action 'create:path=a.txt;content=hi' --action 'delete:path=old.txt' --confirm <confirm_token> --compact"},
 	"repo commit get":    {"gitlab-cli repo commit get abc1234 --compact"},
 	"repo commit list":   {"gitlab-cli repo commit list --ref main --limit 20 --compact"},
 	"repo file create":   {"gitlab-cli repo file create README.md --branch main --content \"hi\" --message \"add\" --dry-run --compact", "gitlab-cli repo file create README.md --branch main --content \"hi\" --message \"add\" --confirm <confirm_token> --compact"},
@@ -330,9 +360,10 @@ var commandExamples = map[string][]string{
 	"user me":     {"gitlab-cli user me --compact"},
 	"user search": {"gitlab-cli user search alice --compact"},
 
-	"variable create": {"gitlab-cli variable create --key TOKEN --value s3cr3t --dangerous --dry-run --compact", "gitlab-cli variable create --key TOKEN --value s3cr3t --dangerous --confirm <confirm_token> --compact"},
-	"variable delete": {"gitlab-cli variable delete TOKEN --dangerous --dry-run --compact", "gitlab-cli variable delete TOKEN --dangerous --confirm <confirm_token> --compact"},
-	"variable get":    {"gitlab-cli variable get TOKEN --compact"},
-	"variable list":   {"gitlab-cli variable list --compact"},
-	"variable update": {"gitlab-cli variable update TOKEN --value new --dangerous --dry-run --compact", "gitlab-cli variable update TOKEN --value new --dangerous --confirm <confirm_token> --compact"},
+	"variable bulk-import": {"gitlab-cli variable bulk-import --project group/repo --file .env --dry-run --compact", "gitlab-cli variable bulk-import --project group/repo --file .env --confirm <confirm_token> --compact"},
+	"variable create":      {"gitlab-cli variable create --key TOKEN --value s3cr3t --dangerous --dry-run --compact", "gitlab-cli variable create --key TOKEN --value s3cr3t --dangerous --confirm <confirm_token> --compact"},
+	"variable delete":      {"gitlab-cli variable delete TOKEN --dangerous --dry-run --compact", "gitlab-cli variable delete TOKEN --dangerous --confirm <confirm_token> --compact"},
+	"variable get":         {"gitlab-cli variable get TOKEN --compact"},
+	"variable list":        {"gitlab-cli variable list --compact"},
+	"variable update":      {"gitlab-cli variable update TOKEN --value new --dangerous --dry-run --compact", "gitlab-cli variable update TOKEN --value new --dangerous --confirm <confirm_token> --compact"},
 }

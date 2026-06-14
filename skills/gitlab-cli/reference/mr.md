@@ -52,6 +52,22 @@ gitlab-cli mr discussion reply --project G 42 --discussion-id <id> --body "addre
 gitlab-cli mr discussion reply --project G 42 --discussion-id <id> --body "addressed" --confirm <confirm_token>
 ```
 
+## Bulk (batch over many MRs)
+
+One command, one `confirm_token`, aggregated `items[]` + `summary` (CLI-SPEC §15). `--ids` is comma-separated or repeatable.
+
+```bash
+gitlab-cli mr bulk approve --project G --ids 7,8 --confirm <confirm_token>
+gitlab-cli mr bulk update  --project G --ids 7,8 --add-labels ready --confirm <confirm_token>
+gitlab-cli mr bulk close   --project G --ids 7,8 --confirm <confirm_token>
+
+# Merge is write-dangerous: --dangerous in BOTH steps; defaults --continue-on-error to false.
+gitlab-cli mr bulk merge --project G --ids 7,8 --dangerous --dry-run
+gitlab-cli mr bulk merge --project G --ids 7,8 --dangerous --confirm <confirm_token>
+```
+
+Batch result: `data.items[]` carries `{target, ok, error{code,retryable}}`; `data.summary` is `{total,succeeded,failed}`. No whole-batch rollback; top-level `ok:true` means the batch ran.
+
 ## MR data payload (excerpt)
 
 ```json

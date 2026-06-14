@@ -64,7 +64,8 @@ First-time setup: ask user for GitLab URL + PAT (`api` scope). `auth login` is a
 |------|--------|
 | Output | JSON is default; add `--compact` for token efficiency; use `--format text` for human-readable output and `--format raw` for bytes/logs/diffs |
 | Writes | `--dry-run` first, inspect `data.preview`, then retry with `--confirm <confirm_token>` from `data.confirm_token`. A confirm token is single-use: a replayed token returns exit `6`/`E_CONFLICT` (`already used`) — re-run `--dry-run` to see current state |
-| Write-dangerous | `permissionTier: write-dangerous` commands (`repo branch delete`, `repo file delete`, `release delete`, `variable create/update/delete`, `mr merge`) also require `--dangerous` in BOTH the `--dry-run` and `--confirm` steps; missing it returns exit `5`/`E_CONFIRMATION_REQUIRED` |
+| Write-dangerous | `permissionTier: write-dangerous` commands (`repo branch delete`, `repo file delete`, `release delete`, `variable create/update/delete`, `mr merge`, `mr bulk merge`) also require `--dangerous` in BOTH the `--dry-run` and `--confirm` steps; missing it returns exit `5`/`E_CONFIRMATION_REQUIRED` |
+| Batch | Batch commands (`repo commit create`, `issue bulk *`, `mr bulk *`, `variable bulk-import`) take plural input (`--ids 1,2,3` or repeatable; or repeatable `--action`/a file), return one `data.preview` + one `confirm_token` covering the whole batch, then aggregate `data.items[]` (`target`, `ok`, on failure `error{code,retryable}`) + `data.summary{total,succeeded,failed}`. Per-item failures do NOT roll back succeeded items; top-level `ok:true` means the batch ran. `--continue-on-error` (default true; false for `mr bulk merge`) stops at the first failure and reports the remainder as `skipped` |
 | Idempotency | Create commands accept `--idempotency-key <key>`; it is sent as the `Idempotency-Key` HTTP header (so a retried create cannot duplicate) and bound into the confirm token |
 | Concurrency | `repo file update/delete` bind `last_commit_id` and `issue/mr update`, `mr merge` bind `updated_at` (merge also the head `sha`): if the resource changed since `--dry-run`, confirm returns exit `6`/`E_CONFLICT` instead of clobbering |
 | Force | Avoid `--force`; needs `GITLAB_CLI_ALLOW_FORCE=1` in agent-safe mode |
@@ -125,6 +126,9 @@ Full contracts (exit codes, error JSON, list envelope, audit): **[reference/cont
 | Create project | `gitlab-cli project create --name "My App" --visibility private --dry-run`, then `--confirm <confirm_token>` |
 | Wait for CI | `gitlab-cli pipeline wait --project G ID --timeout 600` |
 | Job log | `gitlab-cli job log --project G JOB_ID` (add `--follow --json` for NDJSON stream) |
+| Close many issues | `gitlab-cli issue bulk close --project G --ids 1,2,3 --dry-run`, then `--confirm <confirm_token>` |
+| Atomic multi-file commit | `gitlab-cli repo commit create --project G --branch main --message "..." --action 'create:path=a.txt;content=hi' --action 'delete:path=old.txt' --dry-run`, then `--confirm <confirm_token>` |
+| Import CI variables | `gitlab-cli variable bulk-import --project G --file .env --dry-run`, then `--confirm <confirm_token>` |
 
 ## vs glab
 
