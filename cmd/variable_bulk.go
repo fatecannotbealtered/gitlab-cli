@@ -13,7 +13,9 @@ import (
 // JSON file and loops create-or-update per key over the existing single-variable
 // endpoints. The external contract matches every other batch: plural input (the
 // file is the target set), one dry-run preview, one confirm token, aggregated
-// items[]/summary, --continue-on-error.
+// items[]/summary, --continue-on-error. Because it writes/overwrites secret CI
+// variables it is also write-dangerous (§15.4): it requires the --dangerous
+// two-step gate (declared intent) on top of dry-run → confirm (authorized batch).
 
 // importVar is one parsed key/value pair to import. Order is preserved from the
 // source file so items[] zips back to the input deterministically.
@@ -24,7 +26,7 @@ type importVar struct {
 
 var variableBulkImportCmd = &cobra.Command{
 	Use:   "bulk-import",
-	Short: "Import many CI/CD variables from a .env or JSON file",
+	Short: "Import many CI/CD variables from a .env or JSON file (write-dangerous; requires --dangerous)",
 	Long: "Import CI/CD variables from a file, creating new keys and updating " +
 		"existing ones. --file is a .env (KEY=value lines) or a JSON object " +
 		"({\"KEY\":\"value\"}). Format is auto-detected from the extension or content.",
@@ -188,5 +190,10 @@ func init() {
 	variableBulkImportCmd.Flags().String("project", "", "Project ID or path (required)")
 	variableBulkImportCmd.Flags().String("file", "", "Path to a .env or JSON file (required)")
 	variableBulkImportCmd.Flags().String("env-scope", "*", "Environment scope for all imported variables")
-	markBatch(variableBulkImportCmd, true)
+	// bulk-import writes/overwrites secret CI variables, so it is write-dangerous
+	// (§15.4): default --continue-on-error to false so a failed write stops the
+	// batch rather than charging through the rest of the secrets.
+	markBatch(variableBulkImportCmd, false)
+	markConfirm(variableBulkImportCmd)
+	markRiskLevel(variableBulkImportCmd, "high")
 }

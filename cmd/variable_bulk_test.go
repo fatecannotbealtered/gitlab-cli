@@ -65,7 +65,7 @@ func TestVariableBulkImport_DryRun_Dotenv(t *testing.T) {
 	t.Setenv("GITLAB_CLI_TOKEN", "x")
 
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"variable", "bulk-import", "--project", "g/r", "--file", file, "--dry-run", "--json", "--compact"})
+		rootCmd.SetArgs([]string{"variable", "bulk-import", "--project", "g/r", "--file", file, "--dangerous", "--dry-run", "--json", "--compact"})
 		_ = rootCmd.Execute()
 	})
 	for _, want := range []string{`"confirm_token"`, `"total":2`, `"targets":["FOO","BAZ"]`, `"action":"variable bulk-import"`} {
@@ -84,7 +84,7 @@ func TestVariableBulkImport_DryRun_JSON(t *testing.T) {
 	t.Setenv("GITLAB_CLI_TOKEN", "x")
 
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"variable", "bulk-import", "--project", "g/r", "--file", file, "--dry-run", "--json", "--compact"})
+		rootCmd.SetArgs([]string{"variable", "bulk-import", "--project", "g/r", "--file", file, "--dangerous", "--dry-run", "--json", "--compact"})
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, `"targets":["A","B"]`) {
@@ -103,7 +103,7 @@ func TestVariableBulkImport_Confirm_CreateAndUpdate(t *testing.T) {
 	dryRun = false
 
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs(withConfirmForTest(t, []string{"variable", "bulk-import", "--project", "g/r", "--file", file, "--json", "--compact"}))
+		rootCmd.SetArgs(withConfirmForTest(t, []string{"variable", "bulk-import", "--project", "g/r", "--file", file, "--dangerous", "--json", "--compact"}))
 		_ = rootCmd.Execute()
 	})
 	for _, want := range []string{`"succeeded":2`, `"failed":0`, `"action":"created"`, `"action":"updated"`} {
@@ -135,13 +135,34 @@ func TestVariableBulkImport_PartialFailure(t *testing.T) {
 	dryRun = false
 
 	out := captureStdout(t, func() {
-		rootCmd.SetArgs(withConfirmForTest(t, []string{"variable", "bulk-import", "--project", "g/r", "--file", file, "--json", "--compact"}))
+		rootCmd.SetArgs(withConfirmForTest(t, []string{"variable", "bulk-import", "--project", "g/r", "--file", file, "--dangerous", "--json", "--compact"}))
 		_ = rootCmd.Execute()
 	})
 	for _, want := range []string{`"ok":true`, `"succeeded":1`, `"failed":1`, `"E_FORBIDDEN"`, `"target":"DENIED"`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in partial-failure output, got:\n%s", want, out)
 		}
+	}
+}
+
+// bulk-import writes/overwrites secret CI variables, so it is write-dangerous:
+// even with a valid file and --dry-run it must be rejected without --dangerous,
+// mirroring TestMRBulkMerge_MissingDangerous_Rejected.
+func TestVariableBulkImport_MissingDangerous_Rejected(t *testing.T) {
+	resetRootPersistentFlags(t)
+	resetCompactForTest(t)
+	resetSliceFlagsForTest(t, []string{"variable", "bulk-import"})
+	file := writeTempFile(t, "vars.env", "FOO=bar\nBAZ=qux\n")
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "x")
+
+	out := captureStdout(t, func() {
+		// Dangerous batch without --dangerous is rejected even with --dry-run.
+		rootCmd.SetArgs([]string{"variable", "bulk-import", "--project", "g/r", "--file", file, "--dry-run", "--json", "--compact"})
+		_ = rootCmd.Execute()
+	})
+	if !strings.Contains(out, "E_CONFIRMATION_REQUIRED") || !strings.Contains(out, "--dangerous") {
+		t.Errorf("expected dangerous-gate rejection, got:\n%s", out)
 	}
 }
 

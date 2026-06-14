@@ -360,7 +360,7 @@ var commandExamples = map[string][]string{
 	"user me":     {"gitlab-cli user me --compact"},
 	"user search": {"gitlab-cli user search alice --compact"},
 
-	"variable bulk-import": {"gitlab-cli variable bulk-import --project group/repo --file .env --dry-run --compact", "gitlab-cli variable bulk-import --project group/repo --file .env --confirm <confirm_token> --compact"},
+	"variable bulk-import": {"gitlab-cli variable bulk-import --project group/repo --file .env --dangerous --dry-run --compact", "gitlab-cli variable bulk-import --project group/repo --file .env --dangerous --confirm <confirm_token> --compact"},
 	"variable create":      {"gitlab-cli variable create --key TOKEN --value s3cr3t --dangerous --dry-run --compact", "gitlab-cli variable create --key TOKEN --value s3cr3t --dangerous --confirm <confirm_token> --compact"},
 	"variable delete":      {"gitlab-cli variable delete TOKEN --dangerous --dry-run --compact", "gitlab-cli variable delete TOKEN --dangerous --confirm <confirm_token> --compact"},
 	"variable get":         {"gitlab-cli variable get TOKEN --compact"},

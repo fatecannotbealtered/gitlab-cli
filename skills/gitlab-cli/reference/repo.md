@@ -58,6 +58,8 @@ gitlab-cli repo commit create --project G --branch main --message "sync config" 
 
 Result: the resulting `commitId`/`shortId`/`webUrl` plus aggregated `items[]` (one per action) and `summary`. The commit is server-side atomic — all actions land in one commit or none do, so on failure every item reports the same error.
 
+The 1000-action cap is a **hard limit**, not an auto-chunked one. Unlike the chunked batches in CLI-SPEC §15.6, an atomic commit cannot be split across calls without breaking atomicity, so a batch over 1000 actions is rejected with `E_VALIDATION` (exit 2) rather than silently chunked — split the work into separate commits yourself if you need more.
+
 ## Notes
 
 - `repo file get` → JSON metadata/content by default; use `--format raw` for unwrapped bytes or `--output` to save locally

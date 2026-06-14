@@ -59,14 +59,15 @@ var (
 // runtime gate read this set, so the advertised tier can never drift from what is
 // enforced.
 var dangerousCommandPaths = map[string]bool{
-	"gitlab-cli repo branch delete": true,
-	"gitlab-cli repo file delete":   true,
-	"gitlab-cli release delete":     true,
-	"gitlab-cli variable create":    true,
-	"gitlab-cli variable update":    true,
-	"gitlab-cli variable delete":    true,
-	"gitlab-cli mr merge":           true,
-	"gitlab-cli mr bulk merge":      true,
+	"gitlab-cli repo branch delete":   true,
+	"gitlab-cli repo file delete":     true,
+	"gitlab-cli release delete":       true,
+	"gitlab-cli variable create":      true,
+	"gitlab-cli variable update":      true,
+	"gitlab-cli variable delete":      true,
+	"gitlab-cli mr merge":             true,
+	"gitlab-cli mr bulk merge":        true,
+	"gitlab-cli variable bulk-import": true,
 }
 
 // isDangerousCommand reports whether the command is in the write-dangerous set

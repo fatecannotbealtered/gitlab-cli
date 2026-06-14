@@ -27,11 +27,15 @@ gitlab-cli variable create --project G --key FOO --value bar --idempotency-key v
 Import many variables from a `.env` (KEY=value lines) or JSON (`{"KEY":"value"}`) file: new keys are created, existing keys updated (CLI-SPEC §15). One `confirm_token`, aggregated `items[]` + `summary`.
 
 ```bash
-gitlab-cli variable bulk-import --project G --file .env --dry-run
-gitlab-cli variable bulk-import --project G --file vars.json --env-scope production --confirm <confirm_token>
+gitlab-cli variable bulk-import --project G --file .env --dangerous --dry-run
+gitlab-cli variable bulk-import --project G --file vars.json --env-scope production --dangerous --confirm <confirm_token>
 ```
 
-Each `data.items[]` entry reports `{target:key, ok, action:created|updated, envScope}` or `error{code,retryable}`. Not write-dangerous (no `--dangerous`), but still a single confirmed batch. Note: a `.env`/JSON file may contain plaintext secrets — keep it out of logs and version control.
+Each `data.items[]` entry reports `{target:key, ok, action:created|updated, envScope}` or `error{code,retryable}`.
+
+**Write-dangerous** (CLI-SPEC §15.4): because it writes/overwrites secret CI variables — exactly the secrets the single `variable create/update/delete` commands guard — it requires `--dangerous` in BOTH the `--dry-run` and `--confirm` steps; missing it returns exit `5`/`E_CONFIRMATION_REQUIRED` even with a valid token. `--continue-on-error` defaults to **false** here, so a failed write stops the batch instead of charging through the rest of the secrets.
+
+**Imported variables are unmasked and unprotected.** Every key is created/updated with `masked=false`, `protected=false`, `raw=false`, and the single shared `--env-scope` (default `*`); there is no per-key way to mark an imported secret as masked or protected. To mask/protect specific keys, set them afterward with `variable update` or import then patch. Note: a `.env`/JSON file may contain plaintext secrets — keep it out of logs and version control.
 
 ## Variable data payload (no value)
 
