@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/fatecannotbealtered/gitlab-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/fatecannotbealtered/gitlab-cli/actions/workflows/ci.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/fatecannotbealtered/gitlab-cli)](https://goreportcard.com/report/github.com/fatecannotbealtered/gitlab-cli)
-[![npm version](https://img.shields.io/npm/v/@ananke/gitlab-cli.svg)](https://www.npmjs.com/package/@ananke/gitlab-cli)
+[![npm version](https://img.shields.io/npm/v/@fateforge/gitlab-cli.svg)](https://www.npmjs.com/package/@fateforge/gitlab-cli)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 > Agent-native GitLab CLI for merge requests, issues, pipelines, jobs, repositories, releases, labels, milestones, users, projects, search, and CI variables.
@@ -15,7 +15,7 @@ Paste this block into the AI Agent that will operate GitLab. It installs the CLI
 
 ```bash
 # Install CLI and Agent Skill.
-npm install -g @ananke/gitlab-cli
+npm install -g @fateforge/gitlab-cli
 npx skills add fatecannotbealtered/gitlab-cli -y -g
 
 # Provide runtime context. Replace placeholders in the local shell/secret manager.

@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/fatecannotbealtered/gitlab-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/fatecannotbealtered/gitlab-cli/actions/workflows/ci.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/fatecannotbealtered/gitlab-cli)](https://goreportcard.com/report/github.com/fatecannotbealtered/gitlab-cli)
-[![npm version](https://img.shields.io/npm/v/@ananke/gitlab-cli.svg)](https://www.npmjs.com/package/@ananke/gitlab-cli)
+[![npm version](https://img.shields.io/npm/v/@fateforge/gitlab-cli.svg)](https://www.npmjs.com/package/@fateforge/gitlab-cli)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 > 面向 AI Agent 的 GitLab CLI，覆盖 MR、Issue、流水线、Job、仓库、Release、标签、里程碑、用户、项目、搜索和 CI 变量。
@@ -15,7 +15,7 @@
 
 ```bash
 # 安装 CLI 和 Agent Skill。
-npm install -g @ananke/gitlab-cli
+npm install -g @fateforge/gitlab-cli
 npx skills add fatecannotbealtered/gitlab-cli -y -g
 
 # 提供运行上下文。把占位符替换为本地 shell/密钥管理器里的值。

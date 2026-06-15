@@ -19,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- npm scope migrated to `@ananke` (the previous hyphen-suffixed npm scope is unavailable, and the hyphen-less org name is already taken on npm, so the package now publishes under `@ananke`). The GitHub org, the Go module path, and the `npx skills add` source are unchanged.
+- npm scope migrated to `@fateforge` (the previous hyphen-suffixed npm scope is unavailable, and the hyphen-less org name is already taken on npm, so the package now publishes under `@fateforge`). The GitHub org, the Go module path, and the `npx skills add` source are unchanged.
 
 ## [1.2.3] - 2026-06-14
 
@@ -188,7 +188,7 @@ First public release of **gitlab-cli** - an Agent-native CLI for GitLab.com, Sel
 ### Distribution
 
 - GoReleaser cross-platform binaries (linux/darwin/windows, amd64/arm64).
-- npm package `@ananke/gitlab-cli` with postinstall binary download.
+- npm package `@fateforge/gitlab-cli` with postinstall binary download.
 - CI matrix (Go 1.23/1.24); optional local E2E via Docker (`docs/E2E.md`).
 
 ### Known limitations

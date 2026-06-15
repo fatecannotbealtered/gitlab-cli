@@ -16,7 +16,7 @@ if ($token.Length -lt 30) {
 }
 
 npm config set //registry.npmjs.org/:_authToken $token
-npm config set @ananke:registry $registry
+npm config set @fateforge:registry $registry
 
 Write-Host "Checking auth against $registry ..."
 $whoami = npm whoami --registry $registry 2>&1
@@ -30,7 +30,7 @@ Write-Host "Dry run ..."
 npm publish --dry-run --registry $registry --access public
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-$confirm = Read-Host "Publish @ananke/gitlab-cli to npm? (y/N)"
+$confirm = Read-Host "Publish @fateforge/gitlab-cli to npm? (y/N)"
 if ($confirm -ne "y") {
     Write-Host "Cancelled."
     exit 0

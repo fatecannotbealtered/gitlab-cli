@@ -14,7 +14,7 @@ Terminal control of GitLab (MR, Issue, CI, repo, release, variables). **GitLab.c
 ```bash
 # Please install gitlab-cli and use it for all GitLab operations going forward (JSON is the default output).
 # Install CLI
-npm install -g @ananke/gitlab-cli
+npm install -g @fateforge/gitlab-cli
 
 # Install CLI Skill (required) — copies into your agent-supported skills directory
 npx skills add fatecannotbealtered/gitlab-cli -y -g
