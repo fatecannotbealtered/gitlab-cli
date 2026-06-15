@@ -19,7 +19,9 @@ data touched.
 **Method:** every batch command runs the §15 gate path
 (`--dry-run` → inspect `confirm_token` → `--confirm <token>`). Live writes were
 restricted to a small reversible batch (2–3 objects) and reverted immediately.
-Dangerous/irreversible batches are dry-run only per the night-time safety rule.
+Dangerous/irreversible batches were dry-run only during the night-time run; the
+`mr bulk merge` live run below was completed during a daytime, attended session
+on the same isolated Docker instance (disposable project, minted PAT revoked).
 
 ### Dry-run / envelope-shape (all new batch commands)
 
@@ -52,19 +54,28 @@ Dangerous/irreversible batches are dry-run only per the night-time safety rule.
 | `mr bulk update` add/remove label | PASS — live | add then remove (revert) |
 | `mr bulk approve` | PASS — live | 1/1 approved |
 | `mr bulk close` | PASS — live | 1/1 closed; reverted via `mr reopen` |
+| `mr bulk merge` (2 mergeable MRs) | PASS — live | `--dangerous` two-step gate; 2/2 merged, `items[]` per-target ok, `summary {2,2,0}`, real merge commits returned |
 
-### Dangerous / irreversible (dry-run only — NOT executed)
+### Dangerous / irreversible — `mr bulk merge` now real-machine executed
 
-| Command | Result | Method |
+`mr bulk merge` was upgraded from dry-run-only to **live PASS** on a disposable
+project (3 mergeable MRs + 1 deliberately-conflicting MR; project destroyed and
+the minted PAT revoked afterward).
+
+| Scenario | Result | Method |
 |---|---|---|
-| `mr bulk merge` | dry-run verified, **not** real-machine executed | per night-time rule; `--dangerous` gate + preview confirmed, no merge performed |
+| Missing `--dangerous` gate | PASS — live | dry-run without `--dangerous` → `E_CONFIRMATION_REQUIRED` (exit 5) |
+| `--dangerous --dry-run` preview | PASS — live | preview with `total` + ordered `targets` + per-target `changes` + one `confirm_token` |
+| Live batch merge (2 mergeable) | PASS — live | `--dangerous --confirm <token>` → 2/2 merged, `items[]` per-target ok, `summary {2,2,0}`; both MRs `state=merged` with real merge commits |
+| Single-use confirm token replay | PASS — live | replaying the consumed merge token → `E_CONFLICT` (exit 6) |
+| Partial-failure aggregation | PASS — live | `ids 4,3` (4 = conflicting MR) with `--continue-on-error=true` → item 4 `E_VALIDATION`, item 3 merged; `summary {2,1,1}`, top-level `ok:true` (failed item did not block the rest) |
 
 ### Shared batch contract points (live)
 
 | Contract point (CLI-SPEC §15) | Result | Method |
 |---|---|---|
-| Single-use confirm token | PASS — live | replaying a consumed token → `E_CONFLICT` |
-| Partial-failure aggregation | PASS — live | `ids 1,999` → item 1 ok, item 999 `E_NOT_FOUND retryable:false`; `summary {2,1,1}`; top-level `ok:true` |
+| Single-use confirm token | PASS — live | replaying a consumed token → `E_CONFLICT` (re-verified on `mr bulk merge`) |
+| Partial-failure aggregation | PASS — live | `ids 1,999` → item 1 ok, item 999 `E_NOT_FOUND retryable:false`; `summary {2,1,1}`; top-level `ok:true` (re-verified on `mr bulk merge` with a real conflict) |
 | `--continue-on-error=false` stop + skipped tail | PASS — live | `ids 999,1,2` stopped at first failure; `skipped:["1","2"]` reported for resume |
 | `--dangerous` two-step gate | PASS — live | enforced on `mr bulk merge` and `variable bulk-import` in both dry-run and confirm steps |
 
