@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.4] - 2026-06-15
+
 ### Added
 
 - Batch write commands (CLI-SPEC §15: plural input, one dry-run preview, one single-use confirm token covering the whole batch, aggregated per-item `items[]` + `{total,succeeded,failed}` summary, `--continue-on-error`):
@@ -14,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `issue bulk close|reopen|update|label|assign|comment` — client-side loop over `--ids` (class B).
   - `mr bulk merge|approve|close|update` — client-side loop over `--ids` (class B); `mr bulk merge` is write-dangerous and requires the `--dangerous` two-step gate (defaults `--continue-on-error` to false).
   - `variable bulk-import --file` — import CI/CD variables from a `.env` or JSON file, creating new keys and updating existing ones.
+
+### Changed
+
+- npm scope migrated to `@ananke` (the previous hyphen-suffixed npm scope is unavailable, and the hyphen-less org name is already taken on npm, so the package now publishes under `@ananke`). The GitHub org, the Go module path, and the `npx skills add` source are unchanged.
 
 ## [1.2.3] - 2026-06-14
 
@@ -182,7 +188,7 @@ First public release of **gitlab-cli** - an Agent-native CLI for GitLab.com, Sel
 ### Distribution
 
 - GoReleaser cross-platform binaries (linux/darwin/windows, amd64/arm64).
-- npm package `@fatecannotbealtered-/gitlab-cli` with postinstall binary download.
+- npm package `@ananke/gitlab-cli` with postinstall binary download.
 - CI matrix (Go 1.23/1.24); optional local E2E via Docker (`docs/E2E.md`).
 
 ### Known limitations

@@ -1,10 +1,10 @@
 ---
 name: gitlab-cli
-version: "1.2.3"
+version: "1.2.4"
 description: GitLab CLI for AI Agents. JSON is the default; use --compact for token efficiency and --format text/raw only when needed. Read reference/*.md for the module you need — do not load the whole skill upfront.
 license: MIT
 user-invocable: true
-metadata: {"requires":{"bins":["gitlab-cli"],"min_version":"1.2.3"}}
+metadata: {"requires":{"bins":["gitlab-cli"],"min_version":"1.2.4"}}
 ---
 
 # gitlab-cli
@@ -14,7 +14,7 @@ Terminal control of GitLab (MR, Issue, CI, repo, release, variables). **GitLab.c
 ```bash
 # Please install gitlab-cli and use it for all GitLab operations going forward (JSON is the default output).
 # Install CLI
-npm install -g @fatecannotbealtered-/gitlab-cli
+npm install -g @ananke/gitlab-cli
 
 # Install CLI Skill (required) — copies into your agent-supported skills directory
 npx skills add fatecannotbealtered/gitlab-cli -y -g

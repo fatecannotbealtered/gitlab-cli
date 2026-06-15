@@ -60,7 +60,7 @@ func runDoctor(_ *cobra.Command, _ []string) error {
 	if currentVersionMeetsSkillMin() {
 		check("version", "pass", "")
 	} else {
-		check("version", "fail", "npm install -g @fatecannotbealtered-/gitlab-cli@latest && gitlab-cli changelog --since "+version)
+		check("version", "fail", "npm install -g @ananke/gitlab-cli@latest && gitlab-cli changelog --since "+version)
 	}
 	check("release_readiness", releaseReadinessCheckStatus(), releaseReadinessCheckFix())
 
