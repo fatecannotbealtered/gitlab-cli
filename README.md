@@ -46,7 +46,7 @@ Worst-case risk tier: **T1 medium** - can mutate GitLab project state within the
 | Merge requests | `mr list / get / current / create / update / merge / close / approve / diff / comment ...` | Inspect, create, review, merge, and comment on MRs. |
 | Issues | `issue list / get / create / update / close / reopen / assign / label / comment ...` | Manage GitLab issues and issue discussions. |
 | CI/CD | `pipeline ...`, `job ...`, `variable ...` | Inspect, wait, retry, cancel, download artifacts, and manage CI variables. |
-| Repository and releases | `repo file / branch / commit / tree`, `release ...` | Read and change repository files, branches, commits, trees, and releases. |
+| Repository and releases | `repo file / branch / commit (list / get / diff / create) / tree`, `release ...` | Read and change repository files, branches, commits, trees, and releases. `commit list` queries by author/time range across a project, group, or the whole instance; `commit diff` reads one commit's per-file changes. |
 | Project metadata | `project ...`, `user ...`, `label ...`, `milestone ...`, `search ...` | Discover users, projects, labels, milestones, and GitLab search results. |
 | Self-description | `reference`, `context`, `doctor`, `changelog`, `update` | Bootstrap an Agent with live capabilities and version deltas. |
 

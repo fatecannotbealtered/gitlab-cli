@@ -60,6 +60,32 @@ type Commit struct {
 	CommittedDate  string   `json:"committed_date"`
 	WebURL         string   `json:"web_url"`
 	ParentIDs      []string `json:"parent_ids"`
+	// Stats is populated only when with_stats=true is requested (CommitListOpts.WithStats);
+	// GitLab omits it otherwise, so a nil Stats means "not requested", not "zero changes".
+	Stats *CommitStats `json:"stats,omitempty"`
+}
+
+// CommitStats carries per-commit line change counts, returned by GitLab when
+// with_stats=true. Lets an agent size a commit (and a whole author/time-range
+// query) without fetching any diff.
+type CommitStats struct {
+	Additions int `json:"additions"`
+	Deletions int `json:"deletions"`
+	Total     int `json:"total"`
+}
+
+// CommitDiffFile is one file entry of GET /repository/commits/:sha/diff. GitLab
+// returns the unified patch in Diff plus rename/create/delete flags; it does NOT
+// return per-file line counts, so Additions/Deletions are computed client-side
+// from the patch hunks (see countDiffLines) to support a cheap name+stat
+// projection via --fields without shipping the patch text.
+type CommitDiffFile struct {
+	OldPath     string `json:"old_path"`
+	NewPath     string `json:"new_path"`
+	NewFile     bool   `json:"new_file"`
+	DeletedFile bool   `json:"deleted_file"`
+	RenamedFile bool   `json:"renamed_file"`
+	Diff        string `json:"diff"`
 }
 
 // TreeEntry is returned by GET /projects/:id/repository/tree
@@ -86,6 +112,14 @@ type CommitListOpts struct {
 	Until   string
 	Path    string
 	Limit   int
+	// Author filters commits server-side by author (GitLab 15.10+). On older
+	// instances GitLab ignores the param and returns the unfiltered list.
+	Author string
+	// WithStats requests per-commit line counts (sets with_stats=true).
+	WithStats bool
+	// AllBranches lists commits across every ref (sets all=true), not just the
+	// default/selected branch.
+	AllBranches bool
 }
 
 // TreeOpts are options for listing tree entries.
@@ -234,6 +268,15 @@ func (a *RepoAPI) ListCommits(ctx context.Context, projectID string, opts *Commi
 		if opts.Path != "" {
 			q.Set("path", opts.Path)
 		}
+		if opts.Author != "" {
+			q.Set("author", opts.Author)
+		}
+		if opts.WithStats {
+			q.Set("with_stats", "true")
+		}
+		if opts.AllBranches {
+			q.Set("all", "true")
+		}
 	}
 	path := a.client.APIPath("/projects/" + EncodeProjectPath(projectID) + "/repository/commits")
 	if enc := q.Encode(); enc != "" {
@@ -299,6 +342,23 @@ func (a *RepoAPI) GetCommit(ctx context.Context, projectID, sha string) (*Commit
 		return nil, fmt.Errorf("parsing commit: %w", err)
 	}
 	return &c, nil
+}
+
+// GetCommitDiff returns the per-file unified diff for a single commit
+// (GET /projects/:id/repository/commits/:sha/diff). This is a heavy sub-resource
+// kept separate from GetCommit on purpose: an agent reads it on demand for the
+// specific SHAs it cares about, never inlined into a list.
+func (a *RepoAPI) GetCommitDiff(ctx context.Context, projectID, sha string) ([]CommitDiffFile, error) {
+	path := a.client.APIPath("/projects/" + EncodeProjectPath(projectID) + "/repository/commits/" + url.PathEscape(sha) + "/diff")
+	data, err := a.client.Get(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	var out []CommitDiffFile
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, fmt.Errorf("parsing commit diff: %w", err)
+	}
+	return out, nil
 }
 
 // ─── Tree method ──────────────────────────────────────────────────────────────

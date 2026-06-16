@@ -1,5 +1,28 @@
 # gitlab-cli Full-Command E2E Acceptance Report
 
+## 2026-06-17 — v1.2.8 commit author/scope query + commit diff (live)
+
+Live verification against the Docker GitLab EE **18.8.10** (`gitlab-cli-e2e`,
+http://localhost:8929) with a root PAT. Fixture: group `cq-smoke` → project
+`cq-smoke/cq-proj` seeded with 3 commits (2 by Alice, 1 by Bob). The new commit
+query/diff surface verified live:
+
+| Command / behavior | Result | Notes |
+|---|---|---|
+| `repo commit list --project … --author alice@example.com --with-stats` | PASS | 2 commits, server-side author filter (GitLab 15.10+), per-commit `additions`/`deletions`/`total` present |
+| `repo commit list --author bob@example.com` | PASS | 1 commit; `--author nobody@…` → 0 (filter is real, not client-side) |
+| `repo commit list --group cq-smoke --author …` | PASS | fan-out: `scope:"group"`, `projectsScanned:1`, each item annotated with `project` |
+| `repo commit list --all-projects` (no `--author`) | PASS | fail-closed `E_VALIDATION` (exit 2) |
+| `repo commit list --all-projects --author …` | PASS | instance-wide: `scope:"all-projects"`, 8 projects scanned, Alice's commits found + annotated |
+| `repo commit diff <sha> --project …` | PASS | structured `files[]` (`alpha.txt`, computed `additions:2`/`deletions:1`, patch text) |
+| `repo commit diff … --fields newPath,additions,deletions` | PASS | inventory projection drops the patch text |
+| `repo commit diff … --path beta.md` | PASS | single-file filter; `newFile:true` for an added file |
+| `repo commit diff <sha>` (no `--project`) | PASS | `E_VALIDATION` (exit 2); text mode renders the per-file table |
+
+All v1.2.8 new commands are live-verified against a real GitLab instance.
+
+---
+
 ## 2026-06-14 — v1.2.3 new commands + write-safety (live)
 
 Re-run against the live Docker GitLab EE 18.8.10 (`gitlab-cli-e2e`, http://localhost:8929) with a root PAT. New commands and write-safety upgrades verified live:

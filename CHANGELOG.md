@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.8] - 2026-06-16
+
+### Added
+
+- `repo commit list` now answers "commits by a person over a time range" and scales across scopes. New flags: `--author` (server-side author filter, GitLab 15.10+), `--with-stats` (per-commit `additions`/`deletions`/`total`, so an agent can size output without any diff), and `--all-branches` (all refs, not one branch). The scope selector is `--project` (now repeatable / comma-separated), `--group` (every project under the group tree, subgroups included), or `--all-projects` (every project the token can see; fail-closed without `--author`). Multi-project scopes fan out client-side (CLI-SPEC §15): each commit item carries its `project`, and `data` reports `scope`, `projectsScanned`, and `projectErrors[]` — a project that fails to scan is reported, not silently dropped, and never aborts the rest.
+- `repo commit diff <sha>` returns the per-file diff for one commit (structured `files[]` with `oldPath`/`newPath`, `newFile`/`deletedFile`/`renamedFile`, computed `additions`/`deletions`, and the `diff` patch). It is a heavy sub-resource kept out of `commit list`: triage with `commit list --with-stats`, then read diffs only for the SHAs that matter. `--fields newPath,additions,deletions` yields a cheap inventory without the patch text; `--path` narrows to one file.
+
 ## [1.2.7] - 2026-06-16
 
 ### Fixed

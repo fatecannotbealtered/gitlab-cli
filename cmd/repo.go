@@ -419,53 +419,51 @@ var repoBranchDeleteCmd = &cobra.Command{
 var repoCommitListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List commits",
+	Long: "List commits in one project, several projects, a group tree, or every " +
+		"project the token can see.\n\n" +
+		"Scope (choose exactly one):\n" +
+		"  --project a,b      one or more projects (repeatable / comma-separated)\n" +
+		"  --group g1,g2      every project under these groups, subgroups included\n" +
+		"  --all-projects     every project you can see; requires --author\n\n" +
+		"Filters apply to each project: --author (server-side, GitLab 15.10+), " +
+		"--since/--until, --ref-name, --path, --with-stats (per-commit line counts), " +
+		"--all-branches (every ref, not just one branch).",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		client, _, err := newClient()
 		if err != nil {
 			return err
 		}
-		project, _ := cmd.Flags().GetString("project")
-		refName, _ := cmd.Flags().GetString("ref-name")
-		since, _ := cmd.Flags().GetString("since")
-		until, _ := cmd.Flags().GetString("until")
-		path, _ := cmd.Flags().GetString("path")
 		limit, err := requireLimit(cmd)
 		if err != nil {
 			return err
 		}
+		opts := &api.CommitListOpts{Limit: limit}
+		opts.RefName, _ = cmd.Flags().GetString("ref-name")
+		opts.Since, _ = cmd.Flags().GetString("since")
+		opts.Until, _ = cmd.Flags().GetString("until")
+		opts.Path, _ = cmd.Flags().GetString("path")
+		opts.Author, _ = cmd.Flags().GetString("author")
+		opts.WithStats, _ = cmd.Flags().GetBool("with-stats")
+		opts.AllBranches, _ = cmd.Flags().GetBool("all-branches")
 
-		if project == "" {
-			return failArg("--project is required")
-		}
-
-		commits, err := client.Repos.ListCommits(apiCtx(), project, &api.CommitListOpts{
-			RefName: refName, Since: since, Until: until, Path: path, Limit: limit,
-		})
+		projects, scope, err := resolveCommitScope(cmd, client)
 		if err != nil {
-			return handleAPIError(err, jsonMode)
+			return err
 		}
 
-		if jsonMode {
-			fields := getFieldsFlag(cmd)
-			flat := make([]map[string]any, len(commits))
-			for i, c := range commits {
-				c := c
-				flat[i] = output.FilterMap(output.CommitToMap(output.ToFlatCommit(&c)), fields)
+		// Single explicit project keeps the original flat commit[] shape so
+		// existing agents and tests see no change.
+		if scope == "project" && len(projects) == 1 {
+			commits, err := client.Repos.ListCommits(apiCtx(), projects[0], opts)
+			if err != nil {
+				return handleAPIError(err, jsonMode)
 			}
-			printSimpleListJSON(cmd, flat, limit)
-			return nil
+			return renderCommitList(cmd, commits, limit)
 		}
-		if len(commits) == 0 {
-			output.Info("No commits found.")
-			return nil
-		}
-		headers := []string{"SHORT ID", "TITLE", "AUTHOR", "DATE"}
-		rows := make([][]string, len(commits))
-		for i, c := range commits {
-			rows[i] = []string{c.ShortID, truncate(c.Title, 60), c.AuthorName, c.AuthoredDate}
-		}
-		output.Table(headers, rows)
-		return nil
+
+		// Multi-project: fan out (CLI-SPEC §15 client-side loop), aggregate
+		// per-project, and report which projects were scanned / failed.
+		return runCommitFanOut(cmd, client, projects, scope, opts, limit)
 	},
 }
 
@@ -629,17 +627,30 @@ func init() {
 	// commit subcommands
 	repoCmd.AddCommand(repoCommitCmd)
 	repoCommitCmd.AddCommand(repoCommitListCmd)
-	repoCommitListCmd.Flags().String("project", "", "Project ID or path (required)")
+	repoCommitListCmd.Flags().StringSlice("project", nil, "Project ID(s) or path(s); repeatable or comma-separated")
+	repoCommitListCmd.Flags().StringSlice("group", nil, "Group ID(s) or path(s); lists every project under the group(s), subgroups included")
+	repoCommitListCmd.Flags().Bool("all-projects", false, "Scan every project the token can see (requires --author)")
+	repoCommitListCmd.Flags().String("author", "", "Filter commits by author name or email (server-side; GitLab 15.10+)")
+	repoCommitListCmd.Flags().Bool("with-stats", false, "Include per-commit line counts (additions/deletions/total)")
+	repoCommitListCmd.Flags().Bool("all-branches", false, "List commits across all refs, not just one branch")
 	repoCommitListCmd.Flags().String("ref-name", "", "Branch/tag/commit")
 	repoCommitListCmd.Flags().String("since", "", "ISO 8601 date (e.g. 2024-01-01T00:00:00Z)")
 	repoCommitListCmd.Flags().String("until", "", "ISO 8601 date")
 	repoCommitListCmd.Flags().String("path", "", "Filter by file path")
-	repoCommitListCmd.Flags().Int("limit", 20, "Max results (1-100)")
+	repoCommitListCmd.Flags().Int("limit", 20, "Max results per project (1-100)")
 	repoCommitListCmd.Flags().String("fields", "", "Comma-separated fields for JSON output")
 
 	repoCommitCmd.AddCommand(repoCommitGetCmd)
 	repoCommitGetCmd.Flags().String("project", "", "Project ID or path (required)")
 	repoCommitGetCmd.Flags().String("fields", "", "Comma-separated fields for JSON output")
+
+	// commit diff (per-file diff for one commit)
+	repoCommitCmd.AddCommand(repoCommitDiffCmd)
+	repoCommitDiffCmd.Flags().String("project", "", "Project ID or path (required)")
+	repoCommitDiffCmd.Flags().String("path", "", "Show only this file's diff")
+	repoCommitDiffCmd.Flags().String("fields", "", "Comma-separated fields per file (e.g. newPath,additions,deletions to drop patch text)")
+	markOutputType(repoCommitDiffCmd, "json")
+	markOutputFormats(repoCommitDiffCmd, formatJSON, formatText)
 
 	// commit create (atomic multi-file commit)
 	repoCommitCmd.AddCommand(repoCommitCreateCmd)

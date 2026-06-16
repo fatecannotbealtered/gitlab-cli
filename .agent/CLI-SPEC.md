@@ -246,6 +246,39 @@ Conventions:
 - List order must be stable; declare the default sort in reference.
 - Query commands must not fall into an interactive prompt just because an optional filter is missing.
 
+### 8.1 Server-side filters over client-side faking
+
+Prefer pushing a filter to the upstream over post-filtering a page client-side. A
+filter applied after pagination silently undercounts: it looks complete but only
+reflects the fetched page. If the upstream gained a filter in a known version, map
+the flag to it and record the minimum version (reference + compatibility doc)
+rather than emulating it; if you must filter locally, page the full set first and
+say so.
+
+### 8.2 Heavy sub-resources are separate, structured, and projectable
+
+A sub-resource whose size is unbounded (a diff, a log, an artifact, a full file
+body) is its own command, never inlined into a list. The cheap, bounded summary
+(counts, paths, stats) belongs on the list; the heavy payload is fetched on demand
+for the specific item the agent chose. Return it **structured** (e.g. a diff as
+per-file entries, not one opaque blob) so `--fields` can project it down to an
+inventory (paths + line counts) without shipping the payload. This makes the
+agent's token cost a choice, not a surprise — no bespoke truncation protocol
+required.
+
+### 8.3 Multi-scope queries fan out under the batch contract
+
+When a read spans many containers (projects in a group, every project in the
+instance), resolve the scope to a concrete set and fan out as a client-side loop
+(§15, class B): one external command, exactly one scope selector, results
+aggregated with each item annotated by its source container. A container that
+fails to scan is reported in the result (e.g. `projectErrors[]` / `scope` /
+`projectsScanned`), never silently dropped, and a single failure must not abort
+the rest. Aggregating bounded metadata across containers is safe; never aggregate
+an unbounded sub-resource (§8.2) across the whole set. An instance-wide scope that
+only makes sense for one actor (all of a user's commits) must be bound to that
+actor and fail closed otherwise, so a bare unbounded scan is impossible.
+
 ## 9. Idempotency and concurrency safety
 
 Write commands should support idempotent semantics where possible:

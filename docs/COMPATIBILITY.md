@@ -17,9 +17,17 @@
 | Merge requests | list/get/create/update/merge/close/reopen/approve/unapprove/diff/notes |
 | Issues | list/get/create/update/close/reopen/assign/label/notes |
 | CI/CD | pipelines, jobs, logs, artifacts, variables |
-| Repository | raw files, file writes, branches, commits, tree |
+| Repository | raw files, file writes, branches, commits, tree, commit diff |
 | Project metadata | projects, members, labels, milestones, releases |
 | Search | project, issue, merge request, blob/code, commit search |
+
+## Version-Gated Features
+
+| Feature | Minimum GitLab | Notes |
+|---|---|---|
+| `repo commit list --author` | **15.10** | Server-side commit author filter. On older instances GitLab ignores the `author` query param and returns the unfiltered list, so the result is not filtered by author — verify the server version (`gitlab-cli doctor`) before relying on it. |
+| `repo commit list --with-stats` / `--all-branches` | All supported | `with_stats` / `all` query params on the commits API. |
+| `repo commit list --group` / `--all-projects` | All supported | Client-side fan-out over `GET /groups/:id/projects` (subgroups included) / `GET /projects` (membership-scoped); no special server version needed. |
 
 ## Notes For Agents
 
