@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.5] - 2026-06-16
+
+### Added
+
+- Inline (diff-anchored) merge-request review primitives, so an agent can anchor review feedback to a specific file and line:
+  - `mr discussion create` — start a diff-anchored discussion via `POST /discussions` with a `position`. The agent supplies `--new-path`/`--new-line` (or `--old-path`/`--old-line`); the three diff SHAs (`base`/`start`/`head`) are auto-filled from the MR's `diff_refs`, and the resolved head SHA is bound into the confirm scope. `--base-sha`/`--start-sha`/`--head-sha` override for commenting on an older diff version. Fails with a clear `E_VALIDATION` (instead of a cryptic GitLab 400) when `diff_refs` are not yet populated.
+  - `mr discussion resolve` — resolve or reopen (`--unresolve`) a diff-anchored thread via `PUT /discussions/:id?resolved=`.
+- `mr get` / single-MR reads now expose `diffRefs` (base/start/head SHAs); resolvable discussion notes carry `resolvable` + `resolved`.
+
 ## [1.2.4] - 2026-06-15
 
 ### Added

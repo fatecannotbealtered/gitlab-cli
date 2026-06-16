@@ -1,10 +1,10 @@
 ---
 name: gitlab-cli
-version: "1.2.4"
+version: "1.2.5"
 description: GitLab CLI for AI Agents. JSON is the default; use --compact for token efficiency and --format text/raw only when needed. Read reference/*.md for the module you need — do not load the whole skill upfront.
 license: MIT
 user-invocable: true
-metadata: {"requires":{"bins":["gitlab-cli"],"min_version":"1.2.4"}}
+metadata: {"requires":{"bins":["gitlab-cli"],"min_version":"1.2.5"}}
 ---
 
 # gitlab-cli
@@ -122,7 +122,9 @@ Full contracts (exit codes, error JSON, list envelope, audit): **[reference/cont
 | List open MRs | `gitlab-cli mr list --project G --compact` |
 | Merge MR | `gitlab-cli mr merge --project G 42 --dangerous --dry-run`, then retry with `--dangerous --confirm <confirm_token>` |
 | Comment on MR | `gitlab-cli mr comment add --project G 42 --body "..."` |
+| Inline (diff line) comment | `gitlab-cli mr discussion create --project G 42 --new-path src/app.go --new-line 12 --body "..." --dry-run`, then `--confirm <confirm_token>` (diff SHAs auto-filled) |
 | Reply in MR thread | `gitlab-cli mr discussion list --project G 42`, then `mr discussion reply --discussion-id <id> --body "..."` |
+| Resolve/reopen a thread | `gitlab-cli mr discussion resolve --project G 42 --discussion-id <id> --dry-run`, then `--confirm <confirm_token>` (add `--unresolve` to reopen) |
 | Create project | `gitlab-cli project create --name "My App" --visibility private --dry-run`, then `--confirm <confirm_token>` |
 | Wait for CI | `gitlab-cli pipeline wait --project G ID --timeout 600` |
 | Job log | `gitlab-cli job log --project G JOB_ID` (add `--follow --json` for NDJSON stream) |

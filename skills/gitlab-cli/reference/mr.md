@@ -1,6 +1,6 @@
 # Merge Requests (MR / PR)
 
-Manage MRs: list, create, review, merge, close, approve, diff, comments.
+Manage MRs: list, create, review, merge, close, approve, diff, comments, inline (diff-anchored) discussions.
 
 ## Read
 
@@ -50,7 +50,24 @@ gitlab-cli mr comment delete --project G 42 --note-id 99 --confirm <confirm_toke
 # Discussion threads: reply into an existing thread (discussion-id from `discussion list`)
 gitlab-cli mr discussion reply --project G 42 --discussion-id <id> --body "addressed" --dry-run
 gitlab-cli mr discussion reply --project G 42 --discussion-id <id> --body "addressed" --confirm <confirm_token>
+
+# Inline (diff-anchored) review comment: anchor a thread to a file + line. The
+# agent supplies the path and line it flagged; the three diff SHAs are auto-filled
+# from the MR's diff_refs (override with --base-sha/--start-sha/--head-sha only to
+# comment on an older diff version).
+gitlab-cli mr discussion create --project G 42 --new-path src/app.go --new-line 12 --body "nil deref" --dry-run
+gitlab-cli mr discussion create --project G 42 --new-path src/app.go --new-line 12 --body "nil deref" --confirm <confirm_token>
+
+# Resolve / reopen a diff-anchored thread once the comment is addressed.
+gitlab-cli mr discussion resolve --project G 42 --discussion-id <id> --confirm <confirm_token>
+gitlab-cli mr discussion resolve --project G 42 --discussion-id <id> --unresolve --confirm <confirm_token>
 ```
+
+Inline-comment notes:
+
+- Position needs a file (`--new-path` or `--old-path`) and a line (`--new-line` or `--old-line`); a single `--new-path` covers the common non-renamed case. For a plain (non-diff) thread, use `mr comment add`.
+- The agent computes the line from `mr diff`; the tool only resolves the diff SHAs. If the MR diff is still being prepared (or has none), `diff_refs` base/head are empty and `create` fails with a clear `E_VALIDATION` instead of a cryptic GitLab 400 — retry shortly.
+- `mr get` now exposes `diffRefs` (base/start/head SHAs) for agents that build positions themselves; resolvable thread notes carry `resolvable` + `resolved`.
 
 ## Bulk (batch over many MRs)
 
@@ -106,11 +123,18 @@ and `author` are **untrusted** (each note tagged `_untrusted`):
 
 ## Workflows
 
-### Review → comment → approve
+### Review → inline comment → approve
+
+The CLI gives atomic primitives; the agent does the reviewing (reads the diff,
+decides which lines to flag). Overview comment = `mr comment add`; line-level =
+`mr discussion create`.
 
 ```bash
-gitlab-cli mr get --project G 42 --compact
-gitlab-cli mr diff --project G 42 --format raw
+gitlab-cli mr diff --project G 42 --format raw          # agent reads, picks lines
+# line-level finding (SHAs auto-filled from diff_refs):
+gitlab-cli mr discussion create --project G 42 --new-path src/app.go --new-line 12 \
+  --body "nil deref: p never assigned" --confirm <confirm_token>
+# overview comment for non-line feedback:
 gitlab-cli mr comment add --project G 42 --body "Please extract helper"
 gitlab-cli mr approve --project G 42
 ```
