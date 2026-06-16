@@ -72,11 +72,16 @@ func referenceSchemas() map[string]referenceDataSchema {
 		"user[]":           {Shape: "list", Fields: []string{"items[]", "count", "limit", "page", "total", "hasMore", "all"}, UntrustedFields: []string{"items[].username", "items[].name", "items[].email"}},
 
 		// ── Repo (branch / commit / tree / file) ─────────────────────────────
-		"branch":          {Shape: "object", Fields: []string{"name", "default", "protected", "merged", "webUrl", "commitId", "_untrusted"}, UntrustedFields: []string{"name"}},
-		"branch[]":        {Shape: "list", Fields: []string{"items[]", "count", "limit", "page", "total", "hasMore", "all"}, UntrustedFields: []string{"items[].name"}},
-		"deleted_branch":  {Shape: "object", Fields: []string{"name", "action", "_untrusted"}, UntrustedFields: []string{"name"}},
-		"commit":          {Shape: "object", Fields: []string{"id", "shortId", "title", "authorName", "authoredDate", "committedDate", "webUrl", "_untrusted"}, UntrustedFields: []string{"title", "authorName"}},
-		"commit[]":        {Shape: "list", Fields: []string{"items[]", "count", "limit", "page", "total", "hasMore", "all"}, UntrustedFields: []string{"items[].title", "items[].authorName"}},
+		"branch":         {Shape: "object", Fields: []string{"name", "default", "protected", "merged", "webUrl", "commitId", "_untrusted"}, UntrustedFields: []string{"name"}},
+		"branch[]":       {Shape: "list", Fields: []string{"items[]", "count", "limit", "page", "total", "hasMore", "all"}, UntrustedFields: []string{"items[].name"}},
+		"deleted_branch": {Shape: "object", Fields: []string{"name", "action", "_untrusted"}, UntrustedFields: []string{"name"}},
+		"commit":         {Shape: "object", Fields: []string{"id", "shortId", "title", "authorName", "authoredDate", "committedDate", "webUrl", "additions", "deletions", "total", "_untrusted"}, UntrustedFields: []string{"title", "authorName"}},
+		// commit[] carries the single-project pagination shape; a multi-project
+		// scope (--group / --all-projects / plural --project) adds items[].project,
+		// scope, projectsScanned, and projectErrors[] (per-project failures never
+		// abort the scan). additions/deletions/total appear when --with-stats is set.
+		"commit[]":        {Shape: "list", Fields: []string{"items[]", "items[].project", "items[].additions", "items[].deletions", "items[].total", "count", "limit", "page", "total", "hasMore", "all", "scope", "projectsScanned", "projectErrors"}, UntrustedFields: []string{"items[].title", "items[].authorName"}},
+		"commit_diff":     {Shape: "object", Fields: []string{"sha", "filesChanged", "files[]", "files[].oldPath", "files[].newPath", "files[].newFile", "files[].deletedFile", "files[].renamedFile", "files[].additions", "files[].deletions", "files[].diff", "_untrusted"}, UntrustedFields: []string{"files[].oldPath", "files[].newPath", "files[].diff"}},
 		"tree[]":          {Shape: "list", Fields: []string{"items[]", "count", "limit", "page", "total", "hasMore", "all"}, UntrustedFields: []string{"items[].name", "items[].path"}},
 		"repo_file":       {Shape: "object", Fields: []string{"project", "path", "ref", "bytes", "encoding", "content", "output", "_untrusted"}, UntrustedFields: []string{"content"}},
 		"repo_file_write": {Shape: "object", Fields: []string{"path", "branch", "action"}},
@@ -218,6 +223,7 @@ var commandSchemaLabels = map[string]string{
 	"repo branch delete": "deleted_branch",
 	"repo branch list":   "branch[]",
 	"repo commit create": "batch_commit",
+	"repo commit diff":   "commit_diff",
 	"repo commit get":    "commit",
 	"repo commit list":   "commit[]",
 	"repo file create":   "repo_file_write",
@@ -342,8 +348,9 @@ var commandExamples = map[string][]string{
 	"repo branch delete": {"gitlab-cli repo branch delete feature --dangerous --dry-run --compact", "gitlab-cli repo branch delete feature --dangerous --confirm <confirm_token> --compact"},
 	"repo branch list":   {"gitlab-cli repo branch list --compact"},
 	"repo commit create": {"gitlab-cli repo commit create --project group/repo --branch main --message \"sync\" --action 'create:path=a.txt;content=hi' --action 'delete:path=old.txt' --dry-run --compact", "gitlab-cli repo commit create --project group/repo --branch main --message \"sync\" --action 'create:path=a.txt;content=hi' --action 'delete:path=old.txt' --confirm <confirm_token> --compact"},
-	"repo commit get":    {"gitlab-cli repo commit get abc1234 --compact"},
-	"repo commit list":   {"gitlab-cli repo commit list --ref main --limit 20 --compact"},
+	"repo commit diff":   {"gitlab-cli repo commit diff abc1234 --project group/repo --compact", "gitlab-cli repo commit diff abc1234 --project group/repo --fields newPath,additions,deletions --compact"},
+	"repo commit get":    {"gitlab-cli repo commit get abc1234 --project group/repo --compact"},
+	"repo commit list":   {"gitlab-cli repo commit list --project group/repo --author alice --since 2026-06-01T00:00:00Z --with-stats --compact", "gitlab-cli repo commit list --group my-team --author alice --since 2026-06-01T00:00:00Z --with-stats --compact"},
 	"repo file create":   {"gitlab-cli repo file create README.md --branch main --content \"hi\" --message \"add\" --dry-run --compact", "gitlab-cli repo file create README.md --branch main --content \"hi\" --message \"add\" --confirm <confirm_token> --compact"},
 	"repo file delete":   {"gitlab-cli repo file delete README.md --branch main --message \"rm\" --dangerous --dry-run --compact", "gitlab-cli repo file delete README.md --branch main --message \"rm\" --dangerous --confirm <confirm_token> --compact"},
 	"repo file get":      {"gitlab-cli repo file get README.md --ref main --compact"},

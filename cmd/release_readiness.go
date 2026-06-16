@@ -21,7 +21,7 @@ func buildReleaseReadiness() releaseReadiness {
 		MockUpstreamStatus:         "verified",
 		LiveSmokeRequiredForStable: true,
 		LiveSmokeStatus:            "verified",
-		Reason:                     "FCC and mock upstream/contract tests are verified; recorded live E2E evidence (docs/E2E-ACCEPTANCE-REPORT.md, 2026-06-12: 90 leaf commands, 89 PASS / 1 SKIP-by-design against GitLab EE 18.8.10, plus manual keyring and confirm-chain smoke) supports stable.",
+		Reason:                     "FCC and mock upstream/contract tests are verified; recorded live E2E evidence (docs/E2E-ACCEPTANCE-REPORT.md: 2026-06-17 commit author/scope query + commit diff verified live against GitLab EE 18.8.10, atop the 2026-06-12 full-suite run of 89 PASS / 1 SKIP-by-design plus manual keyring and confirm-chain smoke) supports stable.",
 		RequiredEvidence: []string{
 			"functional_contract_coverage_100",
 			"mock_upstream_contract_tests",

@@ -1079,6 +1079,7 @@ func TestRepo_Branch_List_APIError(t *testing.T) {
 }
 
 func TestRepo_Commit_List_APIError(t *testing.T) {
+	resetRepoCmdFlags(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 		_, _ = w.Write([]byte(`{"message":"401 Unauthorized"}`))
@@ -1133,11 +1134,23 @@ func repoNoAuth(t *testing.T) {
 func resetRepoCmdFlags(t *testing.T) {
 	t.Helper()
 	resetRootPersistentFlags(t)
+	// commit list --project/--group are StringSlice: Set("") would append once
+	// Changed is true, so hard-clear them. The remaining commit-list scope/filter
+	// flags are reset alongside the scalar set below.
+	clearSliceFlag(t, repoCommitListCmd, "project")
+	clearSliceFlag(t, repoCommitListCmd, "group")
 	for _, kv := range []struct {
 		cmd   *cobra.Command
 		name  string
 		value string
 	}{
+		{repoCommitListCmd, "all-projects", "false"},
+		{repoCommitListCmd, "author", ""},
+		{repoCommitListCmd, "with-stats", "false"},
+		{repoCommitListCmd, "all-branches", "false"},
+		{repoCommitDiffCmd, "project", ""},
+		{repoCommitDiffCmd, "path", ""},
+		{repoCommitDiffCmd, "fields", ""},
 		{repoFileGetCmd, "project", ""},
 		{repoFileGetCmd, "path", ""},
 		{repoFileGetCmd, "output", ""},
@@ -1163,7 +1176,6 @@ func resetRepoCmdFlags(t *testing.T) {
 		{repoBranchCreateCmd, "ref", ""},
 		{repoBranchDeleteCmd, "project", ""},
 		{repoBranchDeleteCmd, "name", ""},
-		{repoCommitListCmd, "project", ""},
 		{repoCommitListCmd, "limit", "20"},
 		{repoCommitGetCmd, "project", ""},
 		{repoTreeCmd, "project", ""},
@@ -1171,6 +1183,9 @@ func resetRepoCmdFlags(t *testing.T) {
 	} {
 		if err := kv.cmd.Flags().Set(kv.name, kv.value); err != nil {
 			t.Fatalf("reset repo flag %s.%s: %v", kv.cmd.Name(), kv.name, err)
+		}
+		if f := kv.cmd.Flags().Lookup(kv.name); f != nil {
+			f.Changed = false
 		}
 	}
 }

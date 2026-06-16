@@ -46,7 +46,7 @@ PowerShell 使用 `$env:NAME = "value"` 设置同样的环境变量。真实密�
 | Merge Request | `mr list / get / current / create / update / merge / close / approve / diff / comment ...` | 查看、创建、评审、合并和评论 MR。 |
 | Issue | `issue list / get / create / update / close / reopen / assign / label / comment ...` | 管理 GitLab Issue 和讨论。 |
 | CI/CD | `pipeline ...`, `job ...`, `variable ...` | 查看、等待、重试、取消、下载产物并管理 CI 变量。 |
-| 仓库与 Release | `repo file / branch / commit / tree`, `release ...` | 读取和修改仓库文件、分支、提交、目录树和 Release。 |
+| 仓库与 Release | `repo file / branch / commit (list / get / diff / create) / tree`, `release ...` | 读取和修改仓库文件、分支、提交、目录树和 Release。`commit list` 可按作者/时间段在单项目、整组或全实例范围查询提交；`commit diff` 读取单条提交的逐文件改动。 |
 | 项目元数据 | `project ...`, `user ...`, `label ...`, `milestone ...`, `search ...` | 发现用户、项目、标签、里程碑和搜索结果。 |
 | 自描述 | `reference`, `context`, `doctor`, `changelog`, `update` | 用实时能力和版本变化引导 Agent。 |
 

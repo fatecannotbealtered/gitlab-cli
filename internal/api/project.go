@@ -112,6 +112,30 @@ func (a *ProjectAPI) List(ctx context.Context, opts *ProjectListOpts) ([]Project
 	return out, nil
 }
 
+// ListGroupProjects returns projects under a group, including subgroups, so a
+// "commits by author across a team" query can fan out over a whole group tree.
+// GitLab has no group-level commits endpoint, so the caller loops these projects.
+//
+// GET /api/v4/groups/:id/projects?include_subgroups=true
+func (a *ProjectAPI) ListGroupProjects(ctx context.Context, groupID string, limit int) ([]Project, error) {
+	params := url.Values{}
+	params.Set("include_subgroups", "true")
+	// archived projects can't receive new commits in a window; drop them so the
+	// fan-out doesn't waste a request per dead repo.
+	params.Set("archived", "false")
+	params.Set("per_page", strconv.Itoa(listPerPage(limit)))
+	path := a.client.APIPath("/groups/"+EncodeProjectPath(groupID)+"/projects") + "?" + params.Encode()
+	data, _, err := PaginateGET(ctx, a.client, path, limit)
+	if err != nil {
+		return nil, err
+	}
+	var out []Project
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, fmt.Errorf("parsing group projects: %w", err)
+	}
+	return out, nil
+}
+
 // Get returns a single project by ID or path.
 //
 // GET /api/v4/projects/:id
