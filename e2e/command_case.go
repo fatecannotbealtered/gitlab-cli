@@ -149,6 +149,15 @@ func BuildCommandCases(f *Fixture) []CommandCase {
 		{Path: "mr comment delete", Args: func(f *Fixture) []string {
 			return pad(f, "mr", "comment", "delete", f.MRIIDStr(), "--note-id", f.MRNoteIDStr())
 		}},
+		// Inline review: dry-run with explicit SHAs so the case does not depend on
+		// the fixture MR's diff being fully prepared (base/head SHA populated).
+		{Path: "mr discussion create", Args: func(f *Fixture) []string {
+			return pad(f, "mr", "discussion", "create", f.MRIIDStr(), "--new-path", f.FilePath, "--new-line", "1",
+				"--base-sha", "x", "--start-sha", "x", "--head-sha", "x", "--body", "e2e inline")
+		}},
+		{Path: "mr discussion resolve", Args: func(f *Fixture) []string {
+			return pad(f, "mr", "discussion", "resolve", f.MRIIDStr(), "--discussion-id", "x")
+		}},
 
 		// label
 		{Path: "label list", Args: func(f *Fixture) []string { return pa(f, "label", "list", "--limit", "10") }},

@@ -15,6 +15,16 @@ type FlatMR struct {
 	// Description carries the full MR body. It is only emitted by single-MR reads
 	// (MRDetailToMap); list output omits it for token efficiency.
 	Description string `json:"description,omitempty"`
+	// DiffRefs carries the SHAs that anchor a diff position. Only single-MR reads
+	// surface it; an agent uses these to build an inline-comment position.
+	DiffRefs *FlatDiffRefs `json:"diffRefs,omitempty"`
+}
+
+// FlatDiffRefs is the token-efficient diff_refs shape (base/start/head SHAs).
+type FlatDiffRefs struct {
+	BaseSHA  string `json:"baseSha"`
+	StartSHA string `json:"startSha"`
+	HeadSHA  string `json:"headSha"`
 }
 
 // ToFlatMR converts a MergeRequest to FlatMR.
@@ -22,6 +32,14 @@ func ToFlatMR(mr *api.MergeRequest) FlatMR {
 	author := ""
 	if mr.Author != nil {
 		author = mr.Author.Username
+	}
+	var refs *FlatDiffRefs
+	if mr.DiffRefs != nil {
+		refs = &FlatDiffRefs{
+			BaseSHA:  mr.DiffRefs.BaseSHA,
+			StartSHA: mr.DiffRefs.StartSHA,
+			HeadSHA:  mr.DiffRefs.HeadSHA,
+		}
 	}
 	return FlatMR{
 		IID:         mr.IID,
@@ -33,6 +51,7 @@ func ToFlatMR(mr *api.MergeRequest) FlatMR {
 		WebURL:      mr.WebURL,
 		Draft:       mr.Draft,
 		Description: mr.Description,
+		DiffRefs:    refs,
 	}
 }
 
@@ -64,6 +83,15 @@ func mrToMap(m FlatMR, withDescription bool) map[string]any {
 		out["description"] = m.Description
 		untrusted = append(untrusted, "description")
 	}
+	// diff_refs are GitLab-computed commit SHAs (content-addressed, not
+	// attacker-controllable), so they are not tagged untrusted.
+	if withDescription && m.DiffRefs != nil {
+		out["diffRefs"] = map[string]any{
+			"baseSha":  m.DiffRefs.BaseSHA,
+			"startSha": m.DiffRefs.StartSHA,
+			"headSha":  m.DiffRefs.HeadSHA,
+		}
+	}
 	return MarkUntrusted(out, untrusted...)
 }
 
@@ -73,6 +101,11 @@ type FlatMRNote struct {
 	Author  string `json:"author"`
 	Body    string `json:"body"`
 	Created string `json:"created"`
+	// Resolvable marks a diff-anchored thread note; Resolved is only meaningful
+	// when Resolvable is true. Both are emitted only for resolvable notes so plain
+	// comment output stays unchanged.
+	Resolvable bool `json:"resolvable"`
+	Resolved   bool `json:"resolved"`
 }
 
 // ToFlatMRNote converts a MergeRequestNote to FlatMRNote.
@@ -82,21 +115,29 @@ func ToFlatMRNote(n *api.MergeRequestNote) FlatMRNote {
 		author = n.Author.Username
 	}
 	return FlatMRNote{
-		ID:      n.ID,
-		Author:  author,
-		Body:    n.Body,
-		Created: n.CreatedAt,
+		ID:         n.ID,
+		Author:     author,
+		Body:       n.Body,
+		Created:    n.CreatedAt,
+		Resolvable: n.Resolvable,
+		Resolved:   n.Resolved,
 	}
 }
 
-// MRNoteToMap converts a FlatMRNote to a map for field filtering.
+// MRNoteToMap converts a FlatMRNote to a map for field filtering. The resolved
+// state is surfaced only for resolvable (diff-anchored) notes.
 func MRNoteToMap(n FlatMRNote) map[string]any {
-	return MarkUntrusted(map[string]any{
+	out := map[string]any{
 		"id":      ID(n.ID),
 		"author":  n.Author,
 		"body":    n.Body,
 		"created": n.Created,
-	}, "body", "author")
+	}
+	if n.Resolvable {
+		out["resolvable"] = true
+		out["resolved"] = n.Resolved
+	}
+	return MarkUntrusted(out, "body", "author")
 }
 
 // FlatMRDiscussion is a token-efficient representation of an MR discussion thread.

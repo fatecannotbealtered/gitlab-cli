@@ -36,16 +36,30 @@ type MergeRequest struct {
 	MergeStatus  string   `json:"merge_status"`
 	CreatedAt    string   `json:"created_at"`
 	UpdatedAt    string   `json:"updated_at"`
+	// DiffRefs carries the three SHAs that anchor a diff position. The GitLab MR
+	// object returns it on a single GET; an inline (diff-anchored) discussion
+	// position is invalid without these, so we surface them for agents that build
+	// positions themselves and use them to auto-fill `mr discussion create`.
+	DiffRefs *DiffRefs `json:"diff_refs"`
+}
+
+// DiffRefs are the base/start/head commit SHAs a diff position is anchored to.
+type DiffRefs struct {
+	BaseSHA  string `json:"base_sha"`
+	StartSHA string `json:"start_sha"`
+	HeadSHA  string `json:"head_sha"`
 }
 
 // MergeRequestNote mirrors a GitLab MR note (comment).
 type MergeRequestNote struct {
-	ID        int    `json:"id"`
-	Body      string `json:"body"`
-	Author    *User  `json:"author"`
-	CreatedAt string `json:"created_at"`
-	UpdatedAt string `json:"updated_at"`
-	System    bool   `json:"system"`
+	ID         int    `json:"id"`
+	Body       string `json:"body"`
+	Author     *User  `json:"author"`
+	CreatedAt  string `json:"created_at"`
+	UpdatedAt  string `json:"updated_at"`
+	System     bool   `json:"system"`
+	Resolvable bool   `json:"resolvable"`
+	Resolved   bool   `json:"resolved"`
 }
 
 // MergeRequestDiscussion mirrors a GitLab MR discussion thread: an ordered set
@@ -317,6 +331,63 @@ func (a *MergeRequestAPI) ReplyDiscussion(ctx context.Context, projectID string,
 		return nil, fmt.Errorf("parsing discussion reply: %w", err)
 	}
 	return &note, nil
+}
+
+// DiffPosition anchors a discussion to a specific line of an MR diff. GitLab
+// requires the three diff_refs SHAs plus a text position (new_path/old_path and
+// at least one of new_line/old_line). Line fields are pointers so that a line of
+// 0 is distinguishable from "not set" — GitLab rejects a new_line=0 sent for a
+// position that should only carry old_line.
+type DiffPosition struct {
+	BaseSHA      string `json:"base_sha"`
+	StartSHA     string `json:"start_sha"`
+	HeadSHA      string `json:"head_sha"`
+	PositionType string `json:"position_type"`
+	NewPath      string `json:"new_path,omitempty"`
+	OldPath      string `json:"old_path,omitempty"`
+	NewLine      *int   `json:"new_line,omitempty"`
+	OldLine      *int   `json:"old_line,omitempty"`
+}
+
+// CreateDiscussion starts a new discussion thread on an MR. When position is
+// non-nil the thread is anchored to a diff line (an inline review comment);
+// otherwise it is a plain resolvable thread.
+//
+// POST /api/v4/projects/:id/merge_requests/:iid/discussions
+func (a *MergeRequestAPI) CreateDiscussion(ctx context.Context, projectID string, iid int, body string, position *DiffPosition) (*MergeRequestDiscussion, error) {
+	path := a.client.APIPath(a.projectPath(projectID) + "/" + strconv.Itoa(iid) + "/discussions")
+	payload := map[string]any{"body": body}
+	if position != nil {
+		payload["position"] = position
+	}
+	data, err := a.client.Post(ctx, path, payload)
+	if err != nil {
+		return nil, err
+	}
+	var discussion MergeRequestDiscussion
+	if err := json.Unmarshal(data, &discussion); err != nil {
+		return nil, fmt.Errorf("parsing created discussion: %w", err)
+	}
+	return &discussion, nil
+}
+
+// ResolveDiscussion marks a resolvable discussion thread resolved or unresolved.
+// Only diff-anchored (resolvable) threads can be resolved; GitLab rejects the
+// call on a plain note thread.
+//
+// PUT /api/v4/projects/:id/merge_requests/:iid/discussions/:discussion_id?resolved=
+func (a *MergeRequestAPI) ResolveDiscussion(ctx context.Context, projectID string, iid int, discussionID string, resolved bool) (*MergeRequestDiscussion, error) {
+	path := a.client.APIPath(a.projectPath(projectID) + "/" + strconv.Itoa(iid) + "/discussions/" + url.PathEscape(discussionID))
+	path += "?resolved=" + strconv.FormatBool(resolved)
+	data, err := a.client.Put(ctx, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	var discussion MergeRequestDiscussion
+	if err := json.Unmarshal(data, &discussion); err != nil {
+		return nil, fmt.Errorf("parsing resolved discussion: %w", err)
+	}
+	return &discussion, nil
 }
 
 // DeleteNote deletes a comment from an MR.

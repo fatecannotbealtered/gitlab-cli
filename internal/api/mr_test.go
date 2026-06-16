@@ -2,6 +2,7 @@ package api
 
 import (
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -544,5 +545,78 @@ func TestMR_ReplyDiscussion(t *testing.T) {
 	}
 	if note.ID != 42 || note.Body != "done" {
 		t.Errorf("unexpected: %+v", note)
+	}
+}
+
+func TestMR_Get_ParsesDiffRefs(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"iid":7,"title":"feat","diff_refs":{"base_sha":"b1","start_sha":"s1","head_sha":"h1"}}`))
+	}))
+	defer srv.Close()
+	c := newMRTestClient(srv.URL)
+	mr, err := c.MergeRequests.Get(testCtx, "g/p", 7)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if mr.DiffRefs == nil || mr.DiffRefs.BaseSHA != "b1" || mr.DiffRefs.StartSHA != "s1" || mr.DiffRefs.HeadSHA != "h1" {
+		t.Errorf("diff_refs not parsed: %+v", mr.DiffRefs)
+	}
+}
+
+func TestMR_CreateDiscussion_WithPosition(t *testing.T) {
+	var gotBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("method = %q, want POST", r.Method)
+		}
+		if !strings.HasSuffix(r.URL.Path, "/merge_requests/7/discussions") {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		buf, _ := io.ReadAll(r.Body)
+		gotBody = string(buf)
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"id":"disc1","individual_note":false,"notes":[{"id":1,"body":"nit","author":{"username":"alice"},"resolvable":true,"resolved":false}]}`))
+	}))
+	defer srv.Close()
+	c := newMRTestClient(srv.URL)
+	line := 42
+	pos := &DiffPosition{BaseSHA: "b1", StartSHA: "s1", HeadSHA: "h1", PositionType: "text", NewPath: "a.go", OldPath: "a.go", NewLine: &line}
+	d, err := c.MergeRequests.CreateDiscussion(testCtx, "g/p", 7, "nit", pos)
+	if err != nil {
+		t.Fatalf("CreateDiscussion: %v", err)
+	}
+	if d.ID != "disc1" || len(d.Notes) != 1 || !d.Notes[0].Resolvable {
+		t.Errorf("unexpected discussion: %+v", d)
+	}
+	for _, want := range []string{`"position"`, `"new_path":"a.go"`, `"new_line":42`, `"head_sha":"h1"`} {
+		if !strings.Contains(gotBody, want) {
+			t.Errorf("request body missing %q, got: %s", want, gotBody)
+		}
+	}
+}
+
+func TestMR_ResolveDiscussion(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut {
+			t.Errorf("method = %q, want PUT", r.Method)
+		}
+		if !strings.HasSuffix(r.URL.Path, "/discussions/disc1") {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		if r.URL.Query().Get("resolved") != "true" {
+			t.Errorf("resolved query = %q, want true", r.URL.Query().Get("resolved"))
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":"disc1","notes":[{"id":1,"body":"fix","resolvable":true,"resolved":true}]}`))
+	}))
+	defer srv.Close()
+	c := newMRTestClient(srv.URL)
+	d, err := c.MergeRequests.ResolveDiscussion(testCtx, "g/p", 7, "disc1", true)
+	if err != nil {
+		t.Fatalf("ResolveDiscussion: %v", err)
+	}
+	if d.ID != "disc1" || len(d.Notes) != 1 || !d.Notes[0].Resolved {
+		t.Errorf("unexpected: %+v", d)
 	}
 }
