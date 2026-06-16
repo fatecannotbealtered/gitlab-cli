@@ -1,6 +1,6 @@
 {
   "name": "@fateforge/gitlab-cli",
-  "version": "1.2.6",
+  "version": "1.2.7",
   "description": "GitLab CLI for AI Agents - manage merge requests, issues, pipelines, jobs, repositories, releases, labels, milestones, and CI variables",
   "keywords": [
     "gitlab",
@@ -28,12 +28,12 @@
     "gitlab-cli": "scripts/run.js"
   },
   "optionalDependencies": {
-    "@fateforge/gitlab-cli-darwin-arm64": "1.2.6",
-    "@fateforge/gitlab-cli-darwin-x64": "1.2.6",
-    "@fateforge/gitlab-cli-linux-arm64": "1.2.6",
-    "@fateforge/gitlab-cli-linux-x64": "1.2.6",
-    "@fateforge/gitlab-cli-win32-arm64": "1.2.6",
-    "@fateforge/gitlab-cli-win32-x64": "1.2.6"
+    "@fateforge/gitlab-cli-darwin-arm64": "1.2.7",
+    "@fateforge/gitlab-cli-darwin-x64": "1.2.7",
+    "@fateforge/gitlab-cli-linux-arm64": "1.2.7",
+    "@fateforge/gitlab-cli-linux-x64": "1.2.7",
+    "@fateforge/gitlab-cli-win32-arm64": "1.2.7",
+    "@fateforge/gitlab-cli-win32-x64": "1.2.7"
   },
   "files": [
     "scripts/run.js",

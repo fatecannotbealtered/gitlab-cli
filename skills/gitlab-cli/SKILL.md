@@ -1,10 +1,10 @@
 ---
 name: gitlab-cli
-version: "1.2.6"
+version: "1.2.7"
 description: GitLab CLI for AI Agents. JSON is the default; use --compact for token efficiency and --format text/raw only when needed. Read reference/*.md for the module you need — do not load the whole skill upfront.
 license: MIT
 user-invocable: true
-metadata: {"requires":{"bins":["gitlab-cli"],"min_version":"1.2.6"}}
+metadata: {"requires":{"bins":["gitlab-cli"],"min_version":"1.2.7"}}
 ---
 
 # gitlab-cli
