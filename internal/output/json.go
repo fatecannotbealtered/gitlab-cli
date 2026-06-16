@@ -140,6 +140,7 @@ const (
 	ErrCancelled       ErrorCode = "E_CANCELLED"
 	ErrTimeout         ErrorCode = "E_TIMEOUT"
 	ErrNetwork         ErrorCode = "E_NETWORK"
+	ErrIntegrity       ErrorCode = "E_INTEGRITY"
 	ErrUnknown         ErrorCode = "E_UNKNOWN"
 )
 
@@ -194,6 +195,8 @@ func HintForErrorCode(code ErrorCode) string {
 		return "The operation timed out; retry with backoff"
 	case ErrNetwork:
 		return "Check host URL and network connectivity"
+	case ErrIntegrity:
+		return "Release integrity verification failed (signature or checksum); do not retry. Re-run update to fetch the current release, or report a possible supply-chain issue"
 	default:
 		return ""
 	}

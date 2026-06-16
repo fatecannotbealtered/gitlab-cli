@@ -30,6 +30,7 @@ func resetUpdateTestState(t *testing.T) {
 	origApply := updateApply
 	origSkillSync := updateSkillSync
 	origNow := updateNow
+	origVerifySig := updateVerifySignature
 	t.Cleanup(func() {
 		version = origVersion
 		updateGitHubAPI = origAPI
@@ -39,6 +40,7 @@ func resetUpdateTestState(t *testing.T) {
 		updateApply = origApply
 		updateSkillSync = origSkillSync
 		updateNow = origNow
+		updateVerifySignature = origVerifySig
 	})
 	for _, kv := range []struct{ name, value string }{
 		{"check", "false"},
@@ -55,6 +57,11 @@ func resetUpdateTestState(t *testing.T) {
 	}
 	updateNow = func() time.Time { return time.Unix(1700000000, 0) }
 	updateSkillSync = func(context.Context, string) error { return nil }
+	// Default: in-process Sigstore verification succeeds. Tests that exercise
+	// the fail-closed path override this with an error-returning stub. A live
+	// OIDC-signed bundle cannot be produced in a unit test, so the seam stands
+	// in for the real verifier while the surrounding control flow is tested.
+	updateVerifySignature = func(_, _, _ string) error { return nil }
 }
 
 func updateConfirmArgsForTest(t *testing.T, serverURL, currentVersion, targetVersion string, reinstall bool) []string {
@@ -69,7 +76,7 @@ func updateConfirmArgsForTest(t *testing.T, serverURL, currentVersion, targetVer
 		"assetName":          assetName,
 		"assetURL":           serverURL + "/downloads/" + assetName,
 		"checksumURL":        serverURL + "/downloads/checksums.txt",
-		"signatureBundleURL": "",
+		"signatureBundleURL": serverURL + "/downloads/checksums.txt.sigstore.json",
 		"reinstall":          reinstall,
 		"skillSyncCommand":   updateSkillSyncCommand(),
 	})
@@ -202,12 +209,89 @@ func TestUpdate_ChecksumMismatch(t *testing.T) {
 		rootCmd.SetArgs(args)
 		_ = rootCmd.Execute()
 	})
-	if lastExit != ExitNetwork {
-		t.Fatalf("exit=%d want=%d\nstdout:\n%s", lastExit, ExitNetwork, errOut)
+	if lastExit != ExitError {
+		t.Fatalf("exit=%d want=%d\nstdout:\n%s", lastExit, ExitError, errOut)
 	}
-	if !strings.Contains(errOut, "checksum mismatch") {
-		t.Fatalf("expected checksum error, got:\n%s", errOut)
+	if !strings.Contains(errOut, "checksum mismatch") || !strings.Contains(errOut, "E_INTEGRITY") {
+		t.Fatalf("expected non-retryable integrity error, got:\n%s", errOut)
 	}
+}
+
+func TestUpdate_MissingSignatureBundle_Refused(t *testing.T) {
+	resetUpdateTestState(t)
+	version = "1.0.0"
+	// Release without checksums.txt.sigstore.json: must be refused, not skipped.
+	srv := newUpdateTestServerWithBundle(t, "1.2.3", []byte("new-binary"), "", true, false)
+	defer srv.Close()
+	updateApply = func(_, _ string) (updateApplyResult, error) {
+		t.Fatal("unsigned release must not be installed")
+		return updateApplyResult{}, nil
+	}
+
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	errOut := captureCombinedOutput(t, func() {
+		args := []string{"update", "--json"}
+		args = append(args, confirmArgsForTest(t, "update gitlab-cli", map[string]any{
+			"currentVersion":     "1.0.0",
+			"targetVersion":      "1.2.3",
+			"assetName":          mustUpdateArchiveName(t, "1.2.3"),
+			"assetURL":           srv.URL + "/downloads/" + mustUpdateArchiveName(t, "1.2.3"),
+			"checksumURL":        srv.URL + "/downloads/checksums.txt",
+			"signatureBundleURL": "",
+			"reinstall":          false,
+			"skillSyncCommand":   updateSkillSyncCommand(),
+		})...)
+		rootCmd.SetArgs(args)
+		_ = rootCmd.Execute()
+	})
+	if lastExit != ExitError {
+		t.Fatalf("exit=%d want=%d\nstdout:\n%s", lastExit, ExitError, errOut)
+	}
+	if !strings.Contains(errOut, "unsigned release") || !strings.Contains(errOut, "E_INTEGRITY") {
+		t.Fatalf("expected unsigned-release refusal, got:\n%s", errOut)
+	}
+}
+
+func TestUpdate_SignatureVerificationFails_Refused(t *testing.T) {
+	resetUpdateTestState(t)
+	version = "1.0.0"
+	srv := newUpdateTestServer(t, "1.2.3", []byte("new-binary"), "", true)
+	defer srv.Close()
+	// In-process verification rejects the bundle (wrong identity / tampered).
+	updateVerifySignature = func(_, _, _ string) error {
+		return fmt.Errorf("signature verification failed: certificate identity mismatch")
+	}
+	updateApply = func(_, _ string) (updateApplyResult, error) {
+		t.Fatal("release with failing signature must not be installed")
+		return updateApplyResult{}, nil
+	}
+
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	errOut := captureCombinedOutput(t, func() {
+		args := []string{"update", "--json"}
+		args = append(args, updateConfirmArgsForTest(t, srv.URL, "1.0.0", "1.2.3", false)...)
+		rootCmd.SetArgs(args)
+		_ = rootCmd.Execute()
+	})
+	if lastExit != ExitError {
+		t.Fatalf("exit=%d want=%d\nstdout:\n%s", lastExit, ExitError, errOut)
+	}
+	if !strings.Contains(errOut, "signature verification failed") || !strings.Contains(errOut, "E_INTEGRITY") {
+		t.Fatalf("expected signature failure refusal, got:\n%s", errOut)
+	}
+}
+
+func mustUpdateArchiveName(t *testing.T, ver string) string {
+	t.Helper()
+	name, err := updateArchiveName(ver)
+	if err != nil {
+		t.Fatalf("archive name: %v", err)
+	}
+	return name
 }
 
 func TestUpdate_MissingAsset(t *testing.T) {
@@ -331,6 +415,11 @@ func TestCompareVersions(t *testing.T) {
 
 func newUpdateTestServer(t *testing.T, relVersion string, binary []byte, checksumOverride string, includeAsset bool) *httptest.Server {
 	t.Helper()
+	return newUpdateTestServerWithBundle(t, relVersion, binary, checksumOverride, includeAsset, true)
+}
+
+func newUpdateTestServerWithBundle(t *testing.T, relVersion string, binary []byte, checksumOverride string, includeAsset, includeBundle bool) *httptest.Server {
+	t.Helper()
 	assetName, err := updateArchiveName(relVersion)
 	if err != nil {
 		t.Fatalf("archive name: %v", err)
@@ -345,10 +434,10 @@ func newUpdateTestServer(t *testing.T, relVersion string, binary []byte, checksu
 	var srv *httptest.Server
 	mux := http.NewServeMux()
 	mux.HandleFunc("/repos/fatecannotbealtered/gitlab-cli/releases/latest", func(w http.ResponseWriter, r *http.Request) {
-		writeUpdateReleaseJSON(t, w, srv.URL, relVersion, assetName, includeAsset)
+		writeUpdateReleaseJSON(t, w, srv.URL, relVersion, assetName, includeAsset, includeBundle)
 	})
 	mux.HandleFunc("/repos/fatecannotbealtered/gitlab-cli/releases/tags/v"+relVersion, func(w http.ResponseWriter, r *http.Request) {
-		writeUpdateReleaseJSON(t, w, srv.URL, relVersion, assetName, includeAsset)
+		writeUpdateReleaseJSON(t, w, srv.URL, relVersion, assetName, includeAsset, includeBundle)
 	})
 	mux.HandleFunc("/downloads/"+assetName, func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(archiveBytes)
@@ -356,16 +445,23 @@ func newUpdateTestServer(t *testing.T, relVersion string, binary []byte, checksu
 	mux.HandleFunc("/downloads/checksums.txt", func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(checksum))
 	})
+	mux.HandleFunc("/downloads/checksums.txt.sigstore.json", func(w http.ResponseWriter, r *http.Request) {
+		// Opaque bundle bytes; in-process verification is stubbed in tests.
+		_, _ = w.Write([]byte(`{"bundle":"stub"}`))
+	})
 	srv = httptest.NewServer(mux)
 	updateGitHubAPI = srv.URL
 	updateHTTPClient = srv.Client()
 	return srv
 }
 
-func writeUpdateReleaseJSON(t *testing.T, w http.ResponseWriter, baseURL, relVersion, assetName string, includeAsset bool) {
+func writeUpdateReleaseJSON(t *testing.T, w http.ResponseWriter, baseURL, relVersion, assetName string, includeAsset, includeBundle bool) {
 	t.Helper()
 	assets := []updateReleaseAsset{
 		{Name: "checksums.txt", BrowserDownloadURL: baseURL + "/downloads/checksums.txt"},
+	}
+	if includeBundle {
+		assets = append(assets, updateReleaseAsset{Name: "checksums.txt.sigstore.json", BrowserDownloadURL: baseURL + "/downloads/checksums.txt.sigstore.json"})
 	}
 	if includeAsset {
 		assets = append(assets, updateReleaseAsset{Name: assetName, BrowserDownloadURL: baseURL + "/downloads/" + assetName})
