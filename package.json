@@ -28,12 +28,12 @@
     "gitlab-cli": "scripts/run.js"
   },
   "optionalDependencies": {
-    "@fateforge/gitlab-cli-darwin-arm64": "1.2.5",
-    "@fateforge/gitlab-cli-darwin-x64": "1.2.5",
-    "@fateforge/gitlab-cli-linux-arm64": "1.2.5",
-    "@fateforge/gitlab-cli-linux-x64": "1.2.5",
-    "@fateforge/gitlab-cli-win32-arm64": "1.2.5",
-    "@fateforge/gitlab-cli-win32-x64": "1.2.5"
+    "@fateforge/gitlab-cli-darwin-arm64": "1.2.6",
+    "@fateforge/gitlab-cli-darwin-x64": "1.2.6",
+    "@fateforge/gitlab-cli-linux-arm64": "1.2.6",
+    "@fateforge/gitlab-cli-linux-x64": "1.2.6",
+    "@fateforge/gitlab-cli-win32-arm64": "1.2.6",
+    "@fateforge/gitlab-cli-win32-x64": "1.2.6"
   },
   "files": [
     "scripts/run.js",
