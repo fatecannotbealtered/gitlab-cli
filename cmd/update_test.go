@@ -362,15 +362,6 @@ func TestUpdate_SignatureVerificationFails_Refused(t *testing.T) {
 	}
 }
 
-func mustUpdateArchiveName(t *testing.T, ver string) string {
-	t.Helper()
-	name, err := updateArchiveName(ver)
-	if err != nil {
-		t.Fatalf("archive name: %v", err)
-	}
-	return name
-}
-
 func TestUpdate_MissingAsset(t *testing.T) {
 	resetUpdateTestState(t)
 	version = "1.0.0"
