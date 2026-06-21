@@ -64,22 +64,14 @@ func resetUpdateTestState(t *testing.T) {
 	updateVerifySignature = func(_, _, _ string) error { return nil }
 }
 
-func updateConfirmArgsForTest(t *testing.T, serverURL, currentVersion, targetVersion string, reinstall bool) []string {
-	t.Helper()
-	assetName, err := updateArchiveName(targetVersion)
-	if err != nil {
-		t.Fatalf("update archive name: %v", err)
+// updateInstallArgsForTest returns the args for a bare single-command update.
+// The new contract takes NO confirm token: a bare `update` executes directly.
+func updateInstallArgsForTest(_ *testing.T, _, _, _ string, reinstall bool) []string {
+	args := []string{"update", "--json"}
+	if reinstall {
+		args = append(args, "--reinstall")
 	}
-	return confirmArgsForTest(t, "update gitlab-cli", map[string]any{
-		"currentVersion":     currentVersion,
-		"targetVersion":      normalizeVersion(targetVersion),
-		"assetName":          assetName,
-		"assetURL":           serverURL + "/downloads/" + assetName,
-		"checksumURL":        serverURL + "/downloads/checksums.txt",
-		"signatureBundleURL": serverURL + "/downloads/checksums.txt.sigstore.json",
-		"reinstall":          reinstall,
-		"skillSyncCommand":   updateSkillSyncCommand(),
-	})
+	return args
 }
 
 func TestUpdate_Help(t *testing.T) {
@@ -136,7 +128,9 @@ func TestUpdate_CheckJSON_UpToDate(t *testing.T) {
 	}
 }
 
-func TestUpdate_DryRunJSON_IncludesConfirmToken(t *testing.T) {
+// TestUpdate_DryRunJSON_NoConfirmToken asserts --dry-run is a read-only preview
+// that issues NO confirm_token and NO expires_at — update is not a write gate.
+func TestUpdate_DryRunJSON_NoConfirmToken(t *testing.T) {
 	resetUpdateTestState(t)
 	version = "1.0.0"
 	srv := newUpdateTestServer(t, "1.2.3", []byte("new-binary"), "", true)
@@ -150,14 +144,108 @@ func TestUpdate_DryRunJSON_IncludesConfirmToken(t *testing.T) {
 		rootCmd.SetArgs([]string{"update", "--dry-run", "--json"})
 		_ = rootCmd.Execute()
 	})
-	for _, want := range []string{`"status": "dry_run"`, `"confirm_token"`, `"confirm_token"`} {
+	if !strings.Contains(out, `"status": "dry_run"`) {
+		t.Fatalf("missing dry_run status in:\n%s", out)
+	}
+	for _, forbidden := range []string{"confirm_token", "expires_at"} {
+		if strings.Contains(out, forbidden) {
+			t.Fatalf("dry-run must not emit %q in:\n%s", forbidden, out)
+		}
+	}
+}
+
+// TestUpdate_BareExecutesWithoutToken asserts a bare `update` performs the whole
+// update in one call with no confirm token (the single-command contract).
+func TestUpdate_BareExecutesWithoutToken(t *testing.T) {
+	resetUpdateTestState(t)
+	version = "1.0.0"
+	srv := newUpdateTestServer(t, "1.2.3", []byte("new-binary"), "", true)
+	defer srv.Close()
+	applied := false
+	updateApply = func(src, dst string) (updateApplyResult, error) {
+		applied = true
+		return updateApplyResult{Status: "installed", Path: dst}, nil
+	}
+
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	out := captureStdout(t, func() {
+		rootCmd.SetArgs([]string{"update", "--json"})
+		_ = rootCmd.Execute()
+	})
+	if lastExit != ExitOK {
+		t.Fatalf("exit=%d want=0\n%s", lastExit, out)
+	}
+	if !applied {
+		t.Fatal("bare update did not apply the install")
+	}
+	for _, want := range []string{`"status": "installed"`, `"binary_replaced": true`, `"skill_sync_status": "synced"`} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("missing %q in:\n%s", want, out)
 		}
 	}
 }
 
-func TestUpdate_InstallWithConfirm(t *testing.T) {
+// TestUpdate_Idempotent_NoOp asserts already-latest returns ok with a no-op.
+func TestUpdate_Idempotent_NoOp(t *testing.T) {
+	resetUpdateTestState(t)
+	version = "1.2.3"
+	srv := newUpdateTestServer(t, "1.2.3", []byte("same"), "", true)
+	defer srv.Close()
+	updateApply = func(_, _ string) (updateApplyResult, error) {
+		t.Fatal("up-to-date update must not apply")
+		return updateApplyResult{}, nil
+	}
+
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	out := captureStdout(t, func() {
+		rootCmd.SetArgs([]string{"update", "--json"})
+		_ = rootCmd.Execute()
+	})
+	if lastExit != ExitOK {
+		t.Fatalf("exit=%d want=0\n%s", lastExit, out)
+	}
+	if !strings.Contains(out, `"status": "up_to_date"`) || !strings.Contains(out, `"update_available": false`) {
+		t.Fatalf("expected idempotent no-op, got:\n%s", out)
+	}
+}
+
+// TestUpdate_SkillSyncFailure_PartialSuccess asserts that a skill_sync failure
+// after a successful binary replace is partial success (ok:false,
+// binary_replaced:true) carrying skill_sync_command and retryable:true.
+func TestUpdate_SkillSyncFailure_PartialSuccess(t *testing.T) {
+	resetUpdateTestState(t)
+	version = "1.0.0"
+	srv := newUpdateTestServer(t, "1.2.3", []byte("new-binary"), "", true)
+	defer srv.Close()
+	updateApply = func(_, dst string) (updateApplyResult, error) {
+		return updateApplyResult{Status: "installed", Path: dst}, nil
+	}
+	updateSkillSync = func(context.Context, string) error {
+		return fmt.Errorf("npx not found")
+	}
+
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	out := captureCombinedOutput(t, func() {
+		rootCmd.SetArgs([]string{"update", "--json"})
+		_ = rootCmd.Execute()
+	})
+	if lastExit != ExitNetwork {
+		t.Fatalf("exit=%d want=%d\n%s", lastExit, ExitNetwork, out)
+	}
+	for _, want := range []string{`"ok": false`, `"binary_replaced": true`, `"skill_sync_status": "failed"`, `"skill_sync_command"`, `"retryable": true`} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q in partial success:\n%s", want, out)
+		}
+	}
+}
+
+func TestUpdate_Install(t *testing.T) {
 	resetUpdateTestState(t)
 	version = "1.0.0"
 	srv := newUpdateTestServer(t, "1.2.3", []byte("new-binary"), "", true)
@@ -177,9 +265,7 @@ func TestUpdate_InstallWithConfirm(t *testing.T) {
 	defer func() { lastExit = origExit }()
 	lastExit = 0
 	out := captureStdout(t, func() {
-		args := []string{"update", "--json"}
-		args = append(args, updateConfirmArgsForTest(t, srv.URL, "1.0.0", "1.2.3", false)...)
-		rootCmd.SetArgs(args)
+		rootCmd.SetArgs(updateInstallArgsForTest(t, srv.URL, "1.0.0", "1.2.3", false))
 		_ = rootCmd.Execute()
 	})
 	if lastExit != ExitOK {
@@ -204,16 +290,16 @@ func TestUpdate_ChecksumMismatch(t *testing.T) {
 	defer func() { lastExit = origExit }()
 	lastExit = 0
 	errOut := captureCombinedOutput(t, func() {
-		args := []string{"update", "--json"}
-		args = append(args, updateConfirmArgsForTest(t, srv.URL, "1.0.0", "1.2.3", false)...)
-		rootCmd.SetArgs(args)
+		rootCmd.SetArgs(updateInstallArgsForTest(t, srv.URL, "1.0.0", "1.2.3", false))
 		_ = rootCmd.Execute()
 	})
 	if lastExit != ExitError {
 		t.Fatalf("exit=%d want=%d\nstdout:\n%s", lastExit, ExitError, errOut)
 	}
-	if !strings.Contains(errOut, "checksum mismatch") || !strings.Contains(errOut, "E_INTEGRITY") {
-		t.Fatalf("expected non-retryable integrity error, got:\n%s", errOut)
+	for _, want := range []string{"checksum mismatch", "E_INTEGRITY", `"retryable": false`, `"stage": "verify_checksum"`, `"binary_replaced": false`} {
+		if !strings.Contains(errOut, want) {
+			t.Fatalf("missing %q in integrity error:\n%s", want, errOut)
+		}
 	}
 }
 
@@ -232,25 +318,16 @@ func TestUpdate_MissingSignatureBundle_Refused(t *testing.T) {
 	defer func() { lastExit = origExit }()
 	lastExit = 0
 	errOut := captureCombinedOutput(t, func() {
-		args := []string{"update", "--json"}
-		args = append(args, confirmArgsForTest(t, "update gitlab-cli", map[string]any{
-			"currentVersion":     "1.0.0",
-			"targetVersion":      "1.2.3",
-			"assetName":          mustUpdateArchiveName(t, "1.2.3"),
-			"assetURL":           srv.URL + "/downloads/" + mustUpdateArchiveName(t, "1.2.3"),
-			"checksumURL":        srv.URL + "/downloads/checksums.txt",
-			"signatureBundleURL": "",
-			"reinstall":          false,
-			"skillSyncCommand":   updateSkillSyncCommand(),
-		})...)
-		rootCmd.SetArgs(args)
+		rootCmd.SetArgs([]string{"update", "--json"})
 		_ = rootCmd.Execute()
 	})
 	if lastExit != ExitError {
 		t.Fatalf("exit=%d want=%d\nstdout:\n%s", lastExit, ExitError, errOut)
 	}
-	if !strings.Contains(errOut, "unsigned release") || !strings.Contains(errOut, "E_INTEGRITY") {
-		t.Fatalf("expected unsigned-release refusal, got:\n%s", errOut)
+	for _, want := range []string{"unsigned release", "E_INTEGRITY", `"stage": "verify_signature"`} {
+		if !strings.Contains(errOut, want) {
+			t.Fatalf("missing %q in unsigned-release refusal:\n%s", want, errOut)
+		}
 	}
 }
 
@@ -272,16 +349,16 @@ func TestUpdate_SignatureVerificationFails_Refused(t *testing.T) {
 	defer func() { lastExit = origExit }()
 	lastExit = 0
 	errOut := captureCombinedOutput(t, func() {
-		args := []string{"update", "--json"}
-		args = append(args, updateConfirmArgsForTest(t, srv.URL, "1.0.0", "1.2.3", false)...)
-		rootCmd.SetArgs(args)
+		rootCmd.SetArgs([]string{"update", "--json"})
 		_ = rootCmd.Execute()
 	})
 	if lastExit != ExitError {
 		t.Fatalf("exit=%d want=%d\nstdout:\n%s", lastExit, ExitError, errOut)
 	}
-	if !strings.Contains(errOut, "signature verification failed") || !strings.Contains(errOut, "E_INTEGRITY") {
-		t.Fatalf("expected signature failure refusal, got:\n%s", errOut)
+	for _, want := range []string{"signature verification failed", "E_INTEGRITY", `"retryable": false`, `"stage": "verify_signature"`} {
+		if !strings.Contains(errOut, want) {
+			t.Fatalf("missing %q in signature failure refusal:\n%s", want, errOut)
+		}
 	}
 }
 

@@ -309,13 +309,57 @@ func TestHintForErrorCode_DefaultAndCancelled(t *testing.T) {
 	}
 }
 
+// TestRetryableErrorCode_IOInterrupted asserts E_IO is non-retryable (needs an
+// environment fix) and E_INTERRUPTED is retryable (staged work left nothing
+// half-applied), while E_INTEGRITY stays non-retryable.
+func TestRetryableErrorCode_IOInterrupted(t *testing.T) {
+	cases := map[ErrorCode]bool{
+		ErrIO:          false,
+		ErrInterrupted: true,
+		ErrIntegrity:   false,
+		ErrNetwork:     true,
+	}
+	for code, want := range cases {
+		if got := RetryableErrorCode(code); got != want {
+			t.Errorf("RetryableErrorCode(%s) = %v, want %v", code, got, want)
+		}
+	}
+}
+
+func TestHintForErrorCode_IOInterrupted(t *testing.T) {
+	if HintForErrorCode(ErrIO) == "" {
+		t.Error("ErrIO should have a hint")
+	}
+	if HintForErrorCode(ErrInterrupted) == "" {
+		t.Error("ErrInterrupted should have a hint")
+	}
+}
+
+// TestPrintErrorJSONWithDetails_MergesDetails asserts extra details (the update
+// stage invariant) are merged into error.details.
+func TestPrintErrorJSONWithDetails_MergesDetails(t *testing.T) {
+	stdout, _ := captureStdoutStderr(func() {
+		PrintErrorJSONWithDetails("io failure", 0, ErrIO, map[string]any{
+			"stage":             "replace",
+			"current_version":   "1.0.0",
+			"binary_replaced":   false,
+			"skill_sync_status": "not_run",
+		})
+	})
+	for _, want := range []string{`"code": "E_IO"`, `"stage": "replace"`, `"binary_replaced": false`, `"retryable": false`} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("missing %q in %q", want, stdout)
+		}
+	}
+}
+
 func TestEmitErrorPayload_Fallback(t *testing.T) {
 	orig := emitJSONMarshal
 	emitJSONMarshal = func(any) ([]byte, error) { return nil, errors.New("boom") }
 	defer func() { emitJSONMarshal = orig }()
 
 	stdout, _ := captureStdoutStderr(func() {
-		emitErrorPayload("fail", 500, ErrServer)
+		emitErrorPayload("fail", 500, ErrServer, nil)
 	})
 	if !strings.Contains(stdout, `"code":"E_SERVER"`) {
 		t.Errorf("fallback stdout = %q", stdout)

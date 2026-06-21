@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.9] - 2026-06-21
+
+### Changed
+
+- `update` is now a single command with no confirm token. A bare `gitlab-cli update` performs the whole self-update in one call — resolve latest (or `--target-version`) → verify signature → verify checksum → replace binary → sync Skill — and is exempt from the `--dry-run` → `--confirm <token>` write gate (in-process Sigstore verification is the safety guarantee, not an agent's review of a preview). `update --check` and `update --dry-run` stay as optional read-only flags; `--dry-run` now issues NO `confirm_token` and NO `expires_at`. `update` is idempotent: already-latest returns ok with a no-op. Other write commands are unchanged.
+
+### Added
+
+- Staged failure & interruption envelope for `update`. Every update failure carries `stage` (`discover|download|verify_signature|verify_checksum|replace|skill_sync`), `current_version`, `binary_replaced`, and `skill_sync_status`. Failures are classified by next action: discover/download → retryable `E_NETWORK`/`E_TIMEOUT`/`E_RATE_LIMITED`; signature/checksum → non-retryable `E_INTEGRITY` (exit 1, unchanged fail-closed behavior); replace stage local failures → `E_IO` (exit 1) or `E_FORBIDDEN` (exit 4) instead of being misclassified as `E_NETWORK`. A skill-sync failure after a successful binary replace is now PARTIAL SUCCESS (`ok:false`, `binary_replaced:true`, `retryable:true`) carrying `skill_sync_command`, instead of a hard error that hid the binary already being updated.
+- SIGINT/SIGTERM during `update` is trapped: it unwinds to a clean state, always cleans the temp dir, and still emits a terminal JSON envelope (`E_INTERRUPTED`, exit 130) stating the post-state per the stage invariant.
+- New error codes `E_IO` (→ exit 1) and `E_INTERRUPTED` (→ exit 130) added to the output error package and code→exit mapping.
+
 ## [1.2.8] - 2026-06-16
 
 ### Added

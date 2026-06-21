@@ -74,8 +74,8 @@ The README is intentionally a map, not the full manual. Agents should call `gitl
 3. Run `gitlab-cli context --compact` and `gitlab-cli doctor --compact`.
 4. Run `gitlab-cli reference --compact` and select commands from the live contract, not from `--help` scraping.
 5. Prefer `--compact` and `--fields` on JSON outputs to reduce token use.
-6. For write/update commands, run `--dry-run`, inspect the returned preview and `confirm_token`, then repeat the same operation with `--confirm <confirm_token>`.
-7. After a successful update, review `signature_status` and checksum verification, ensure `skill_sync_status` is successful, then run `gitlab-cli changelog --since <previous-version> --compact` and `gitlab-cli reference --compact` before continuing.
+6. For data-write commands, run `--dry-run`, inspect the returned preview and `confirm_token`, then repeat the same operation with `--confirm <confirm_token>`.
+7. Self-update is a single command with no confirm token: run `gitlab-cli update` directly (or `update --check` / `update --dry-run` first for a read-only look). After it succeeds, review `signature_status` and checksum verification, ensure `skill_sync_status` is `synced`, then run `gitlab-cli changelog --since <previous-version> --compact` and `gitlab-cli reference --compact` before continuing.
 
 ## Machine Contract
 

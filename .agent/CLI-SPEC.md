@@ -25,9 +25,11 @@ This document defines the machine contract a CLI must honor when called by an AI
 | `--confirm <token>` | Carry the dry-run token to actually execute the write |
 | `--quiet` | Suppress progress/prompts on stderr, never suppress errors |
 
-`update` commands may add tool-specific flags such as `--target-version` or
-`--channel`, but they must keep the common lifecycle flags: `--check`,
-`--dry-run`, and `--confirm <token>`.
+`update` is a **single command, not a write with a confirm gate** (see §14): a
+bare `update` performs the whole self-update in one call. It may add
+tool-specific flags such as `--target-version` or `--channel`, and it keeps
+`--check` and `--dry-run` as **optional read-only** flags, but it does NOT take
+`--confirm <token>` — self-update is exempt from the §7 write gate.
 
 Format responsibilities:
 
@@ -135,6 +137,8 @@ Error codes and exit codes must align:
 - `E_NETWORK` / `E_RATE_LIMITED` / `E_SERVER` -> 7
 - `E_TIMEOUT` -> 8
 - `E_INTEGRITY` -> 1 (release integrity failure: missing/invalid signature or checksum mismatch; **non-retryable**, see §14)
+- `E_IO` -> 1 (local filesystem failure: disk full, file locked, partial write; non-retryable, needs an environment fix; see §14 update replace stage)
+- `E_INTERRUPTED` -> 130 (operation cancelled by signal/user, SIGINT = 128+2; retryable — staged work leaves nothing half-applied, see §14)
 - `E_HUMAN_REQUIRED` -> 9 (optional, only when §16.3 is enabled)
 
 When the failure comes from an upstream HTTP call, map the status onto the
@@ -637,22 +641,29 @@ tool owns the full lifecycle and must either sync the entire `skills/<tool>/`
 directory or return an explicit `skill_sync_status` and `skill_sync_command`
 that the agent can execute before using new behavior.
 
-Required update contract:
+Single-command update contract (no leaf commands, no confirm token):
 
-- `update --check` is read-only. It reports current/target versions,
-  install method, whether a binary/package update is available, whether Skill
-  sync is needed or supported, and signature/checksum availability.
-- `update --dry-run` returns a preview with every local change: binary/package
-  update, Skill directory sync, signature/checksum verification, and the
-  `confirm_token`.
-- `update --confirm <token>` performs the update. It must verify release
-  integrity before replacing files or running a package manager update.
-- If update succeeds, return `previous_version`, `current_version`,
-  `skill_sync_status`, and enough verification metadata for the agent to audit
-  what happened.
-- If binary/package update succeeds but Skill sync fails, return a non-success
-  or partial-success status with `skill_sync_command`; the agent must not use
-  newly documented behavior until the Skill sync has completed.
+- A bare `update` performs the whole update in ONE call: resolve the latest (or
+  `--target-version`) release, verify its integrity, replace the binary/package,
+  then sync the Skill directory. Self-update is a single-target, non-destructive,
+  self-verifying operation, so it is **exempt from the §7 `--dry-run → --confirm
+  <token>` write gate** — the safety guarantee is the in-process signature
+  verification below, not an agent's review of a preview. There are no `update`
+  leaf subcommands.
+- `update --check` is an OPTIONAL read-only probe: report current/target
+  versions, install method, whether an update is available, whether Skill sync is
+  supported, and signature/checksum availability. It changes nothing.
+- `update --dry-run` is an OPTIONAL read-only preview of the same changes
+  (binary/package update, Skill sync, verification plan). It issues NO token and
+  is never a required step before `update`.
+- `update` is idempotent: when already on the latest (or requested) version it
+  returns `ok` with a no-op result, so an agent may call it freely.
+- On success, `data` carries `previous_version`, `current_version`,
+  `signature_verified`, `signature_status`, `skill_sync_status`, and enough
+  verification metadata for the agent to audit what happened.
+- If the binary/package updates but Skill sync fails, return partial success
+  (`ok: false`, `binary_replaced: true`) with `skill_sync_command`; the agent
+  must not use newly documented behavior until the Skill sync has completed.
 
 Version notification contract:
 
@@ -695,9 +706,63 @@ Release verification baseline:
   Sigstore verification actually ran and succeeded). Never imply checksum
   verification is a signature.
 
-- After `update --confirm <token>` succeeds, return `previous_version` and `current_version` in `data`.
+- After `update` succeeds, return `previous_version` and `current_version` in `data`.
 - Also hint in the result: `run "changelog --since <previous_version>" to see what changed`.
 - Agent convention: after self-update, before continuing, read `changelog --since <old version>` (see the SKILL-SPEC recipe).
+
+Failure and interruption contract:
+
+Single-command `update` runs as staged work — discover → download → verify
+signature → verify checksum → replace binary → sync Skill — with exactly one
+atomic commit point. The invariant that makes every failure message honest:
+
+- Everything BEFORE the binary swap touches only a temp dir; any failure or
+  interruption there leaves the installed binary untouched and fully usable
+  (`current_version` unchanged, `binary_replaced: false`).
+- The swap itself is atomic (verify in temp → same-filesystem rename; on Windows
+  stage `<bin>.new` + replace-on-restart, and a later `update` cleans any stale
+  staged file and re-verifies from scratch — a leftover temp artifact is never
+  trusted). A crash mid-swap leaves either the old or the new binary, never a
+  hybrid.
+- Skill sync runs AFTER the swap and is independently replayable.
+
+So the tool can always determine — and MUST always report — its post-failure
+state. Every update failure envelope carries, in `error.details` (or `data` on
+partial success): `stage`
+(`discover|download|verify_signature|verify_checksum|replace|skill_sync`),
+`current_version`, `binary_replaced`, and `skill_sync_status`.
+
+Classify the failure by the agent's next action, not by the raw cause:
+
+| Stage | Failure | code / exit | retryable | Post-state | Message must say |
+|-------|---------|-------------|-----------|------------|------------------|
+| discover / download | network / timeout / rate-limit | `E_NETWORK` / `E_TIMEOUT` / `E_RATE_LIMITED` → 7,8 | true | old version, no change | "transient — re-run `update`, it is idempotent" |
+| verify_signature / verify_checksum | missing/invalid signature, identity mismatch, checksum mismatch | `E_INTEGRITY` → 1 | **false** | old version, install refused | "integrity failure — do NOT retry, stop and report" |
+| replace | permission / disk full / file locked | `E_FORBIDDEN` / `E_CONFIG` / `E_IO` → 4,1 | false (needs fix) | old version (atomic not committed) | the concrete fix, then re-run |
+| skill_sync (post-swap) | npx missing / network | partial success (`ok:false`, `binary_replaced:true`) | true | binary NEW, Skill OLD | "binary at vX; run `<skill_sync_command>`, then `changelog --since <prev>`" |
+| any | user/signal interrupt (SIGINT) | `E_INTERRUPTED` → 130 | true | per the stage invariant above | what actually happened + the safe next step |
+
+Interruption (Ctrl-C / SIGTERM):
+
+- Trap the signal, unwind the current stage to a clean state, and STILL emit the
+  terminal JSON envelope on stdout before exiting non-zero — an interrupted agent
+  must receive a parseable terminal state, never a bare killed process.
+- Always clean the temp dir on interrupt; a partial download must never be
+  trusted by a later run (re-download + re-verify always).
+- The message depends on the interrupted stage: before the swap → "cancelled, no
+  change, still on `<current>`"; during the atomic swap → report old-or-new
+  truthfully; after the swap during Skill sync → partial success with
+  `skill_sync_command`.
+
+Three rules the messages must never break:
+
+1. Never misstate the version: every terminal envelope states the version the
+   tool is actually running now.
+2. Never let an agent retry an integrity failure: `E_INTEGRITY` is
+   `retryable: false` and verbally distinct from any network failure — a forged
+   release is not a transient blip to loop on.
+3. Never call a partial a success: binary replaced but Skill not synced is
+   partial success with `skill_sync_command`, not `ok: true`.
 
 ## 15. Batch operations
 
@@ -899,10 +964,12 @@ These three patterns are **not for everyone**: implement them if your tool needs
 - [ ] Provides `changelog [--since]`, same source as CHANGELOG/release-notes
 - [ ] Tool reports its own version (`--version` and `context.version`)
 - [ ] `reference` reports `release_readiness`, and `doctor` checks it
-- [ ] (with self-update) `update --check` / `--dry-run` / `--confirm` are implemented
+- [ ] (with self-update) `update` is a single command (no leaf subcommands, no confirm token); `--check` / `--dry-run` are optional read-only
 - [ ] (with self-update) release integrity is verified, and signature status is explicit
 - [ ] (with self-update) whole Skill directory sync is part of the update result
 - [ ] (with self-update) post-update returns previous/current version and hints to read changelog
+- [ ] (with self-update) every update failure/interruption envelope carries `stage` + `current_version` + `binary_replaced` + `skill_sync_status`; `E_INTEGRITY` is non-retryable; binary-replaced-but-Skill-unsynced is partial success, not `ok`
+- [ ] (with self-update) SIGINT/SIGTERM is trapped, leaves nothing half-applied, and still emits the terminal JSON envelope
 - [ ] Query commands support `fields` / `compact`
 - [ ] List commands support pagination or explicitly state none is needed
 - [ ] Batch commands take plural inputs (`--ids`/`--symbols`/…), comma-separated or repeatable, single value degrades

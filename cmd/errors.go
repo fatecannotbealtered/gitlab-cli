@@ -36,6 +36,19 @@ func failWithCode(msg string, exit int, code output.ErrorCode) error {
 	return ErrSilent
 }
 
+// failWithDetails reports an error with a custom exit code, error code, and
+// structured details merged into error.details (used by update to carry the
+// stage invariant: stage, current_version, binary_replaced, skill_sync_status).
+func failWithDetails(msg string, exit int, code output.ErrorCode, details map[string]any) error {
+	if jsonMode {
+		output.PrintErrorJSONWithDetails(msg, 0, code, details)
+	} else {
+		output.Error(msg)
+	}
+	setExitCode(exit)
+	return ErrSilent
+}
+
 func emitError(msg string, exit int, code output.ErrorCode) {
 	if jsonMode {
 		output.PrintErrorJSONWithCode(msg, 0, code)

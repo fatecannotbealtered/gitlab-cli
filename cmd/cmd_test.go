@@ -182,6 +182,17 @@ func TestErrorCodeFromStatus_AllMapped(t *testing.T) {
 	}
 }
 
+// TestUpdateExitConstants pins the new error-code exit mapping: E_IO -> 1 and
+// E_INTERRUPTED -> 130, per CLI-SPEC §6.
+func TestUpdateExitConstants(t *testing.T) {
+	if ExitIO != 1 {
+		t.Errorf("ExitIO = %d, want 1", ExitIO)
+	}
+	if ExitInterrupted != 130 {
+		t.Errorf("ExitInterrupted = %d, want 130", ExitInterrupted)
+	}
+}
+
 func TestValidateOutputPath_RejectsDotDot(t *testing.T) {
 	if err := validateOutputPath("../etc/passwd"); err == nil {
 		t.Error("expected error for path with .., got nil")

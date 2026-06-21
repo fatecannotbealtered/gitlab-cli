@@ -141,6 +141,8 @@ const (
 	ErrTimeout         ErrorCode = "E_TIMEOUT"
 	ErrNetwork         ErrorCode = "E_NETWORK"
 	ErrIntegrity       ErrorCode = "E_INTEGRITY"
+	ErrIO              ErrorCode = "E_IO"
+	ErrInterrupted     ErrorCode = "E_INTERRUPTED"
 	ErrUnknown         ErrorCode = "E_UNKNOWN"
 )
 
@@ -197,6 +199,10 @@ func HintForErrorCode(code ErrorCode) string {
 		return "Check host URL and network connectivity"
 	case ErrIntegrity:
 		return "Release integrity verification failed (signature or checksum); do not retry. Re-run update to fetch the current release, or report a possible supply-chain issue"
+	case ErrIO:
+		return "Local filesystem failure (disk space, file locked, or partial write); fix the environment, then re-run"
+	case ErrInterrupted:
+		return "Operation cancelled by signal; staged work left nothing half-applied. Re-run update, it is idempotent"
 	default:
 		return ""
 	}
@@ -204,7 +210,7 @@ func HintForErrorCode(code ErrorCode) string {
 
 func RetryableErrorCode(code ErrorCode) bool {
 	switch code {
-	case ErrRateLimit, ErrServer, ErrNetwork, ErrTimeout:
+	case ErrRateLimit, ErrServer, ErrNetwork, ErrTimeout, ErrInterrupted:
 		return true
 	default:
 		return false
@@ -218,16 +224,26 @@ func PrintErrorJSON(msg string, statusCode int) {
 	if statusCode == 0 {
 		code = ErrUnknown
 	}
-	emitErrorPayload(msg, statusCode, code)
+	emitErrorPayload(msg, statusCode, code, nil)
 }
 
 // PrintErrorJSONWithCode outputs an error envelope with an explicit error code.
 func PrintErrorJSONWithCode(msg string, statusCode int, code ErrorCode) {
-	emitErrorPayload(msg, statusCode, code)
+	emitErrorPayload(msg, statusCode, code, nil)
 }
 
-func emitErrorPayload(msg string, statusCode int, code ErrorCode) {
+// PrintErrorJSONWithDetails outputs an error envelope with an explicit error
+// code and extra structured details merged into error.details (e.g. the update
+// stage invariant: stage, current_version, binary_replaced, skill_sync_status).
+func PrintErrorJSONWithDetails(msg string, statusCode int, code ErrorCode, details map[string]any) {
+	emitErrorPayload(msg, statusCode, code, details)
+}
+
+func emitErrorPayload(msg string, statusCode int, code ErrorCode, extra map[string]any) {
 	payload := ErrorEnvelope(msg, statusCode, code)
+	for k, v := range extra {
+		payload.Error.Details[k] = v
+	}
 	if hint := HintForErrorCode(code); hint != "" {
 		payload.Error.Details["hint"] = hint
 	}

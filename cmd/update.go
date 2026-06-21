@@ -34,16 +34,20 @@ const (
 var updateCmd = &cobra.Command{
 	Use:   "update",
 	Short: "Update gitlab-cli to the latest release",
-	Long: `Check GitHub Releases for a newer gitlab-cli binary and install it.
+	Long: `Update gitlab-cli to the latest release in a single command.
 
-The update flow downloads the platform archive and checksums.txt, verifies the
-Sigstore signature on checksums.txt in-process against this repo's tagged
-release workflow identity, verifies the archive SHA256, extracts the gitlab-cli
-binary, and replaces the current binary. An unsigned or unverifiable release is
-refused; there is no skip path.
+A bare "gitlab-cli update" performs the whole self-update in one call: resolve
+the latest (or --target-version) release, download the platform archive and
+checksums.txt, verify the Sigstore signature on checksums.txt in-process against
+this repo's tagged release workflow identity, verify the archive SHA256, replace
+the current binary, then sync the bundled Agent Skill directory. An unsigned or
+unverifiable release is refused; there is no skip path.
 
-Use --check to inspect availability without installing. Writes require
---dry-run first, then --confirm <confirm_token> in non-interactive agent runs.`,
+Self-update is exempt from the --dry-run/--confirm write gate: it needs no
+confirm token. --check is an optional read-only availability probe and --dry-run
+is an optional read-only preview of the plan; neither changes state and neither
+issues a token. update is idempotent: when already on the target version it
+returns ok with a no-op result.`,
 	Args: cobra.NoArgs,
 	RunE: runUpdate,
 }
@@ -93,8 +97,6 @@ func init() {
 	updateCmd.Flags().Bool("check", false, "Check for an available update without installing")
 	updateCmd.Flags().String("target-version", "", "Install a specific version (for example 1.2.3 or v1.2.3)")
 	updateCmd.Flags().Bool("reinstall", false, "Install even when the target version matches the current version")
-	markWrite(updateCmd)
-	markConfirm(updateCmd)
 	markRiskLevel(updateCmd, "medium")
 }
 
@@ -131,87 +133,108 @@ func runUpdate(cmd *cobra.Command, _ []string) error {
 
 	installNeeded := reinstall || plan.UpdateAvailable || targetVersionDiffers(plan, targetVersion)
 	if !installNeeded {
+		// Idempotent: already on the target version is a no-op success.
 		printUpdateResult(result)
 		return nil
 	}
 
-	confirmPayload := map[string]any{
-		"currentVersion":     plan.CurrentVersion,
-		"targetVersion":      plan.TargetVersion,
-		"assetName":          plan.AssetName,
-		"assetURL":           plan.AssetURL,
-		"checksumURL":        plan.ChecksumURL,
-		"signatureBundleURL": plan.SignatureBundleURL,
-		"reinstall":          reinstall,
-		"skillSyncCommand":   plan.SkillSyncCommand,
-	}
 	if dryRun {
-		confirmToken, expires := newConfirmToken("update gitlab-cli", confirmPayload)
+		// Optional read-only preview: no confirm_token, no expires_at — update is
+		// not a write gate. Just describe the staged plan.
 		result["status"] = "dry_run"
 		result["preview"] = map[string]any{
 			"action": "update gitlab-cli",
+			"stages": []string{"discover", "download", "verify_signature", "verify_checksum", "replace", "skill_sync"},
 			"changes": []map[string]any{
-				confirmPayload,
+				{
+					"action":         "replace binary",
+					"currentVersion": plan.CurrentVersion,
+					"targetVersion":  plan.TargetVersion,
+					"asset":          plan.AssetName,
+				},
 				{"action": "sync skill directory", "command": plan.SkillSyncCommand},
 			},
 		}
-		result["confirm_token"] = confirmToken
-		result["expires_at"] = expires.Format(time.RFC3339)
 		printUpdateResult(result)
 		return nil
 	}
 
-	if err := requireConfirm(cmd, "update gitlab-cli", confirmPayload); err != nil {
-		return err
-	}
+	return runUpdateInstall(cmd, plan)
+}
+
+// runUpdateInstall performs the staged self-update: discover (already done) ->
+// download -> verify_signature -> verify_checksum -> replace -> skill_sync. Every
+// failure carries the stage invariant (stage, current_version, binary_replaced,
+// skill_sync_status) so an agent always knows the post-failure state.
+func runUpdateInstall(cmd *cobra.Command, plan updatePlan) error {
+	ctx := cmd.Context()
 
 	exe, err := updateExecutable()
 	if err != nil {
-		return failWithCode("resolving current executable: "+err.Error(), ExitNetwork, output.ErrNetwork)
+		return failUpdateStage("replace", plan, false, "resolving current executable: "+err.Error(), ExitIO, output.ErrIO)
 	}
 
 	tmpDir, err := os.MkdirTemp("", "gitlab-cli-update-*")
 	if err != nil {
-		return failWithCode("creating temp dir: "+err.Error(), ExitNetwork, output.ErrNetwork)
+		return failUpdateStage("replace", plan, false, "creating temp dir: "+err.Error(), ExitIO, output.ErrIO)
 	}
+	// Always clean the temp dir, including on interrupt: a partial download must
+	// never be trusted by a later run.
 	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	archivePath := filepath.Join(tmpDir, plan.AssetName)
-	if err := downloadUpdateFile(cmd.Context(), plan.AssetURL, archivePath); err != nil {
-		return failWithCode("downloading archive: "+err.Error(), ExitNetwork, output.ErrNetwork)
+	if err := downloadUpdateFile(ctx, plan.AssetURL, archivePath); err != nil {
+		return failUpdateNetwork(ctx, "download", plan, false, "downloading archive: "+err.Error())
 	}
 
 	checksumPath := filepath.Join(tmpDir, "checksums.txt")
-	if err := downloadUpdateFile(cmd.Context(), plan.ChecksumURL, checksumPath); err != nil {
-		return failWithCode("downloading checksums: "+err.Error(), ExitNetwork, output.ErrNetwork)
+	if err := downloadUpdateFile(ctx, plan.ChecksumURL, checksumPath); err != nil {
+		return failUpdateNetwork(ctx, "download", plan, false, "downloading checksums: "+err.Error())
 	}
-	signatureStatus, err := verifyUpdateChecksumSignature(cmd.Context(), checksumPath, plan.SignatureBundleURL, tmpDir)
+
+	signatureStatus, err := verifyUpdateChecksumSignature(ctx, checksumPath, plan.SignatureBundleURL, tmpDir)
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return failUpdateInterrupted("verify_signature", plan, false)
+		}
 		// Integrity failure is non-retryable: a missing or invalid signature is
 		// a supply-chain red flag, not a transient blip an agent should retry.
-		return failWithCode("verifying release signature: "+err.Error(), ExitError, output.ErrIntegrity)
+		return failUpdateStage("verify_signature", plan, false, "verifying release signature: "+err.Error(), ExitError, output.ErrIntegrity)
 	}
 	if err := verifyUpdateChecksum(archivePath, checksumPath, plan.AssetName); err != nil {
-		return failWithCode("verifying archive: "+err.Error(), ExitError, output.ErrIntegrity)
+		return failUpdateStage("verify_checksum", plan, false, "verifying archive: "+err.Error(), ExitError, output.ErrIntegrity)
+	}
+
+	if err := ctx.Err(); err != nil {
+		return failUpdateInterrupted("verify_checksum", plan, false)
 	}
 
 	binPath, err := extractUpdateArchive(archivePath, plan.AssetName, tmpDir)
 	if err != nil {
-		return failWithCode("extracting archive: "+err.Error(), ExitNetwork, output.ErrNetwork)
+		// Local extraction failure is a filesystem problem, not a network blip.
+		return failUpdateStage("replace", plan, false, "extracting archive: "+err.Error(), ExitIO, output.ErrIO)
 	}
 
 	applied, err := updateApply(binPath, exe)
 	if err != nil {
-		return failWithCode("installing update: "+err.Error(), ExitNetwork, output.ErrNetwork)
-	}
-	if err := updateSkillSync(cmd.Context(), updateSkillRepo); err != nil {
-		return failWithCode("syncing skill directory: "+err.Error(), ExitNetwork, output.ErrNetwork)
+		exit, code := classifyReplaceError(err)
+		return failUpdateStage("replace", plan, false, "installing update: "+err.Error(), exit, code)
 	}
 
-	result = updateResultMap(plan, applied.Status)
+	// Binary is committed from here on. A skill_sync failure is PARTIAL SUCCESS,
+	// never a hard error that loses the fact the binary already updated.
+	if err := updateSkillSync(ctx, updateSkillRepo); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return emitUpdatePartialSuccess(plan, applied, signatureStatus, "interrupted", "syncing skill directory interrupted: "+err.Error())
+		}
+		return emitUpdatePartialSuccess(plan, applied, signatureStatus, "failed", "syncing skill directory: "+err.Error())
+	}
+
+	result := updateResultMap(plan, applied.Status)
 	result["path"] = applied.Path
 	result["previous_version"] = plan.CurrentVersion
 	result["current_version"] = plan.TargetVersion
+	result["binary_replaced"] = true
 	result["checksum_verified"] = true
 	result["signature_status"] = signatureStatus
 	if signatureStatus == "verified" {
@@ -224,6 +247,80 @@ func runUpdate(cmd *cobra.Command, _ []string) error {
 	}
 	printUpdateResult(result)
 	return nil
+}
+
+// updateStageDetails builds the stage invariant block carried by every update
+// failure envelope: stage, current_version, binary_replaced, skill_sync_status.
+func updateStageDetails(stage string, plan updatePlan, binaryReplaced bool, skillSyncStatus string) map[string]any {
+	current := plan.CurrentVersion
+	if binaryReplaced {
+		current = plan.TargetVersion
+	}
+	return map[string]any{
+		"stage":             stage,
+		"current_version":   normalizeVersion(current),
+		"binary_replaced":   binaryReplaced,
+		"skill_sync_status": skillSyncStatus,
+	}
+}
+
+func failUpdateStage(stage string, plan updatePlan, binaryReplaced bool, msg string, exit int, code output.ErrorCode) error {
+	return failWithDetails(msg, exit, code, updateStageDetails(stage, plan, binaryReplaced, "not_run"))
+}
+
+// failUpdateNetwork maps a download-stage failure onto the transient taxonomy,
+// or onto E_INTERRUPTED when the context was cancelled by a signal.
+func failUpdateNetwork(ctx context.Context, stage string, plan updatePlan, binaryReplaced bool, msg string) error {
+	if ctx.Err() != nil {
+		return failUpdateInterrupted(stage, plan, binaryReplaced)
+	}
+	code, exit := classifyUpdateNetworkError(msg)
+	return failWithDetails(msg, exit, code, updateStageDetails(stage, plan, binaryReplaced, "not_run"))
+}
+
+// failUpdateInterrupted emits the terminal E_INTERRUPTED envelope (exit 130) for
+// a signal cancellation before the binary swap: no change, still on current.
+func failUpdateInterrupted(stage string, plan updatePlan, binaryReplaced bool) error {
+	msg := fmt.Sprintf("update cancelled by signal during %s: no change, still on %s", stage, normalizeVersion(plan.CurrentVersion))
+	return failWithDetails(msg, ExitInterrupted, output.ErrInterrupted, updateStageDetails(stage, plan, binaryReplaced, "not_run"))
+}
+
+// emitUpdatePartialSuccess reports binary-replaced-but-skill-not-synced as
+// partial success (ok:false, binary_replaced:true) with skill_sync_command so the
+// agent knows it is on the new binary and just needs to run the sync.
+func emitUpdatePartialSuccess(plan updatePlan, applied updateApplyResult, signatureStatus, skillSyncStatus, msg string) error {
+	details := updateStageDetails("skill_sync", plan, true, skillSyncStatus)
+	details["skill_sync_command"] = plan.SkillSyncCommand
+	details["previous_version"] = normalizeVersion(plan.CurrentVersion)
+	details["signature_status"] = signatureStatus
+	details["binary_path"] = applied.Path
+	details["hint"] = fmt.Sprintf("binary at %s; run %q, then \"gitlab-cli changelog --since %s\"", normalizeVersion(plan.TargetVersion), plan.SkillSyncCommand, normalizeVersion(plan.CurrentVersion))
+	// Partial success is retryable: the agent re-runs the skill sync.
+	return failWithDetails(msg, ExitNetwork, output.ErrNetwork, details)
+}
+
+// classifyReplaceError maps a binary-replace local failure to the right code:
+// permission -> E_FORBIDDEN (exit 4), everything else (disk/io/lock) -> E_IO
+// (exit 1). These were historically misclassified as E_NETWORK.
+func classifyReplaceError(err error) (int, output.ErrorCode) {
+	if errors.Is(err, os.ErrPermission) {
+		return ExitForbidden, output.ErrForbidden
+	}
+	return ExitIO, output.ErrIO
+}
+
+// classifyUpdateNetworkError maps a discover/download failure onto the transient
+// taxonomy by the upstream signal where available (status code in the message),
+// defaulting to E_NETWORK.
+func classifyUpdateNetworkError(msg string) (output.ErrorCode, int) {
+	switch {
+	case strings.Contains(msg, "returned 429"):
+		return output.ErrRateLimit, ExitRateLimit
+	case strings.Contains(msg, "context deadline exceeded"), strings.Contains(msg, "Timeout"), strings.Contains(msg, "timeout"):
+		return output.ErrTimeout, ExitTimeout
+	default:
+		return output.ErrNetwork, ExitNetwork
+	}
 }
 
 func updateSkillSyncCommand() string {
@@ -647,6 +744,7 @@ func updateResultMap(plan updatePlan, status string) map[string]any {
 		"signature_status":   "not_checked",
 		"skill_sync_command": plan.SkillSyncCommand,
 		"skill_sync_status":  "not_run",
+		"binary_replaced":    false,
 	}
 }
 

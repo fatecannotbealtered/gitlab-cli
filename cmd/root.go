@@ -19,19 +19,21 @@ import (
 
 // Exit codes for machine-readable error classification.
 const (
-	ExitOK        = 0
-	ExitError     = 1
-	ExitBadArgs   = 2
-	ExitNotFound  = 3
-	ExitAuth      = 4
-	ExitForbidden = 4
-	ExitConfirm   = 5
-	ExitCancelled = 5
-	ExitConflict  = 6
-	ExitRateLimit = 7
-	ExitNetwork   = 7
-	ExitTimeout   = 8
-	ExitCIFailed  = 6 // pipeline/job wait finished in a non-success terminal state
+	ExitOK          = 0
+	ExitError       = 1
+	ExitBadArgs     = 2
+	ExitNotFound    = 3
+	ExitAuth        = 4
+	ExitForbidden   = 4
+	ExitConfirm     = 5
+	ExitCancelled   = 5
+	ExitConflict    = 6
+	ExitRateLimit   = 7
+	ExitNetwork     = 7
+	ExitTimeout     = 8
+	ExitCIFailed    = 6   // pipeline/job wait finished in a non-success terminal state
+	ExitIO          = 1   // local filesystem failure (disk, file lock, partial write)
+	ExitInterrupted = 130 // cancelled by signal (SIGINT = 128 + 2)
 )
 
 // ErrSilent indicates the error has been printed; cobra should not print again.

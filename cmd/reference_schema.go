@@ -112,7 +112,7 @@ func referenceSchemas() map[string]referenceDataSchema {
 		"doctor":    {Shape: "object", Fields: []string{"checks", "notices", "version", "skill_min_version", "risk_tier", "configExists", "authValid", "latencyMs", "host", "username", "name", "error"}},
 		"changelog": {Shape: "object", Fields: []string{"current_version", "since", "entries"}},
 		"reference": {Shape: "object", Fields: []string{"schema_version", "tool", "version", "riskTier", "blastRadius", "release_readiness", "security", "globalFlags", "exitCodes", "commands", "schemas"}},
-		"update":    {Shape: "object", Fields: []string{"status", "current_version", "target_version", "update_available", "release_url", "asset", "signature_status", "skill_sync_command", "skill_sync_status", "preview", "confirm_token", "expires_at", "path", "previous_version", "checksum_verified", "signature_verified", "hint", "pending_path", "downgrade", "notices"}},
+		"update":    {Shape: "object", Fields: []string{"status", "current_version", "target_version", "update_available", "release_url", "asset", "signature_status", "skill_sync_command", "skill_sync_status", "binary_replaced", "preview", "path", "previous_version", "checksum_verified", "signature_verified", "hint", "pending_path", "downgrade", "notices"}},
 	}
 }
 
@@ -268,7 +268,7 @@ var commandExamples = map[string][]string{
 	"context":             {"gitlab-cli context --compact"},
 	"doctor":              {"gitlab-cli doctor --compact"},
 	"reference":           {"gitlab-cli reference --compact"},
-	"update":              {"gitlab-cli update --dry-run --compact", "gitlab-cli update --confirm <confirm_token> --compact"},
+	"update":              {"gitlab-cli update --compact", "gitlab-cli update --check --compact", "gitlab-cli update --dry-run --compact"},
 
 	"issue assign":         {"gitlab-cli issue assign 42 alice --dry-run --compact", "gitlab-cli issue assign 42 alice --confirm <confirm_token> --compact"},
 	"issue bulk assign":    {"gitlab-cli issue bulk assign alice --project group/repo --ids 1,2,3 --dry-run --compact", "gitlab-cli issue bulk assign alice --project group/repo --ids 1,2,3 --confirm <confirm_token> --compact"},
