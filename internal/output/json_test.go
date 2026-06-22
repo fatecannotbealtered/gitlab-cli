@@ -369,6 +369,45 @@ func TestEmitErrorPayload_Fallback(t *testing.T) {
 	}
 }
 
+// TestMetaNotices_FromProvider asserts meta.notices is attached (from the
+// cache-backed provider hook) on an arbitrary success/error envelope when the
+// provider returns a notice, and is omitted when it returns nothing or is nil.
+// The provider must perform no network I/O — here it is a pure in-memory stub.
+func TestMetaNotices_FromProvider(t *testing.T) {
+	orig := UpdateNoticesProvider
+	defer func() { UpdateNoticesProvider = orig }()
+
+	notice := map[string]any{"type": "update_available", "severity": "warning"}
+
+	// Present: provider yields a notice -> meta.notices on success and error.
+	UpdateNoticesProvider = func() []any { return []any{notice} }
+	for _, env := range []Envelope{SuccessEnvelope(map[string]any{"a": 1}), ErrorEnvelope("boom", 404, ErrNotFound)} {
+		if len(env.Meta.Notices) != 1 {
+			t.Fatalf("expected 1 notice, got %d", len(env.Meta.Notices))
+		}
+	}
+	data, err := json.Marshal(SuccessEnvelope(map[string]any{"a": 1}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"notices"`) || !strings.Contains(string(data), `"severity":"warning"`) {
+		t.Errorf("expected notices in meta: %s", data)
+	}
+
+	// Absent (empty cache): provider yields nothing -> meta.notices omitted.
+	UpdateNoticesProvider = func() []any { return nil }
+	data, _ = json.Marshal(SuccessEnvelope(map[string]any{"a": 1}))
+	if strings.Contains(string(data), `"notices"`) {
+		t.Errorf("empty cache should omit notices: %s", data)
+	}
+
+	// Nil hook (default): meta.notices omitted.
+	UpdateNoticesProvider = nil
+	if env := SuccessEnvelope(nil); env.Meta.Notices != nil {
+		t.Errorf("nil provider should yield nil notices, got %v", env.Meta.Notices)
+	}
+}
+
 func TestPrintJSON_Compact(t *testing.T) {
 	orig := Compact
 	defer func() { Compact = orig }()

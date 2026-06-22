@@ -179,6 +179,13 @@ func init() {
 	initConfirmFlag()
 	installUpdateNoticeHelp(rootCmd)
 
+	// Attach the cached update-available notice to every command's meta.notices
+	// (CLI-SPEC §3, §14), read-only from the local cache (no network). The hook
+	// lives in internal/output so the output layer never imports cmd.
+	output.UpdateNoticesProvider = func() []any {
+		return noticesAsAny(readCachedUpdateNotices())
+	}
+
 	cobra.OnInitialize(func() {
 		output.Quiet = quietMode
 		output.Compact = compactJSON

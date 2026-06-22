@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	rootchangelog "github.com/fatecannotbealtered/gitlab-cli"
 	"github.com/spf13/cobra"
 )
 
@@ -81,7 +82,7 @@ func updateNoticesFromPlan(plan updatePlan, source string) []updateNotice {
 	}
 	notice := updateNotice{
 		Type:               "update_available",
-		Severity:           "info",
+		Severity:           updateNoticeSeverity(current, latest),
 		CurrentVersion:     current,
 		LatestVersion:      latest,
 		UpdateAvailable:    true,
@@ -98,6 +99,60 @@ func updateNoticesFromPlan(plan updatePlan, source string) []updateNotice {
 	}
 	notice.Message = fmt.Sprintf("gitlab-cli %s is available (current %s)", latest, current)
 	return []updateNotice{notice}
+}
+
+// updateNoticeSeverity grades the update notice from the embedded CHANGELOG delta
+// between the running version and the latest (CLI-SPEC §14): "warning" when the
+// delta since current contains a security entry OR latest crosses a major version
+// boundary; "info" otherwise. ("critical" is reserved and never emitted here.)
+func updateNoticeSeverity(current, latest string) string {
+	return severityFromChangelog(rootchangelog.ChangelogMarkdown, current, latest)
+}
+
+// severityFromChangelog computes the notice severity from a CHANGELOG body, the
+// running version, and the latest version, per the §14 rule. Split out from
+// updateNoticeSeverity so the delta logic is testable with synthetic changelogs.
+func severityFromChangelog(markdown, current, latest string) string {
+	if majorBump(current, latest) || deltaHasSecurityEntry(markdown, current) {
+		return "warning"
+	}
+	return "info"
+}
+
+// majorBump reports whether latest's major version is greater than current's.
+func majorBump(current, latest string) bool {
+	c, cOK := parseSemver(current)
+	l, lOK := parseSemver(latest)
+	if !cOK || !lOK {
+		return false
+	}
+	return l.nums[0] > c.nums[0]
+}
+
+// deltaHasSecurityEntry reports whether any CHANGELOG version newer than current
+// carries a non-empty `security` category.
+func deltaHasSecurityEntry(markdown, current string) bool {
+	entries := filterChangelogSince(parseChangelog(markdown), current)
+	for _, entry := range entries {
+		if len(entry.Changes["security"]) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// noticesAsAny adapts the cached update notices to []any for the output layer's
+// UpdateNoticesProvider hook (which is cmd-agnostic to avoid an import cycle).
+// Returns nil when there is nothing to report so meta.notices is omitted.
+func noticesAsAny(notices []updateNotice) []any {
+	if len(notices) == 0 {
+		return nil
+	}
+	out := make([]any, 0, len(notices))
+	for _, n := range notices {
+		out = append(out, n)
+	}
+	return out
 }
 
 func readCachedUpdateNotices() []updateNotice {
@@ -171,7 +226,15 @@ func updateNoticeDisabled() bool {
 	return value == "1" || value == "true" || value == "yes"
 }
 
+// updateNoticeTestForceEnabled lets the cache-path tests exercise the real
+// read/write cache (otherwise auto-disabled under the .test binary). Production
+// code never sets it.
+var updateNoticeTestForceEnabled bool
+
 func updateNoticeAutoDisabled() bool {
+	if updateNoticeTestForceEnabled {
+		return updateNoticeDisabled()
+	}
 	return updateNoticeDisabled() || strings.HasSuffix(os.Args[0], ".test")
 }
 

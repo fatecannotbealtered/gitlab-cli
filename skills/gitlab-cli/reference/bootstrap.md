@@ -53,13 +53,11 @@ Check `data.authValid: true` and the `version` check before bulk automation. If 
 ## Update CLI
 
 ```bash
-gitlab-cli update --check --compact
-gitlab-cli update --dry-run --compact
-gitlab-cli update --confirm <confirm_token> --compact
+gitlab-cli update --compact
 gitlab-cli changelog --since <previous_version> --compact
 ```
 
-`update --dry-run` returns `data.confirm_token`. `update` downloads GitHub Release assets, verifies the signed `checksums.txt` when possible, verifies the archive checksum, then replaces the current binary. After a successful update, confirm `skill_sync_status`, review signature/checksum status, and read `changelog --since <previous_version>` before continuing. On Windows, replacement may be scheduled for after the current process exits.
+A bare `gitlab-cli update` performs the whole self-update in one call (no confirm token): it downloads the GitHub Release assets, verifies the signed `checksums.txt` then the archive checksum, replaces the current binary, and syncs the Skill. `--check` and `--dry-run` are optional read-only probes that change nothing and issue NO token. After a successful update, confirm `skill_sync_status` (or run the returned `skill_sync_command`), review signature/checksum status, and read `changelog --since <previous_version>` before continuing. On Windows, replacement may be scheduled for after the current process exits.
 
 ## Self-description
 

@@ -15,6 +15,27 @@ var Compact bool
 // The cmd package sets this hook; package-level tests and helper use default to 0.
 var DurationMS func() int64
 
+// UpdateNoticesProvider returns the cached update-available notices to attach to
+// every response's meta.notices (CLI-SPEC §3, §14). The cmd package wires this
+// hook to a read-only, TTL-bounded local cache reader; it must perform NO network
+// I/O. When nil (e.g. in package-level tests) or when it returns an empty slice,
+// meta.notices is omitted. This lives behind a func pointer so internal/output
+// does not import cmd (which would create an import cycle).
+var UpdateNoticesProvider func() []any
+
+// cachedNotices invokes the provider hook if set, returning the cached notices to
+// attach to meta. A nil hook or empty result yields nil so meta.notices is omitted.
+func cachedNotices() []any {
+	if UpdateNoticesProvider == nil {
+		return nil
+	}
+	notices := UpdateNoticesProvider()
+	if len(notices) == 0 {
+		return nil
+	}
+	return notices
+}
+
 // marshalJSON encodes v according to the global Compact setting.
 func marshalJSON(v any) ([]byte, error) {
 	if Compact {
@@ -28,6 +49,10 @@ var emitJSONMarshal = marshalJSON
 
 type Meta struct {
 	DurationMS int64 `json:"duration_ms"`
+	// Notices carries the cached update-available notice (CLI-SPEC §3, §14),
+	// read only from the local cache via UpdateNoticesProvider. omitempty: present
+	// only when the cache currently holds an available-update notice.
+	Notices []any `json:"notices,omitempty"`
 }
 
 type Envelope struct {
@@ -59,7 +84,7 @@ func SuccessEnvelope(v any) Envelope {
 		OK:            true,
 		SchemaVersion: SchemaVersion,
 		Data:          v,
-		Meta:          Meta{DurationMS: commandDurationMS()},
+		Meta:          Meta{DurationMS: commandDurationMS(), Notices: cachedNotices()},
 	}
 }
 
@@ -71,7 +96,7 @@ func ErrorEnvelope(msg string, statusCode int, code ErrorCode) Envelope {
 	return Envelope{
 		OK:            false,
 		SchemaVersion: SchemaVersion,
-		Meta:          Meta{DurationMS: commandDurationMS()},
+		Meta:          Meta{DurationMS: commandDurationMS(), Notices: cachedNotices()},
 		Error: &EnvelopeError{
 			Code:      code,
 			Message:   msg,

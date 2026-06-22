@@ -1,10 +1,10 @@
 ---
 name: gitlab-cli
-version: "1.2.9"
+version: "1.2.10"
 description: GitLab CLI for AI Agents. JSON is the default; use --compact for token efficiency and --format text/raw only when needed. Read reference/*.md for the module you need — do not load the whole skill upfront.
 license: MIT
 user-invocable: true
-metadata: {"requires":{"bins":["gitlab-cli"],"min_version":"1.2.9"}}
+metadata: {"requires":{"bins":["gitlab-cli"],"min_version":"1.2.10"}}
 ---
 
 # gitlab-cli
@@ -95,6 +95,8 @@ Check `ok` first. On failure:
 - Exit `130` / `E_INTERRUPTED`: cancelled by signal; staged work left nothing half-applied — re-run `update`, it is idempotent.
 
 `update` is a single command, no confirm token. A bare `gitlab-cli update` performs the whole self-update in one call (resolve latest or `--target-version` → verify signature → verify checksum → replace binary → sync Skill); it is exempt from the `--dry-run`/`--confirm` write gate. `update --check` is a read-only availability probe and `update --dry-run` is a read-only preview (no token). `update` is idempotent. Every failure carries `stage`, `current_version`, `binary_replaced`, and `skill_sync_status`; if the binary updated but Skill sync failed it is partial success (`ok:false`, `binary_replaced:true`) with `skill_sync_command` to run.
+
+The update-available notice also rides along on **any** command's `meta.notices` (read-only from the local cache, no network). When present it is severity-graded: `warning` when the changelog delta since the running version has a `security` entry or crosses a major version, otherwise `info`. It is absent when the cache has nothing to report; the active-check commands (`context` / `doctor` / `update --check`) still carry the fresh `data.notices` view.
 
 After `gitlab-cli update` succeeds, review signature/checksum status, ensure `skill_sync_status` is `synced`, then read the delta before continuing:
 
