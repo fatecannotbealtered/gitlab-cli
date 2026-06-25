@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.11] - 2026-06-25
+
+### Fixed
+
+- `update` discover/download failures are now classified by the **upstream HTTP status type** through the single `ErrorCodeFromStatus` mapping instead of being collapsed into `E_NETWORK` or sniffed out of the human-readable message (CLI-SPEC §6): a `404` is the non-retryable `E_NOT_FOUND` (exit 3), `429` → `E_RATE_LIMITED`, `5xx` → `E_SERVER`, transport errors stay `E_NETWORK`. The discover-stage failure now carries the same `stage`/`current_version`/`binary_replaced` invariant as the other stages.
+- The `verify_signature` stage now splits **transport vs integrity**: a failure *fetching* the Sigstore bundle is reported as a retryable network/HTTP failure (classified by status), while only a genuinely missing/invalid signature stays the non-retryable `E_INTEGRITY`. Previously any bundle-download blip was misreported as an integrity failure an agent must not retry. The TUF trust-root refresh in the in-process verifier is now bounded by a timeout and cancelled on `ctx` (SIGINT) rather than running on an unbounded `http.DefaultClient`.
+- A **TUF trust-root refresh** failure during `verify_signature` is now also classified as retryable network, not `E_INTEGRITY`. When the embedded-TUF metadata refresh fails because the Sigstore TUF registry is down/slow/DNS-unresolvable — the bounded 30s refresh timing out while the parent context is still alive, or the fetch returning a transport error — the verifier wraps it as a trust-root-unavailable network condition (`E_TIMEOUT` exit 8 for a deadline, `E_NETWORK` exit 7 for a transport error, `retryable:true`). Previously this transient network step collapsed into the non-retryable `E_INTEGRITY` (exit 1), telling an agent not to retry a forged-release verdict that had not actually occurred. Only a genuine signature/identity/checksum mismatch remains `E_INTEGRITY`.
+- `install_method` is now a **real probe** of the running executable's path (npm `node_modules`, Homebrew `Cellar`, `go install` GOPATH/bin, otherwise `binary`; overridable via `GITLAB_CLI_INSTALL_METHOD`). The field was previously declared but never assigned, so it was always omitted from update results and notices.
+- A successful self-update now **clears the cached `update_available` notice** immediately after the binary swap, so business commands stop nagging to update to the version that was just installed (the next active check rewrites the cache).
+
+### Changed
+
+- Windows self-update now performs the binary swap **in place atomically** via the same cross-platform rename trick used on Unix (write `.<base>.new` → rename the in-use binary to `.<base>.old` → rename `.new` into place → restore `.old` on failure → remove `.old` on success, ignoring a still-locked `.old` on Windows). The previous Windows path that wrote a `.cmd` shim and scheduled a replace-on-restart is gone: `update` now reports `status: "installed"` / `binary_replaced: true` immediately on every platform, and no longer emits the `pending_path` field or a `scheduled` status.
+
 ## [1.2.10] - 2026-06-22
 
 ### Added

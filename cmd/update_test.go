@@ -7,6 +7,7 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +16,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/sigstore/sigstore-go/pkg/root"
+	"github.com/sigstore/sigstore-go/pkg/tuf"
 )
 
 func resetUpdateTestState(t *testing.T) {
@@ -61,7 +65,7 @@ func resetUpdateTestState(t *testing.T) {
 	// the fail-closed path override this with an error-returning stub. A live
 	// OIDC-signed bundle cannot be produced in a unit test, so the seam stands
 	// in for the real verifier while the surrounding control flow is tested.
-	updateVerifySignature = func(_, _, _ string) error { return nil }
+	updateVerifySignature = func(context.Context, string, string, string) error { return nil }
 }
 
 // updateInstallArgsForTest returns the args for a bare single-command update.
@@ -337,7 +341,7 @@ func TestUpdate_SignatureVerificationFails_Refused(t *testing.T) {
 	srv := newUpdateTestServer(t, "1.2.3", []byte("new-binary"), "", true)
 	defer srv.Close()
 	// In-process verification rejects the bundle (wrong identity / tampered).
-	updateVerifySignature = func(_, _, _ string) error {
+	updateVerifySignature = func(context.Context, string, string, string) error {
 		return fmt.Errorf("signature verification failed: certificate identity mismatch")
 	}
 	updateApply = func(_, _ string) (updateApplyResult, error) {
@@ -381,6 +385,384 @@ func TestUpdate_MissingAsset(t *testing.T) {
 	if !strings.Contains(errOut, "does not include asset") {
 		t.Fatalf("expected missing asset error, got:\n%s", errOut)
 	}
+}
+
+// TestUpdate_Discover404_NotFound asserts a 404 on the release lookup is
+// classified as the non-retryable E_NOT_FOUND (exit 3) — not collapsed into a
+// retryable E_NETWORK — and carries the discover-stage invariant.
+func TestUpdate_Discover404_NotFound(t *testing.T) {
+	resetUpdateTestState(t)
+	version = "1.0.0"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
+	}))
+	defer srv.Close()
+	updateGitHubAPI = srv.URL
+	updateHTTPClient = srv.Client()
+
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	errOut := captureCombinedOutput(t, func() {
+		rootCmd.SetArgs([]string{"update", "--target-version", "9.9.9", "--json"})
+		_ = rootCmd.Execute()
+	})
+	if lastExit != ExitNotFound {
+		t.Fatalf("exit=%d want=%d\n%s", lastExit, ExitNotFound, errOut)
+	}
+	for _, want := range []string{"E_NOT_FOUND", `"retryable": false`, `"stage": "discover"`, `"binary_replaced": false`} {
+		if !strings.Contains(errOut, want) {
+			t.Fatalf("missing %q in 404 discover error:\n%s", want, errOut)
+		}
+	}
+}
+
+// TestUpdate_Discover429_RateLimited asserts a 429 maps to the retryable
+// E_RATE_LIMITED taxonomy (exit 7), distinct from a plain network failure.
+func TestUpdate_Discover429_RateLimited(t *testing.T) {
+	resetUpdateTestState(t)
+	version = "1.0.0"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, `{"message":"rate limited"}`, http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+	updateGitHubAPI = srv.URL
+	updateHTTPClient = srv.Client()
+
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	errOut := captureCombinedOutput(t, func() {
+		rootCmd.SetArgs([]string{"update", "--check", "--json"})
+		_ = rootCmd.Execute()
+	})
+	if lastExit != ExitRateLimit {
+		t.Fatalf("exit=%d want=%d\n%s", lastExit, ExitRateLimit, errOut)
+	}
+	for _, want := range []string{"E_RATE_LIMITED", `"retryable": true`, `"stage": "discover"`} {
+		if !strings.Contains(errOut, want) {
+			t.Fatalf("missing %q in 429 discover error:\n%s", want, errOut)
+		}
+	}
+}
+
+// TestUpdate_Discover5xx_Server asserts a 500 maps to the retryable E_SERVER
+// taxonomy (exit 7) rather than being collapsed into E_NETWORK by message text.
+func TestUpdate_Discover5xx_Server(t *testing.T) {
+	resetUpdateTestState(t)
+	version = "1.0.0"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, `{"message":"boom"}`, http.StatusBadGateway)
+	}))
+	defer srv.Close()
+	updateGitHubAPI = srv.URL
+	updateHTTPClient = srv.Client()
+
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	errOut := captureCombinedOutput(t, func() {
+		rootCmd.SetArgs([]string{"update", "--check", "--json"})
+		_ = rootCmd.Execute()
+	})
+	if lastExit != ExitNetwork {
+		t.Fatalf("exit=%d want=%d\n%s", lastExit, ExitNetwork, errOut)
+	}
+	for _, want := range []string{"E_SERVER", `"retryable": true`, `"stage": "discover"`} {
+		if !strings.Contains(errOut, want) {
+			t.Fatalf("missing %q in 5xx discover error:\n%s", want, errOut)
+		}
+	}
+}
+
+// TestUpdate_SignatureBundleDownloadFails_NetworkNotIntegrity asserts that a
+// transport failure fetching the Sigstore bundle is a retryable network failure,
+// NOT a non-retryable E_INTEGRITY. Integrity is reserved for an actually
+// missing/invalid signature, not a download blip.
+func TestUpdate_SignatureBundleDownloadFails_NetworkNotIntegrity(t *testing.T) {
+	resetUpdateTestState(t)
+	version = "1.0.0"
+	srv := newUpdateTestServerBundle404(t, "1.2.3", []byte("new-binary"))
+	defer srv.Close()
+	updateApply = func(_, _ string) (updateApplyResult, error) {
+		t.Fatal("bundle download failure must not install")
+		return updateApplyResult{}, nil
+	}
+
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	errOut := captureCombinedOutput(t, func() {
+		rootCmd.SetArgs([]string{"update", "--json"})
+		_ = rootCmd.Execute()
+	})
+	// 404 on the bundle asset maps through the status taxonomy to E_NOT_FOUND.
+	if lastExit != ExitNotFound {
+		t.Fatalf("exit=%d want=%d\n%s", lastExit, ExitNotFound, errOut)
+	}
+	for _, want := range []string{`"stage": "verify_signature"`, `"binary_replaced": false`} {
+		if !strings.Contains(errOut, want) {
+			t.Fatalf("missing %q in bundle-download failure:\n%s", want, errOut)
+		}
+	}
+	if strings.Contains(errOut, "E_INTEGRITY") {
+		t.Fatalf("bundle download failure must NOT be E_INTEGRITY:\n%s", errOut)
+	}
+}
+
+// TestUpdateTrustedRoot_RefreshFailureIsNetwork drives the REAL TUF trust-root
+// refresh path (the production updateTrustedRoot, not the stubbed verify seam)
+// with an injected fetcher that fails, and asserts every refresh failure is
+// wrapped in errTrustRootUnavailable — so the caller classifies it as retryable
+// network, never the non-retryable E_INTEGRITY. A slow/down/DNS-failing Sigstore
+// TUF registry is a network blip, not a forged-release verdict.
+func TestUpdateTrustedRoot_RefreshFailureIsNetwork(t *testing.T) {
+	resetUpdateTestState(t)
+	origFetch := updateFetchTrustedRoot
+	t.Cleanup(func() { updateFetchTrustedRoot = origFetch })
+
+	cases := []struct {
+		name      string
+		injectErr error
+		wantIs    error
+	}{
+		{name: "deadline_exceeded", injectErr: context.DeadlineExceeded, wantIs: context.DeadlineExceeded},
+		{name: "transport", injectErr: fmt.Errorf("dial tcp: lookup tuf-repo-cdn.sigstore.dev: no such host"), wantIs: nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			updateFetchTrustedRoot = func(*tuf.Options) (*root.TrustedRoot, error) {
+				return nil, tc.injectErr
+			}
+			_, err := updateTrustedRoot(context.Background())
+			if err == nil {
+				t.Fatalf("expected trust-root failure, got nil")
+			}
+			if !errors.Is(err, errTrustRootUnavailable) {
+				t.Fatalf("err must be errTrustRootUnavailable (retryable network), got %v", err)
+			}
+			if tc.wantIs != nil && !errors.Is(err, tc.wantIs) {
+				t.Fatalf("err must wrap %v, got %v", tc.wantIs, err)
+			}
+		})
+	}
+}
+
+// TestUpdate_TrustRootRefreshFails_NetworkNotIntegrity drives the full update
+// command through the REAL verify-signature classification glue with a trust-root
+// refresh failure produced by the production updateTrustedRoot (injected failing
+// fetcher), and asserts the failure is routed to the retryable network/timeout
+// taxonomy — NOT the non-retryable E_INTEGRITY. This is the path the previous
+// round left half-fixed: when only the child 30s timeout fires (parent ctx still
+// alive), the wrapped DeadlineExceeded must not collapse into E_INTEGRITY.
+//
+// Unlike the masked stub of the last round (which returned nil and never drove
+// the real classification), this test's verify seam returns the EXACT error the
+// production updateTrustedRoot emits on a refresh failure, so the routing logic
+// in verifyUpdateChecksumSignature -> runUpdateInstall is genuinely exercised.
+func TestUpdate_TrustRootRefreshFails_NetworkNotIntegrity(t *testing.T) {
+	resetUpdateTestState(t)
+	version = "1.0.0"
+	srv := newUpdateTestServer(t, "1.2.3", []byte("new-binary"), "", true)
+	defer srv.Close()
+
+	origFetch := updateFetchTrustedRoot
+	t.Cleanup(func() { updateFetchTrustedRoot = origFetch })
+	// Sigstore TUF registry is slow/down: the bounded refresh times out while the
+	// parent ctx stays alive (only the child 30s timeout fires).
+	updateFetchTrustedRoot = func(*tuf.Options) (*root.TrustedRoot, error) {
+		return nil, context.DeadlineExceeded
+	}
+	// Drive the real classification: the verify seam invokes the production
+	// updateTrustedRoot, whose failure must propagate as errTrustRootUnavailable.
+	updateVerifySignature = func(ctx context.Context, _, _, _ string) error {
+		_, err := updateTrustedRoot(ctx)
+		return err
+	}
+	updateApply = func(_, _ string) (updateApplyResult, error) {
+		t.Fatal("trust-root refresh failure must not install")
+		return updateApplyResult{}, nil
+	}
+
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	errOut := captureCombinedOutput(t, func() {
+		rootCmd.SetArgs([]string{"update", "--json"})
+		_ = rootCmd.Execute()
+	})
+	// A trust-root refresh timeout is a retryable network condition. The wrapped
+	// DeadlineExceeded classifies to E_TIMEOUT (exit 8); a transport error would
+	// be E_NETWORK (exit 7). Both are retryable — the point is it is NOT exit 1.
+	if lastExit != ExitTimeout {
+		t.Fatalf("exit=%d want=%d (retryable timeout)\n%s", lastExit, ExitTimeout, errOut)
+	}
+	for _, want := range []string{`"stage": "verify_signature"`, `"binary_replaced": false`, `"retryable": true`, "E_TIMEOUT"} {
+		if !strings.Contains(errOut, want) {
+			t.Fatalf("missing %q in trust-root refresh failure:\n%s", want, errOut)
+		}
+	}
+	if strings.Contains(errOut, "E_INTEGRITY") {
+		t.Fatalf("trust-root refresh failure must NOT be E_INTEGRITY:\n%s", errOut)
+	}
+}
+
+// TestUpdate_TrustRootTransportFails_NetworkNotIntegrity is the transport-error
+// sibling of the timeout case: a DNS/connection-refused refresh failure must be
+// retryable E_NETWORK (exit 7), still not E_INTEGRITY.
+func TestUpdate_TrustRootTransportFails_NetworkNotIntegrity(t *testing.T) {
+	resetUpdateTestState(t)
+	version = "1.0.0"
+	srv := newUpdateTestServer(t, "1.2.3", []byte("new-binary"), "", true)
+	defer srv.Close()
+
+	origFetch := updateFetchTrustedRoot
+	t.Cleanup(func() { updateFetchTrustedRoot = origFetch })
+	updateFetchTrustedRoot = func(*tuf.Options) (*root.TrustedRoot, error) {
+		return nil, fmt.Errorf("dial tcp: connection refused")
+	}
+	updateVerifySignature = func(ctx context.Context, _, _, _ string) error {
+		_, err := updateTrustedRoot(ctx)
+		return err
+	}
+	updateApply = func(_, _ string) (updateApplyResult, error) {
+		t.Fatal("trust-root refresh failure must not install")
+		return updateApplyResult{}, nil
+	}
+
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	errOut := captureCombinedOutput(t, func() {
+		rootCmd.SetArgs([]string{"update", "--json"})
+		_ = rootCmd.Execute()
+	})
+	if lastExit != ExitNetwork {
+		t.Fatalf("exit=%d want=%d (retryable network)\n%s", lastExit, ExitNetwork, errOut)
+	}
+	for _, want := range []string{`"stage": "verify_signature"`, `"retryable": true`, "E_NETWORK"} {
+		if !strings.Contains(errOut, want) {
+			t.Fatalf("missing %q in trust-root transport failure:\n%s", want, errOut)
+		}
+	}
+	if strings.Contains(errOut, "E_INTEGRITY") {
+		t.Fatalf("trust-root transport failure must NOT be E_INTEGRITY:\n%s", errOut)
+	}
+}
+
+// TestDetectInstallMethod probes the install-method classifier against the
+// well-known executable layouts and the explicit override env.
+func TestDetectInstallMethod(t *testing.T) {
+	resetUpdateTestState(t)
+	tests := []struct {
+		name string
+		env  string
+		exe  string
+		want string
+	}{
+		{name: "override", env: "Homebrew", exe: "/anything/gitlab-cli", want: "homebrew"},
+		{name: "npm", exe: "/usr/lib/node_modules/@scope/gitlab-cli/bin/gitlab-cli", want: "npm"},
+		{name: "homebrew", exe: "/opt/homebrew/Cellar/gitlab-cli/1.2.3/bin/gitlab-cli", want: "homebrew"},
+		{name: "go", exe: "/home/u/go/bin/gitlab-cli", want: "go"},
+		{name: "binary", exe: "/usr/local/bin/gitlab-cli", want: "binary"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			updateGetenv = func(string) string { return tc.env }
+			updateExecutable = func() (string, error) { return tc.exe, nil }
+			if got := detectInstallMethod(); got != tc.want {
+				t.Fatalf("detectInstallMethod(%q, env=%q)=%q want %q", tc.exe, tc.env, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestDetectInstallMethod_ExecutableError falls back to "binary" rather than an
+// empty string when the executable path cannot be resolved.
+func TestDetectInstallMethod_ExecutableError(t *testing.T) {
+	resetUpdateTestState(t)
+	updateGetenv = func(string) string { return "" }
+	updateExecutable = func() (string, error) { return "", fmt.Errorf("nope") }
+	if got := detectInstallMethod(); got != "binary" {
+		t.Fatalf("detectInstallMethod with exe error = %q want binary", got)
+	}
+}
+
+// TestUpdate_Install_ClearsNoticeCache asserts a successful install removes the
+// stale "update_available" notice cache so business commands stop nagging to
+// update to the version that was just installed.
+func TestUpdate_Install_ClearsNoticeCache(t *testing.T) {
+	resetUpdateTestState(t)
+	updateNoticeTestForceEnabled = true
+	t.Cleanup(func() { updateNoticeTestForceEnabled = false })
+	version = "1.0.0"
+	srv := newUpdateTestServer(t, "1.2.3", []byte("new-binary"), "", true)
+	defer srv.Close()
+	updateApply = func(_, dst string) (updateApplyResult, error) {
+		return updateApplyResult{Status: "installed", Path: dst}, nil
+	}
+
+	// Seed a stale notice cache as if a prior check had found 1.2.3 available.
+	writeUpdateNoticeCache([]updateNotice{{
+		Type:            "update_available",
+		UpdateAvailable: true,
+		CurrentVersion:  "1.0.0",
+		LatestVersion:   "1.2.3",
+		CheckedAt:       time.Now().UTC().Format(time.RFC3339),
+	}})
+	path, err := updateNoticeCachePath()
+	if err != nil {
+		t.Fatalf("cache path: %v", err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("seed cache not written: %v", err)
+	}
+
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	_ = captureStdout(t, func() {
+		rootCmd.SetArgs([]string{"update", "--json"})
+		_ = rootCmd.Execute()
+	})
+	if lastExit != ExitOK {
+		t.Fatalf("exit=%d want=0", lastExit)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("notice cache should be cleared after install, stat err = %v", err)
+	}
+}
+
+// newUpdateTestServerBundle404 serves a valid release whose signature bundle URL
+// returns 404, exercising the verify-stage network-vs-integrity split.
+func newUpdateTestServerBundle404(t *testing.T, relVersion string, binary []byte) *httptest.Server {
+	t.Helper()
+	assetName, err := updateArchiveName(relVersion)
+	if err != nil {
+		t.Fatalf("archive name: %v", err)
+	}
+	archiveBytes := makeUpdateTarGz(t, updateArchiveBinaryName(), binary)
+	sum := sha256.Sum256(archiveBytes)
+	checksum := fmt.Sprintf("%x  %s\n", sum[:], assetName)
+
+	var srv *httptest.Server
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/fatecannotbealtered/gitlab-cli/releases/latest", func(w http.ResponseWriter, _ *http.Request) {
+		writeUpdateReleaseJSON(t, w, srv.URL, relVersion, assetName, true, true)
+	})
+	mux.HandleFunc("/downloads/"+assetName, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(archiveBytes)
+	})
+	mux.HandleFunc("/downloads/checksums.txt", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(checksum))
+	})
+	mux.HandleFunc("/downloads/checksums.txt.sigstore.json", func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "not found", http.StatusNotFound)
+	})
+	srv = httptest.NewServer(mux)
+	updateGitHubAPI = srv.URL
+	updateHTTPClient = srv.Client()
+	return srv
 }
 
 func TestUpdate_TargetVersionUsesReleaseTagURL(t *testing.T) {
@@ -451,6 +833,42 @@ func TestExtractUpdateZip(t *testing.T) {
 	}
 	if string(data) != "zip-binary" {
 		t.Fatalf("zip binary = %q", data)
+	}
+}
+
+// TestApplyUpdateBinary_InPlaceRename asserts the cross-platform rename trick
+// replaces the target in place and reports installed (no scheduled/.cmd defer),
+// leaving no .new/.old residue behind on success.
+func TestApplyUpdateBinary_InPlaceRename(t *testing.T) {
+	dir := t.TempDir()
+	dst := filepath.Join(dir, "gitlab-cli")
+	if err := os.WriteFile(dst, []byte("old-binary"), 0o755); err != nil {
+		t.Fatalf("write dst: %v", err)
+	}
+	src := filepath.Join(dir, "downloaded")
+	if err := os.WriteFile(src, []byte("new-binary"), 0o755); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+
+	got, err := applyUpdateBinary(src, dst)
+	if err != nil {
+		t.Fatalf("applyUpdateBinary: %v", err)
+	}
+	if got.Status != "installed" {
+		t.Fatalf("status = %q want installed", got.Status)
+	}
+	data, err := os.ReadFile(dst)
+	if err != nil {
+		t.Fatalf("read dst: %v", err)
+	}
+	if string(data) != "new-binary" {
+		t.Fatalf("dst content = %q want new-binary", data)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".gitlab-cli.new")); !os.IsNotExist(err) {
+		t.Fatalf(".new residue should be gone, stat err = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".gitlab-cli.old")); !os.IsNotExist(err) {
+		t.Fatalf(".old residue should be gone, stat err = %v", err)
 	}
 }
 

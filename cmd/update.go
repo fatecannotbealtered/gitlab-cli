@@ -77,10 +77,37 @@ type updatePlan struct {
 }
 
 type updateApplyResult struct {
-	Status      string
-	Path        string
-	PendingPath string
+	Status string
+	Path   string
 }
+
+// updateHTTPError carries the upstream HTTP status so discover/download failures
+// can be mapped by status TYPE through the single §6 ErrorCodeFromStatus function
+// (404 -> E_NOT_FOUND non-retryable, 429 -> E_RATE_LIMITED, 5xx -> E_SERVER, …)
+// instead of being sniffed out of the human-readable message or collapsed into
+// E_NETWORK.
+type updateHTTPError struct {
+	statusCode int
+	url        string
+	body       string
+}
+
+func (e *updateHTTPError) Error() string {
+	return fmt.Sprintf("GET %s returned %d: %s", e.url, e.statusCode, e.body)
+}
+
+// updateBundleDownloadError marks a verify_signature failure as a transport
+// failure (fetching the Sigstore bundle), distinct from a signature/identity
+// mismatch. The former is retryable network; only the latter is E_INTEGRITY.
+type updateBundleDownloadError struct {
+	cause error
+}
+
+func (e *updateBundleDownloadError) Error() string {
+	return "downloading checksum signature bundle: " + e.cause.Error()
+}
+
+func (e *updateBundleDownloadError) Unwrap() error { return e.cause }
 
 var (
 	updateHTTPClient = &http.Client{Timeout: 2 * time.Minute}
@@ -107,7 +134,7 @@ func runUpdate(cmd *cobra.Command, _ []string) error {
 
 	release, err := fetchUpdateRelease(cmd.Context(), targetVersion)
 	if err != nil {
-		return failWithCode("checking release: "+err.Error(), ExitNetwork, output.ErrNetwork)
+		return failUpdateDiscover(cmd.Context(), err)
 	}
 
 	plan, err := buildUpdatePlan(release, version)
@@ -184,12 +211,12 @@ func runUpdateInstall(cmd *cobra.Command, plan updatePlan) error {
 
 	archivePath := filepath.Join(tmpDir, plan.AssetName)
 	if err := downloadUpdateFile(ctx, plan.AssetURL, archivePath); err != nil {
-		return failUpdateNetwork(ctx, "download", plan, false, "downloading archive: "+err.Error())
+		return failUpdateNetwork(ctx, "download", plan, false, "downloading archive: "+err.Error(), err)
 	}
 
 	checksumPath := filepath.Join(tmpDir, "checksums.txt")
 	if err := downloadUpdateFile(ctx, plan.ChecksumURL, checksumPath); err != nil {
-		return failUpdateNetwork(ctx, "download", plan, false, "downloading checksums: "+err.Error())
+		return failUpdateNetwork(ctx, "download", plan, false, "downloading checksums: "+err.Error(), err)
 	}
 
 	signatureStatus, err := verifyUpdateChecksumSignature(ctx, checksumPath, plan.SignatureBundleURL, tmpDir)
@@ -197,8 +224,14 @@ func runUpdateInstall(cmd *cobra.Command, plan updatePlan) error {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return failUpdateInterrupted("verify_signature", plan, false)
 		}
-		// Integrity failure is non-retryable: a missing or invalid signature is
-		// a supply-chain red flag, not a transient blip an agent should retry.
+		// Split the two failure modes that both land in this stage: fetching the
+		// signature bundle is a transient transport failure (retryable network
+		// taxonomy), whereas a missing/invalid signature is a non-retryable
+		// supply-chain integrity failure. Only the latter is E_INTEGRITY.
+		var dlErr *updateBundleDownloadError
+		if errors.As(err, &dlErr) {
+			return failUpdateNetwork(ctx, "verify_signature", plan, false, "verifying release signature: "+err.Error(), dlErr.cause)
+		}
 		return failUpdateStage("verify_signature", plan, false, "verifying release signature: "+err.Error(), ExitError, output.ErrIntegrity)
 	}
 	if err := verifyUpdateChecksum(archivePath, checksumPath, plan.AssetName); err != nil {
@@ -221,6 +254,11 @@ func runUpdateInstall(cmd *cobra.Command, plan updatePlan) error {
 		return failUpdateStage("replace", plan, false, "installing update: "+err.Error(), exit, code)
 	}
 
+	// Binary is committed: the cached "update_available" notice for the old
+	// version is now stale. Clear it so business commands don't keep nagging to
+	// update to a version we just installed (the next active check rewrites it).
+	writeUpdateNoticeCache(nil)
+
 	// Binary is committed from here on. A skill_sync failure is PARTIAL SUCCESS,
 	// never a hard error that loses the fact the binary already updated.
 	if err := updateSkillSync(ctx, updateSkillRepo); err != nil {
@@ -242,9 +280,6 @@ func runUpdateInstall(cmd *cobra.Command, plan updatePlan) error {
 	}
 	result["skill_sync_status"] = "synced"
 	result["hint"] = fmt.Sprintf("run \"gitlab-cli changelog --since %s\" to see what changed", normalizeVersion(plan.CurrentVersion))
-	if applied.PendingPath != "" {
-		result["pending_path"] = applied.PendingPath
-	}
 	printUpdateResult(result)
 	return nil
 }
@@ -268,13 +303,29 @@ func failUpdateStage(stage string, plan updatePlan, binaryReplaced bool, msg str
 	return failWithDetails(msg, exit, code, updateStageDetails(stage, plan, binaryReplaced, "not_run"))
 }
 
-// failUpdateNetwork maps a download-stage failure onto the transient taxonomy,
-// or onto E_INTERRUPTED when the context was cancelled by a signal.
-func failUpdateNetwork(ctx context.Context, stage string, plan updatePlan, binaryReplaced bool, msg string) error {
+// failUpdateDiscover emits the discover-stage failure envelope. The release
+// lookup happens before a plan exists, so the stage invariant reports the known
+// current version, no target, and binary_replaced:false. A signal cancellation is
+// reclassified as E_INTERRUPTED; otherwise the upstream HTTP status drives the
+// code (404 -> E_NOT_FOUND non-retryable, 429 -> E_RATE_LIMITED, 5xx -> E_SERVER,
+// transport errors -> E_NETWORK).
+func failUpdateDiscover(ctx context.Context, err error) error {
+	plan := updatePlan{CurrentVersion: version}
+	if ctx.Err() != nil {
+		return failUpdateInterrupted("discover", plan, false)
+	}
+	code, exit := classifyUpdateTransportError(err)
+	return failWithDetails("checking release: "+err.Error(), exit, code, updateStageDetails("discover", plan, false, "not_run"))
+}
+
+// failUpdateNetwork maps a download-stage failure onto the transient taxonomy by
+// upstream status, or onto E_INTERRUPTED when the context was cancelled by a
+// signal.
+func failUpdateNetwork(ctx context.Context, stage string, plan updatePlan, binaryReplaced bool, msg string, err error) error {
 	if ctx.Err() != nil {
 		return failUpdateInterrupted(stage, plan, binaryReplaced)
 	}
-	code, exit := classifyUpdateNetworkError(msg)
+	code, exit := classifyUpdateTransportError(err)
 	return failWithDetails(msg, exit, code, updateStageDetails(stage, plan, binaryReplaced, "not_run"))
 }
 
@@ -309,17 +360,85 @@ func classifyReplaceError(err error) (int, output.ErrorCode) {
 	return ExitIO, output.ErrIO
 }
 
-// classifyUpdateNetworkError maps a discover/download failure onto the transient
-// taxonomy by the upstream signal where available (status code in the message),
-// defaulting to E_NETWORK.
-func classifyUpdateNetworkError(msg string) (output.ErrorCode, int) {
-	switch {
-	case strings.Contains(msg, "returned 429"):
-		return output.ErrRateLimit, ExitRateLimit
-	case strings.Contains(msg, "context deadline exceeded"), strings.Contains(msg, "Timeout"), strings.Contains(msg, "timeout"):
-		return output.ErrTimeout, ExitTimeout
-	default:
+// classifyUpdateTransportError maps a discover/download transport failure onto
+// the §6 taxonomy by upstream status TYPE (not by sniffing the message text):
+// an HTTP response goes through the single output.ErrorCodeFromStatus function so
+// 404 is non-retryable E_NOT_FOUND, 429 is E_RATE_LIMITED, 5xx is E_SERVER, and
+// 4xx usage errors are E_VALIDATION. A context deadline maps to E_TIMEOUT.
+// Transport-level failures (DNS, connection refused/reset) carry no status and
+// stay E_NETWORK.
+func classifyUpdateTransportError(err error) (output.ErrorCode, int) {
+	if err == nil {
 		return output.ErrNetwork, ExitNetwork
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return output.ErrTimeout, ExitTimeout
+	}
+	var httpErr *updateHTTPError
+	if errors.As(err, &httpErr) {
+		code := output.ErrorCodeFromStatus(httpErr.statusCode)
+		return code, exitForUpdateCode(code)
+	}
+	return output.ErrNetwork, ExitNetwork
+}
+
+// exitForUpdateCode maps an update error code to its §6 exit code. Centralised so
+// the status->code->exit contract cannot drift between the classifier and the
+// command layer.
+func exitForUpdateCode(code output.ErrorCode) int {
+	switch code {
+	case output.ErrValidation:
+		return ExitBadArgs
+	case output.ErrNotFound:
+		return ExitNotFound
+	case output.ErrAuth, output.ErrForbidden, output.ErrConfig:
+		return ExitForbidden
+	case output.ErrConflict:
+		return ExitConflict
+	case output.ErrNetwork, output.ErrRateLimit, output.ErrServer:
+		return ExitNetwork
+	case output.ErrTimeout:
+		return ExitTimeout
+	case output.ErrIntegrity, output.ErrIO:
+		return ExitError
+	case output.ErrInterrupted:
+		return ExitInterrupted
+	default:
+		return ExitError
+	}
+}
+
+// updateGetenv is the env seam so install-method detection is testable.
+var updateGetenv = os.Getenv
+
+// detectInstallMethod probes how the running binary was installed from the
+// resolved executable path, so install_method is a real value instead of a
+// field that is declared but never assigned. An explicit override env wins;
+// otherwise the path is matched against the well-known layouts (npm
+// node_modules, Homebrew Cellar, `go install` GOPATH/bin). Anything else is a
+// manually placed binary ("binary"). Best-effort: on any resolution failure it
+// returns "binary" rather than an empty string.
+func detectInstallMethod() string {
+	if method := strings.TrimSpace(updateGetenv("GITLAB_CLI_INSTALL_METHOD")); method != "" {
+		return strings.ToLower(method)
+	}
+	exe, err := updateExecutable()
+	if err != nil {
+		return "binary"
+	}
+	if resolved, rerr := filepath.EvalSymlinks(exe); rerr == nil {
+		exe = resolved
+	}
+	normalized := filepath.ToSlash(strings.ToLower(exe))
+	switch {
+	case strings.Contains(normalized, "/node_modules/"):
+		return "npm"
+	case strings.Contains(normalized, "/cellar/") || strings.Contains(normalized, "/homebrew/"):
+		return "homebrew"
+	case strings.HasSuffix(normalized, "/go/bin/"+strings.ToLower(updateBinaryName)) || strings.Contains(normalized, "/pkg/mod/"):
+		return "go"
+	default:
+		return "binary"
 	}
 }
 
@@ -466,7 +585,7 @@ func updateHTTPGet(ctx context.Context, url string) ([]byte, error) {
 		return nil, fmt.Errorf("reading response: %w", readErr)
 	}
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("GET %s returned %d: %s", url, resp.StatusCode, truncateForError(string(data), 200))
+		return nil, &updateHTTPError{statusCode: resp.StatusCode, url: url, body: truncateForError(string(data), 200)}
 	}
 	return data, nil
 }
@@ -483,7 +602,7 @@ func downloadUpdateFile(ctx context.Context, url, dest string) error {
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		data, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("GET %s returned %d: %s", url, resp.StatusCode, truncateForError(string(data), 200))
+		return &updateHTTPError{statusCode: resp.StatusCode, url: url, body: truncateForError(string(data), 200)}
 	}
 	tmp := dest + ".part"
 	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
@@ -565,9 +684,19 @@ func verifyUpdateChecksumSignature(ctx context.Context, checksumPath, bundleURL,
 	}
 	bundlePath := filepath.Join(tmpDir, "checksums.txt.sigstore.json")
 	if err := downloadUpdateFile(ctx, bundleURL, bundlePath); err != nil {
-		return "download_failed", fmt.Errorf("downloading checksum signature bundle: %w", err)
+		// A bundle that cannot be fetched is a transport failure, not proof the
+		// release is forged: surface it as retryable network, not E_INTEGRITY.
+		return "download_failed", &updateBundleDownloadError{cause: err}
 	}
-	if err := updateVerifySignature(checksumPath, bundlePath, updateSignerIdentityRegexp()); err != nil {
+	if err := updateVerifySignature(ctx, checksumPath, bundlePath, updateSignerIdentityRegexp()); err != nil {
+		// Obtaining the trust root is a network step (TUF metadata refresh), not a
+		// signature verdict: a transient/slow/DNS trust-root refresh failure stays
+		// retryable network — only a genuine signature/identity mismatch is the
+		// non-retryable E_INTEGRITY verdict. Reuse the bundle-download network seam
+		// so the caller routes it through the same status-based classification.
+		if errors.Is(err, errTrustRootUnavailable) {
+			return "trust_root_unavailable", &updateBundleDownloadError{cause: err}
+		}
 		return "failed", err
 	}
 	return "verified", nil
@@ -661,56 +790,48 @@ func writeExtractedUpdateBinary(tmpDir, name string, r io.Reader) (string, error
 	return outPath, nil
 }
 
+// applyUpdateBinary swaps the running executable for the freshly downloaded one
+// using a cross-platform rename trick: write a sibling .<base>.new, move the
+// in-use binary aside to .<base>.old, rename .new into place, and on any failure
+// restore from .old. On Windows the in-use binary can be renamed (only deletion
+// is blocked while running), so the same path works without a restart-time
+// .cmd shim. On success .old is removed; if it is still locked on Windows the
+// leftover is ignored.
 func applyUpdateBinary(src, dst string) (updateApplyResult, error) {
-	if runtime.GOOS == "windows" {
-		return scheduleWindowsBinaryReplace(src, dst)
+	target := dst
+	if resolved, err := filepath.EvalSymlinks(dst); err == nil {
+		target = resolved
 	}
 	mode := os.FileMode(0o755)
-	if st, err := os.Stat(dst); err == nil {
+	if st, err := os.Stat(target); err == nil {
 		mode = st.Mode().Perm()
 		if mode&0o111 == 0 {
 			mode |= 0o755
 		}
 	}
-	tmpName := fmt.Sprintf(".%s.update-%d", filepath.Base(dst), updateNow().UnixNano())
-	tmpPath := filepath.Join(filepath.Dir(dst), tmpName)
-	if err := copyFile(src, tmpPath, mode); err != nil {
-		return updateApplyResult{}, err
-	}
-	if err := os.Rename(tmpPath, dst); err != nil {
-		_ = os.Remove(tmpPath)
-		return updateApplyResult{}, err
-	}
-	return updateApplyResult{Status: "installed", Path: dst}, nil
-}
+	dir := filepath.Dir(target)
+	base := filepath.Base(target)
+	newPath := filepath.Join(dir, "."+base+".new")
+	backupPath := filepath.Join(dir, "."+base+".old")
 
-func scheduleWindowsBinaryReplace(src, dst string) (updateApplyResult, error) {
-	pending := dst + ".new"
-	if err := copyFile(src, pending, 0o755); err != nil {
+	_ = os.Remove(newPath)
+	if err := copyFile(src, newPath, mode); err != nil {
 		return updateApplyResult{}, err
 	}
-	scriptPath := filepath.Join(os.TempDir(), fmt.Sprintf("gitlab-cli-update-%d.cmd", updateNow().UnixNano()))
-	script := strings.Join([]string{
-		"@echo off",
-		"setlocal",
-		"set \"PENDING=" + batchEscape(pending) + "\"",
-		"set \"TARGET=" + batchEscape(dst) + "\"",
-		"for /L %%I in (1,1,30) do (",
-		"  move /Y \"%PENDING%\" \"%TARGET%\" > nul 2>&1",
-		"  if not exist \"%PENDING%\" goto done",
-		"  ping 127.0.0.1 -n 2 > nul",
-		")",
-		":done",
-		"del \"%~f0\" > nul 2>&1",
-		"",
-	}, "\r\n")
-	if err := os.WriteFile(scriptPath, []byte(script), 0o600); err != nil {
-		return updateApplyResult{}, err
+
+	_ = os.Remove(backupPath)
+	if err := os.Rename(target, backupPath); err != nil {
+		_ = os.Remove(newPath)
+		return updateApplyResult{}, fmt.Errorf("preparing to replace %s: %w", target, err)
 	}
-	if err := exec.Command("cmd", "/C", "start", "", "/B", scriptPath).Start(); err != nil {
-		return updateApplyResult{}, err
+	if err := os.Rename(newPath, target); err != nil {
+		_ = os.Rename(backupPath, target)
+		return updateApplyResult{}, fmt.Errorf("replacing %s: %w; original restored", target, err)
 	}
-	return updateApplyResult{Status: "scheduled", Path: dst, PendingPath: pending}, nil
+	// Best-effort cleanup: on Windows the .old copy may still be locked while the
+	// old process is running; leaving it behind is harmless.
+	_ = os.Remove(backupPath)
+	return updateApplyResult{Status: "installed", Path: target}, nil
 }
 
 func copyFile(src, dst string, mode os.FileMode) error {
@@ -741,6 +862,7 @@ func updateResultMap(plan updatePlan, status string) map[string]any {
 		"update_available":   plan.UpdateAvailable,
 		"release_url":        plan.ReleaseURL,
 		"asset":              plan.AssetName,
+		"install_method":     detectInstallMethod(),
 		"signature_status":   "not_checked",
 		"skill_sync_command": plan.SkillSyncCommand,
 		"skill_sync_status":  "not_run",
@@ -769,8 +891,6 @@ func printUpdateResult(result map[string]any) {
 		output.Info(fmt.Sprintf("[dry-run] update gitlab-cli to %s", target))
 	case "installed":
 		output.Success(fmt.Sprintf("Updated gitlab-cli to %s", target))
-	case "scheduled":
-		output.Success(fmt.Sprintf("Update to %s scheduled; restart the command after this process exits", target))
 	default:
 		output.Info(fmt.Sprintf("Update status: %s", status))
 	}
@@ -923,8 +1043,4 @@ func truncateForError(s string, n int) string {
 		return s
 	}
 	return s[:n] + "..."
-}
-
-func batchEscape(s string) string {
-	return strings.ReplaceAll(s, "%", "%%")
 }

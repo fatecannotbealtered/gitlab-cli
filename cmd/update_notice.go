@@ -86,6 +86,7 @@ func updateNoticesFromPlan(plan updatePlan, source string) []updateNotice {
 		CurrentVersion:     current,
 		LatestVersion:      latest,
 		UpdateAvailable:    true,
+		InstallMethod:      detectInstallMethod(),
 		RecommendedCommand: "gitlab-cli update --dry-run --compact",
 		ReleaseURL:         plan.ReleaseURL,
 		CheckedAt:          time.Now().UTC().Format(time.RFC3339),
@@ -104,7 +105,7 @@ func updateNoticesFromPlan(plan updatePlan, source string) []updateNotice {
 // updateNoticeSeverity grades the update notice from the embedded CHANGELOG delta
 // between the running version and the latest (CLI-SPEC §14): "warning" when the
 // delta since current contains a security entry OR latest crosses a major version
-// boundary; "info" otherwise. ("critical" is reserved and never emitted here.)
+// boundary; "info" otherwise.
 func updateNoticeSeverity(current, latest string) string {
 	return severityFromChangelog(rootchangelog.ChangelogMarkdown, current, latest)
 }
