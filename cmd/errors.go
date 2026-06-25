@@ -31,31 +31,31 @@ func failConfirmRequired(msg string) error {
 }
 
 // failWithCode reports an error with a custom exit code and error code.
-func failWithCode(msg string, exit int, code output.ErrorCode) error {
-	emitError(msg, exit, code)
+func failWithCode(msg string, _ int, code output.ErrorCode) error {
+	emitError(msg, 0, code)
 	return ErrSilent
 }
 
 // failWithDetails reports an error with a custom exit code, error code, and
 // structured details merged into error.details (used by update to carry the
 // stage invariant: stage, current_version, binary_replaced, skill_sync_status).
-func failWithDetails(msg string, exit int, code output.ErrorCode, details map[string]any) error {
+func failWithDetails(msg string, _ int, code output.ErrorCode, details map[string]any) error {
 	if jsonMode {
 		output.PrintErrorJSONWithDetails(msg, 0, code, details)
 	} else {
 		output.Error(msg)
 	}
-	setExitCode(exit)
+	setExitCode(output.ExitCodeForErrorCode(code))
 	return ErrSilent
 }
 
-func emitError(msg string, exit int, code output.ErrorCode) {
+func emitError(msg string, _ int, code output.ErrorCode) {
 	if jsonMode {
 		output.PrintErrorJSONWithCode(msg, 0, code)
 	} else {
 		output.Error(msg)
 	}
-	setExitCode(exit)
+	setExitCode(output.ExitCodeForErrorCode(code))
 }
 
 // requireFlagString returns the flag value or fails if empty.

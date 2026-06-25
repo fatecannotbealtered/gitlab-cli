@@ -1071,23 +1071,18 @@ func TestUpdate_GoInstallDrivesPackageManager(t *testing.T) {
 	srv := newUpdateTestServer(t, "1.2.3", []byte("new-binary"), "", true)
 	defer srv.Close()
 
-	// Simulate a go-managed executable path via GOBIN.
-	t.Setenv("GOBIN", "/home/user/go/bin")
+	// Simulate a go-managed executable path (matched by the /go/bin/ path pattern).
 	updateExecutable = func() (string, error) {
 		return "/home/user/go/bin/gitlab-cli", nil
 	}
-	updateGetenv = func(k string) string {
-		if k == "GOBIN" {
-			return "/home/user/go/bin"
-		}
-		return ""
-	}
 
 	var gotMethod string
+	var skillSynced bool
 	updateRunPackageManager = func(_ context.Context, method, _ string) error {
 		gotMethod = method
 		return nil
 	}
+	updateSkillSync = func(context.Context, string) error { skillSynced = true; return nil }
 
 	origExit := lastExit
 	defer func() { lastExit = origExit }()
@@ -1102,8 +1097,13 @@ func TestUpdate_GoInstallDrivesPackageManager(t *testing.T) {
 	if gotMethod != "go" {
 		t.Fatalf("expected go to be driven, got method %q", gotMethod)
 	}
-	if !strings.Contains(out, `"install_method": "go"`) {
-		t.Fatalf("expected go install method: %s", out)
+	if !skillSynced {
+		t.Fatalf("expected Skill sync to run after go install")
+	}
+	for _, want := range []string{`"status": "installed"`, `"skill_sync_status": "synced"`, `"signature_status": "not_checked"`, `"install_method": "go"`} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q in:\n%s", want, out)
+		}
 	}
 }
 

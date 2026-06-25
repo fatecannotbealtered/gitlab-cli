@@ -74,7 +74,7 @@ type refTree struct {
 	SchemaVersion    string                         `json:"schema_version"`
 	Tool             string                         `json:"tool"`
 	Version          string                         `json:"version"`
-	RiskTier         string                         `json:"riskTier"`
+	RiskTier         string                         `json:"risk_tier"`
 	BlastRadius      string                         `json:"blastRadius"`
 	ReleaseReadiness releaseReadiness               `json:"release_readiness"`
 	Security         map[string]any                 `json:"security"`

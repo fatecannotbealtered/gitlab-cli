@@ -111,7 +111,7 @@ func referenceSchemas() map[string]referenceDataSchema {
 		"context":   {Shape: "object", Fields: []string{"version", "env", "account", "config", "credentials", "security", "git", "gitlab", "_untrusted", "notices"}},
 		"doctor":    {Shape: "object", Fields: []string{"checks", "notices", "version", "skill_min_version", "risk_tier", "configExists", "authValid", "latencyMs", "host", "username", "name", "error"}},
 		"changelog": {Shape: "object", Fields: []string{"current_version", "since", "entries"}},
-		"reference": {Shape: "object", Fields: []string{"schema_version", "tool", "version", "riskTier", "blastRadius", "release_readiness", "security", "globalFlags", "exitCodes", "commands", "schemas"}},
+		"reference": {Shape: "object", Fields: []string{"schema_version", "tool", "version", "risk_tier", "blastRadius", "release_readiness", "security", "globalFlags", "exitCodes", "commands", "schemas"}},
 		"update":    {Shape: "object", Fields: []string{"status", "current_version", "target_version", "update_available", "release_url", "asset", "signature_status", "skill_sync_command", "skill_sync_status", "binary_replaced", "preview", "path", "previous_version", "checksum_verified", "signature_verified", "hint", "downgrade", "notices"}},
 	}
 }

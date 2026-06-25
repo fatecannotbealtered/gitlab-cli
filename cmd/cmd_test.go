@@ -383,7 +383,9 @@ func TestFailWithCode_JSON(t *testing.T) {
 	jsonMode = true
 	lastExit = 0
 
-	err := failWithCode("timed out", ExitTimeout, output.ErrNetwork)
+	// Exit now derives from the error code (contract single-source), so the code
+	// and the expected exit must agree: ErrTimeout -> ExitTimeout.
+	err := failWithCode("timed out", ExitTimeout, output.ErrTimeout)
 	if !errors.Is(err, ErrSilent) {
 		t.Fatalf("failWithCode() = %v", err)
 	}
