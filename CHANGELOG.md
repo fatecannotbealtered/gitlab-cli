@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.12] - 2026-06-25
+
+### Added
+
+- Canonical JSON contract is now single-sourced from the `ai-native-cli-spec` template (pinned via `.agent/SPEC_VERSION=v1.4`). `contract/contract.json` is vendored and generates `internal/contract/contract_gen.go`; the error-code → exit → retryable mapping and `schema_version` now derive from it, so they cannot drift from the fleet contract. `E_CANCELLED` is registered in `contract/contract-ext.json` (exit 5, non-retryable) to keep it valid. A new conformance test (`internal/output/contract_conformance_test.go`) asserts every emitted error code, the exit/retryable mapping, the envelope key sets, and `meta` keys match the contract.
+
+### Changed
+
+- The bundled `.agent/` specs are now synced (not hand-maintained) from `ai-native-cli-spec@v1.4`, which adds the machine-readable contract governance (CLI-SPEC §3.1) and the install-method dispatch note for `update`. A `check-spec` CI guard is added to the `npm-audit` job to fail closed on drift of the vendored specs/contract or the generated module.
+- `update` now drives the package manager for npm/Go-managed installs. A bare `gitlab-cli update` runs `npm install -g @fateforge/gitlab-cli@<version>` (or `go install …@<version>`) on the user's behalf, then syncs the Skill, reporting `status: "installed"`. The binary is never mutated in place under a package manager. `--check`/`--dry-run` stay read-only and preview the package-manager command without running it. A package-manager failure reports `E_IO` (exit 1) with `binary_replaced: false` and the exact command to run manually.
+
 ## [1.2.11] - 2026-06-25
 
 ### Fixed

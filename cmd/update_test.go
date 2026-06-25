@@ -35,6 +35,7 @@ func resetUpdateTestState(t *testing.T) {
 	origSkillSync := updateSkillSync
 	origNow := updateNow
 	origVerifySig := updateVerifySignature
+	origRunPM := updateRunPackageManager
 	t.Cleanup(func() {
 		version = origVersion
 		updateGitHubAPI = origAPI
@@ -45,6 +46,7 @@ func resetUpdateTestState(t *testing.T) {
 		updateSkillSync = origSkillSync
 		updateNow = origNow
 		updateVerifySignature = origVerifySig
+		updateRunPackageManager = origRunPM
 	})
 	for _, kv := range []struct{ name, value string }{
 		{"check", "false"},
@@ -66,6 +68,10 @@ func resetUpdateTestState(t *testing.T) {
 	// OIDC-signed bundle cannot be produced in a unit test, so the seam stands
 	// in for the real verifier while the surrounding control flow is tested.
 	updateVerifySignature = func(context.Context, string, string, string) error { return nil }
+	// Package-manager-driven update is stubbed to a no-op success by default so
+	// tests never shell out to a real npm/go. Tests asserting failure or
+	// call-capture override this with their own closure.
+	updateRunPackageManager = func(context.Context, string, string) error { return nil }
 }
 
 // updateInstallArgsForTest returns the args for a bare single-command update.
@@ -1008,4 +1014,163 @@ func makeUpdateZip(t *testing.T, name string, content []byte) []byte {
 		t.Fatalf("zip close: %v", err)
 	}
 	return buf.Bytes()
+}
+
+// A bare `update` on an npm install now DRIVES npm: it runs
+// `npm install -g @pkg@<ver>` on the user's behalf (not just print it), then
+// syncs the Skill, and reports status "installed". signature_status stays
+// "not_checked" (npm provenance owns integrity on this path).
+func TestUpdate_NPMInstallDrivesPackageManager(t *testing.T) {
+	resetUpdateTestState(t)
+	version = "1.0.0"
+	srv := newUpdateTestServer(t, "1.2.3", []byte("new-binary"), "", true)
+	defer srv.Close()
+
+	// Simulate an npm-managed executable path.
+	updateExecutable = func() (string, error) {
+		return "/usr/lib/node_modules/@fateforge/gitlab-cli/bin/gitlab-cli", nil
+	}
+
+	var gotMethod, gotVersion string
+	var skillSynced bool
+	updateRunPackageManager = func(_ context.Context, method, target string) error {
+		gotMethod, gotVersion = method, target
+		return nil
+	}
+	updateSkillSync = func(context.Context, string) error { skillSynced = true; return nil }
+
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	out := captureStdout(t, func() {
+		rootCmd.SetArgs([]string{"update", "--json"})
+		_ = rootCmd.Execute()
+	})
+	if lastExit != ExitOK {
+		t.Fatalf("exit=%d want=0\n%s", lastExit, out)
+	}
+	if gotMethod != "npm" {
+		t.Fatalf("expected npm to be driven, got method %q", gotMethod)
+	}
+	if normalizeVersion(gotVersion) != "1.2.3" {
+		t.Fatalf("expected target 1.2.3 passed to npm, got %q", gotVersion)
+	}
+	if !skillSynced {
+		t.Fatalf("expected Skill sync to run after npm install")
+	}
+	for _, want := range []string{`"status": "installed"`, `"skill_sync_status": "synced"`, `"signature_status": "not_checked"`} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q in:\n%s", want, out)
+		}
+	}
+}
+
+func TestUpdate_GoInstallDrivesPackageManager(t *testing.T) {
+	resetUpdateTestState(t)
+	version = "1.0.0"
+	srv := newUpdateTestServer(t, "1.2.3", []byte("new-binary"), "", true)
+	defer srv.Close()
+
+	// Simulate a go-managed executable path via GOBIN.
+	t.Setenv("GOBIN", "/home/user/go/bin")
+	updateExecutable = func() (string, error) {
+		return "/home/user/go/bin/gitlab-cli", nil
+	}
+	updateGetenv = func(k string) string {
+		if k == "GOBIN" {
+			return "/home/user/go/bin"
+		}
+		return ""
+	}
+
+	var gotMethod string
+	updateRunPackageManager = func(_ context.Context, method, _ string) error {
+		gotMethod = method
+		return nil
+	}
+
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	out := captureStdout(t, func() {
+		rootCmd.SetArgs([]string{"update", "--json"})
+		_ = rootCmd.Execute()
+	})
+	if lastExit != ExitOK {
+		t.Fatalf("exit=%d want=0\n%s", lastExit, out)
+	}
+	if gotMethod != "go" {
+		t.Fatalf("expected go to be driven, got method %q", gotMethod)
+	}
+	if !strings.Contains(out, `"install_method": "go"`) {
+		t.Fatalf("expected go install method: %s", out)
+	}
+}
+
+// --dry-run on a package-manager install is a read-only preview: it must NOT
+// invoke the package manager, and must report the command it WOULD run.
+func TestUpdate_PackageManagerDryRunDoesNotExecute(t *testing.T) {
+	resetUpdateTestState(t)
+	version = "1.0.0"
+	srv := newUpdateTestServer(t, "1.2.3", []byte("new-binary"), "", true)
+	defer srv.Close()
+
+	updateExecutable = func() (string, error) {
+		return "/usr/lib/node_modules/@fateforge/gitlab-cli/bin/gitlab-cli", nil
+	}
+
+	called := false
+	updateRunPackageManager = func(context.Context, string, string) error { called = true; return nil }
+
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	out := captureStdout(t, func() {
+		rootCmd.SetArgs([]string{"update", "--dry-run", "--json"})
+		_ = rootCmd.Execute()
+	})
+	if lastExit != ExitOK {
+		t.Fatalf("exit=%d want=0\n%s", lastExit, out)
+	}
+	if called {
+		t.Fatalf("dry-run must not invoke the package manager")
+	}
+	if !strings.Contains(out, `"dry_run": true`) {
+		t.Fatalf("expected dry_run preview: %s", out)
+	}
+	if !strings.Contains(out, "npm install -g @fateforge/gitlab-cli@1.2.3") {
+		t.Fatalf("expected planned npm command: %s", out)
+	}
+}
+
+// When the package manager fails, the installed binary is unchanged: report
+// E_IO (exit 1), binary_replaced:false, and surface the command to run manually.
+func TestUpdate_PackageManagerFailureReportsUnchanged(t *testing.T) {
+	resetUpdateTestState(t)
+	version = "1.0.0"
+	srv := newUpdateTestServer(t, "1.2.3", []byte("new-binary"), "", true)
+	defer srv.Close()
+
+	updateExecutable = func() (string, error) {
+		return "/usr/lib/node_modules/@fateforge/gitlab-cli/bin/gitlab-cli", nil
+	}
+	updateRunPackageManager = func(context.Context, string, string) error {
+		return errors.New("ETARGET no matching version")
+	}
+
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	out := captureCombinedOutput(t, func() {
+		rootCmd.SetArgs([]string{"update", "--json"})
+		_ = rootCmd.Execute()
+	})
+	if lastExit != ExitIO {
+		t.Fatalf("expected exit %d, got %d: %s", ExitIO, lastExit, out)
+	}
+	for _, want := range []string{`"code": "E_IO"`, `"binary_replaced": false`, "npm install -g @fateforge/gitlab-cli@1.2.3"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q in:\n%s", want, out)
+		}
+	}
 }

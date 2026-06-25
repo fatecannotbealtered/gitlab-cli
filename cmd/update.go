@@ -29,6 +29,8 @@ const (
 	updateBinaryName  = "gitlab-cli"
 	updateAPIBaseURL  = "https://api.github.com"
 	updateSkillRepo   = updateDefaultRepo
+	updateNPMPackage  = "@fateforge/gitlab-cli"
+	updateGoPackage   = "github.com/fatecannotbealtered/gitlab-cli/cmd/gitlab-cli"
 )
 
 var updateCmd = &cobra.Command{
@@ -110,13 +112,14 @@ func (e *updateBundleDownloadError) Error() string {
 func (e *updateBundleDownloadError) Unwrap() error { return e.cause }
 
 var (
-	updateHTTPClient = &http.Client{Timeout: 2 * time.Minute}
-	updateGitHubAPI  = updateAPIBaseURL
-	updateNow        = time.Now
-	updatePlatform   = func() (string, string) { return runtime.GOOS, runtime.GOARCH }
-	updateExecutable = os.Executable
-	updateApply      = applyUpdateBinary
-	updateSkillSync  = runUpdateSkillSync
+	updateHTTPClient        = &http.Client{Timeout: 2 * time.Minute}
+	updateGitHubAPI         = updateAPIBaseURL
+	updateNow               = time.Now
+	updatePlatform          = func() (string, string) { return runtime.GOOS, runtime.GOARCH }
+	updateExecutable        = os.Executable
+	updateApply             = applyUpdateBinary
+	updateSkillSync         = runUpdateSkillSync
+	updateRunPackageManager = runPackageManagerInstall
 )
 
 func init() {
@@ -163,6 +166,11 @@ func runUpdate(cmd *cobra.Command, _ []string) error {
 		// Idempotent: already on the target version is a no-op success.
 		printUpdateResult(result)
 		return nil
+	}
+
+	installMethod := detectInstallMethod()
+	if installMethod == "npm" || installMethod == "go" {
+		return runPackageManagerUpdate(cmd.Context(), plan, installMethod)
 	}
 
 	if dryRun {
@@ -282,6 +290,108 @@ func runUpdateInstall(cmd *cobra.Command, plan updatePlan) error {
 	result["hint"] = fmt.Sprintf("run \"gitlab-cli changelog --since %s\" to see what changed", normalizeVersion(plan.CurrentVersion))
 	printUpdateResult(result)
 	return nil
+}
+
+// runPackageManagerUpdate handles `update` for a package-manager-managed install
+// (npm or Go). A standalone binary is replaced in place after in-process Sigstore
+// verification; a package-managed binary is OWNED by the package manager, so
+// replacing it in place would desync the manager's metadata. Instead the tool
+// DRIVES the package manager — it runs the exact install command on the user's
+// behalf, then syncs the Skill, so a bare `update` upgrades in one call regardless
+// of install method. Integrity on this path is the package manager's own
+// (npm registry integrity/provenance), so signature_status stays "not_checked".
+// The new version takes effect on the next invocation (this process is still the
+// old image).
+func runPackageManagerUpdate(ctx context.Context, plan updatePlan, method string) error {
+	command := updateInstallCommand(method, plan.TargetVersion)
+
+	// --dry-run is an optional read-only preview: show the command, run nothing.
+	if dryRun {
+		result := updateResultMap(plan, "dry_run")
+		result["dry_run"] = true
+		result["command"] = command
+		result["message"] = fmt.Sprintf("would update gitlab-cli from %s to %s by running: %s", plan.CurrentVersion, plan.TargetVersion, command)
+		printUpdateResult(result)
+		return nil
+	}
+
+	if err := updateRunPackageManager(ctx, method, plan.TargetVersion); err != nil {
+		// The package manager owns download + integrity + replace; a failure here
+		// leaves the installed binary unchanged (binary_replaced:false).
+		return failPackageManagerStage(plan, command, err)
+	}
+
+	// The package manager replaced the on-disk binary; this process is still the
+	// old image, so the new version is effective on the next invocation.
+	if err := updateSkillSync(ctx, updateSkillRepo); err != nil {
+		partialPlan := plan
+		partialPlan.CurrentVersion = plan.TargetVersion
+		return emitUpdatePartialSuccess(partialPlan, updateApplyResult{Status: "installed"}, "not_checked", "failed", "syncing skill directory: "+err.Error())
+	}
+
+	result := updateResultMap(plan, "installed")
+	result["previous_version"] = plan.CurrentVersion
+	result["current_version"] = plan.TargetVersion
+	result["binary_replaced"] = true
+	result["signature_status"] = "not_checked"
+	result["skill_sync_status"] = "synced"
+	result["hint"] = fmt.Sprintf("run \"gitlab-cli changelog --since %s\" to see what changed (effective on next run)", normalizeVersion(plan.CurrentVersion))
+	printUpdateResult(result)
+	return nil
+}
+
+// runPackageManagerInstall drives the package manager to install the target
+// version — the same command updateInstallCommand returns. argv is built directly
+// (no shell) so the version string cannot be reinterpreted by a shell.
+func runPackageManagerInstall(ctx context.Context, method, targetVersion string) error {
+	var name string
+	var args []string
+	switch method {
+	case "npm":
+		name = "npm"
+		args = []string{"install", "-g", updateNPMPackage + "@" + normalizeVersion(targetVersion)}
+	case "go":
+		name = "go"
+		args = []string{"install", updateGoPackage + "@v" + normalizeVersion(targetVersion)}
+	default:
+		return fmt.Errorf("unsupported package manager: %s", method)
+	}
+	command := exec.CommandContext(ctx, name, args...)
+	outputBytes, err := command.CombinedOutput()
+	if err != nil {
+		out := strings.TrimSpace(string(outputBytes))
+		if out != "" {
+			return fmt.Errorf("%w: %s", err, truncateForError(out, 300))
+		}
+		return err
+	}
+	return nil
+}
+
+// failPackageManagerStage reports a failed package-manager-driven update.
+// The package manager owns download/integrity/replace, so a failure leaves the
+// installed binary unchanged (binary_replaced:false). The exact command is
+// surfaced so the agent can run it manually.
+func failPackageManagerStage(plan updatePlan, command string, err error) error {
+	msg := fmt.Sprintf("package-manager update failed: %s — run %q manually", strings.TrimSpace(err.Error()), command)
+	details := updateStageDetails("replace", plan, false, "not_run")
+	details["install_method"] = detectInstallMethod()
+	details["command"] = command
+	return failWithDetails(msg, ExitIO, output.ErrIO, details)
+}
+
+// updateInstallCommand returns the package-manager command string for the given
+// install method and target version.
+func updateInstallCommand(method, targetVersion string) string {
+	ver := normalizeVersion(targetVersion)
+	switch method {
+	case "npm":
+		return "npm install -g " + updateNPMPackage + "@" + ver
+	case "go":
+		return "go install " + updateGoPackage + "@v" + ver
+	default:
+		return ""
+	}
 }
 
 // updateStageDetails builds the stage invariant block carried by every update
