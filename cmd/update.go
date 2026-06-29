@@ -169,7 +169,10 @@ func runUpdate(cmd *cobra.Command, _ []string) error {
 	}
 
 	installMethod := detectInstallMethod()
-	if installMethod == "npm" || installMethod == "go" {
+	if installMethod == "npm" || installMethod == "go" || installMethod == "homebrew" {
+		// A package-manager-managed install (npm / Go / Homebrew) is OWNED by the
+		// manager: replacing the binary in place would desync the manager's
+		// metadata, so drive the manager instead of doing the standalone swap below.
 		return runPackageManagerUpdate(cmd.Context(), plan, installMethod)
 	}
 
@@ -353,6 +356,12 @@ func runPackageManagerInstall(ctx context.Context, method, targetVersion string)
 	case "go":
 		name = "go"
 		args = []string{"install", updateGoPackage + "@v" + normalizeVersion(targetVersion)}
+	case "homebrew":
+		// Homebrew upgrades to the formula's current version; it cannot pin an
+		// arbitrary --target-version. A bare `update` (latest) is the supported case;
+		// a failed/absent formula is reported with the exact command to run manually.
+		name = "brew"
+		args = []string{"upgrade", updateBinaryName}
 	default:
 		return fmt.Errorf("unsupported package manager: %s", method)
 	}
@@ -389,6 +398,8 @@ func updateInstallCommand(method, targetVersion string) string {
 		return "npm install -g " + updateNPMPackage + "@" + ver
 	case "go":
 		return "go install " + updateGoPackage + "@v" + ver
+	case "homebrew":
+		return "brew upgrade " + updateBinaryName
 	default:
 		return ""
 	}

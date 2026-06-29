@@ -181,6 +181,13 @@ func readCachedUpdateNotices() []updateNotice {
 		if notice.Type != "update_available" || !notice.UpdateAvailable {
 			continue
 		}
+		// Version-aware: suppress a stale "update available" notice once the
+		// running binary is already at (or past) the cached latest version. This
+		// also covers the package-manager update path, which upgrades via the
+		// manager without clearing this cache (the new binary takes effect next run).
+		if notice.LatestVersion != "" && compareVersions(notice.LatestVersion, version) <= 0 {
+			continue
+		}
 		notice.Source = "cache"
 		notices = append(notices, notice)
 	}

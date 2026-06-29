@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.13] - 2026-06-29
+
+### Fixed
+
+- `update` notice cache reads are now version-aware: a cached `update_available` notice is suppressed once the running binary is already at or past the cached latest version. This closes a gap on the package-manager update path, which upgrades through the manager without clearing the cache, so within the 24h cache TTL business commands no longer kept advertising an update to a version already installed.
+- `update` now routes a Homebrew-managed install (detected by path or the install-method override) through the package-manager-driven path (`brew upgrade gitlab-cli`) instead of letting it fall through to the standalone in-place binary swap. Replacing a Cellar-managed binary in place would desync Homebrew's metadata; the manager now owns the upgrade (CLI-SPEC §14).
+
 ## [1.2.12] - 2026-06-25
 
 ### Added
