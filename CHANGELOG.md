@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.14] - 2026-07-02
+
 ### Changed
 
 - **Bumped `github.com/theupdateframework/go-tuf/v2` to `2.4.2`** (#13) — the TUF client used by `update`'s trust-root/signature verification, vendored into the release binary.
