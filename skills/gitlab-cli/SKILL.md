@@ -1,10 +1,10 @@
 ---
 name: gitlab-cli
-version: "1.2.14"
+version: "1.2.15"
 description: GitLab CLI for AI Agents. JSON is the default; use --compact for token efficiency and --format text/raw only when needed. Read reference/*.md for the module you need — do not load the whole skill upfront.
 license: MIT
 user-invocable: true
-metadata: {"requires":{"bins":["gitlab-cli"],"min_version":"1.2.14"}}
+metadata: {"requires":{"bins":["gitlab-cli"],"min_version":"1.2.15"}}
 ---
 
 # gitlab-cli
@@ -94,7 +94,9 @@ Check `ok` first. On failure:
 - Exit `1` / `E_INTEGRITY`: release signature/checksum failed — do NOT retry; stop and report a possible supply-chain issue.
 - Exit `130` / `E_INTERRUPTED`: cancelled by signal; staged work left nothing half-applied — re-run `update`, it is idempotent.
 
-`update` is a single command, no confirm token. A bare `gitlab-cli update` performs the whole self-update in one call (resolve latest or `--target-version` → verify signature → verify checksum → replace binary → sync Skill); it is exempt from the `--dry-run`/`--confirm` write gate. `update --check` is a read-only availability probe and `update --dry-run` is a read-only preview (no token). `update` is idempotent. Every failure carries `stage`, `current_version`, `binary_replaced`, and `skill_sync_status`; if the binary updated but Skill sync failed it is partial success (`ok:false`, `binary_replaced:true`) with `skill_sync_command` to run.
+Successful update results are final-state: `current_version` must equal `target_version`, `update_available` must be `false`, and stale `update_available` notices must be cleared or suppressed before later commands attach `meta.notices`. An already-current install must return a no-op result without running a package-manager install command.
+
+`update` is a single command, no confirm token. A bare `gitlab-cli update` performs the whole self-update in one call (resolve latest or `--target-version` → verify signature → verify checksum → replace binary → sync Skill); it is exempt from the `--dry-run`/`--confirm` write gate. `update --check` is a read-only availability probe and `update --dry-run` is a read-only preview (no token). `update` is idempotent. Every failure carries `stage`, `current_version`, `binary_replaced`, and `skill_sync_status`; if the binary updated but Skill sync failed it is partial success (`ok:false`, `binary_replaced:true`) with `target_version`, `update_available:false`, and `skill_sync_command` to run.
 
 The update-available notice also rides along on **any** command's `meta.notices` (read-only from the local cache, no network). When present it is severity-graded: `warning` when the changelog delta since the running version has a `security` entry or crosses a major version, otherwise `info`. It is absent when the cache has nothing to report; the active-check commands (`context` / `doctor` / `update --check`) still carry the fresh `data.notices` view.
 

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.15] - 2026-07-08
+
+### Fixed
+
+- Package-manager `update` success now reports the final post-install state (`current_version == target_version`, `update_available: false`) and clears the cached update notice immediately after the package manager commits.
+- Post-swap Skill-sync partial-success details now also report `target_version` and `update_available: false`, so agents can tell the binary is already at the target version even though the Skill still needs syncing.
+- Windows Go test binaries (`*.test.exe`) no longer read or write the real user update-notice cache by default.
+
 ## [1.2.14] - 2026-07-02
 
 ### Changed

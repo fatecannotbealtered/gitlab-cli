@@ -243,7 +243,8 @@ func updateNoticeAutoDisabled() bool {
 	if updateNoticeTestForceEnabled {
 		return updateNoticeDisabled()
 	}
-	return updateNoticeDisabled() || strings.HasSuffix(os.Args[0], ".test")
+	exe := strings.ToLower(os.Args[0])
+	return updateNoticeDisabled() || strings.HasSuffix(exe, ".test") || strings.HasSuffix(exe, ".test.exe")
 }
 
 func printUpdateNoticeHint(w io.Writer, notices []updateNotice) {

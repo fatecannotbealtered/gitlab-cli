@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"net/http"
+	"os"
 	"testing"
 )
 
@@ -57,6 +58,20 @@ func TestMetaNotices_FromCacheNoNetwork(t *testing.T) {
 	}
 	if notices[0]["severity"] != "warning" || notices[0]["type"] != "update_available" {
 		t.Fatalf("cached notice carried wrong fields: %v", notices[0])
+	}
+}
+
+func TestUpdateNoticeAutoDisabledDetectsWindowsGoTestBinary(t *testing.T) {
+	origArgs := os.Args
+	t.Cleanup(func() { os.Args = origArgs })
+	origForce := updateNoticeTestForceEnabled
+	updateNoticeTestForceEnabled = false
+	t.Cleanup(func() { updateNoticeTestForceEnabled = origForce })
+	os.Args = []string{`C:\Users\me\AppData\Local\Temp\cmd.test.exe`}
+	t.Setenv(updateNoticeEnvOptOut, "")
+
+	if !updateNoticeAutoDisabled() {
+		t.Fatal("Windows Go test binary must not write the real update notice cache")
 	}
 }
 

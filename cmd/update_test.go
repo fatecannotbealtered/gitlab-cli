@@ -190,7 +190,7 @@ func TestUpdate_BareExecutesWithoutToken(t *testing.T) {
 	if !applied {
 		t.Fatal("bare update did not apply the install")
 	}
-	for _, want := range []string{`"status": "installed"`, `"binary_replaced": true`, `"skill_sync_status": "synced"`} {
+	for _, want := range []string{`"status": "installed"`, `"current_version": "1.2.3"`, `"target_version": "1.2.3"`, `"update_available": false`, `"binary_replaced": true`, `"skill_sync_status": "synced"`} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("missing %q in:\n%s", want, out)
 		}
@@ -200,12 +200,28 @@ func TestUpdate_BareExecutesWithoutToken(t *testing.T) {
 // TestUpdate_Idempotent_NoOp asserts already-latest returns ok with a no-op.
 func TestUpdate_Idempotent_NoOp(t *testing.T) {
 	resetUpdateTestState(t)
+	updateNoticeTestForceEnabled = true
+	t.Cleanup(func() { updateNoticeTestForceEnabled = false })
 	version = "1.2.3"
 	srv := newUpdateTestServer(t, "1.2.3", []byte("same"), "", true)
 	defer srv.Close()
+	writeUpdateNoticeCache([]updateNotice{{
+		Type:            "update_available",
+		UpdateAvailable: true,
+		CurrentVersion:  "1.0.0",
+		LatestVersion:   "9.9.9",
+		CheckedAt:       time.Now().UTC().Format(time.RFC3339),
+	}})
 	updateApply = func(_, _ string) (updateApplyResult, error) {
 		t.Fatal("up-to-date update must not apply")
 		return updateApplyResult{}, nil
+	}
+	updateExecutable = func() (string, error) {
+		return "/usr/lib/node_modules/@fateforge/gitlab-cli/bin/gitlab-cli", nil
+	}
+	updateRunPackageManager = func(context.Context, string, string) error {
+		t.Fatal("up-to-date package-managed update must not run package manager")
+		return nil
 	}
 
 	origExit := lastExit
@@ -221,6 +237,12 @@ func TestUpdate_Idempotent_NoOp(t *testing.T) {
 	if !strings.Contains(out, `"status": "up_to_date"`) || !strings.Contains(out, `"update_available": false`) {
 		t.Fatalf("expected idempotent no-op, got:\n%s", out)
 	}
+	if strings.Contains(out, `"notices"`) {
+		t.Fatalf("idempotent no-op must not emit stale meta.notices:\n%s", out)
+	}
+	if notices := readCachedUpdateNotices(); len(notices) != 0 {
+		t.Fatalf("cached notices after no-op = %+v, want none", notices)
+	}
 }
 
 // TestUpdate_SkillSyncFailure_PartialSuccess asserts that a skill_sync failure
@@ -228,9 +250,18 @@ func TestUpdate_Idempotent_NoOp(t *testing.T) {
 // binary_replaced:true) carrying skill_sync_command and retryable:true.
 func TestUpdate_SkillSyncFailure_PartialSuccess(t *testing.T) {
 	resetUpdateTestState(t)
+	updateNoticeTestForceEnabled = true
+	t.Cleanup(func() { updateNoticeTestForceEnabled = false })
 	version = "1.0.0"
 	srv := newUpdateTestServer(t, "1.2.3", []byte("new-binary"), "", true)
 	defer srv.Close()
+	writeUpdateNoticeCache([]updateNotice{{
+		Type:            "update_available",
+		UpdateAvailable: true,
+		CurrentVersion:  "1.0.0",
+		LatestVersion:   "1.2.3",
+		CheckedAt:       time.Now().UTC().Format(time.RFC3339),
+	}})
 	updateApply = func(_, dst string) (updateApplyResult, error) {
 		return updateApplyResult{Status: "installed", Path: dst}, nil
 	}
@@ -248,10 +279,16 @@ func TestUpdate_SkillSyncFailure_PartialSuccess(t *testing.T) {
 	if lastExit != ExitNetwork {
 		t.Fatalf("exit=%d want=%d\n%s", lastExit, ExitNetwork, out)
 	}
-	for _, want := range []string{`"ok": false`, `"binary_replaced": true`, `"skill_sync_status": "failed"`, `"skill_sync_command"`, `"retryable": true`} {
+	for _, want := range []string{`"ok": false`, `"binary_replaced": true`, `"skill_sync_status": "failed"`, `"skill_sync_command"`, `"target_version": "1.2.3"`, `"update_available": false`, `"retryable": true`} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("missing %q in partial success:\n%s", want, out)
 		}
+	}
+	if strings.Contains(out, `"notices"`) {
+		t.Fatalf("partial success must not emit stale meta.notices:\n%s", out)
+	}
+	if notices := readCachedUpdateNotices(); len(notices) != 0 {
+		t.Fatalf("cached notices after partial success = %+v, want none", notices)
 	}
 }
 
@@ -1058,10 +1095,51 @@ func TestUpdate_NPMInstallDrivesPackageManager(t *testing.T) {
 	if !skillSynced {
 		t.Fatalf("expected Skill sync to run after npm install")
 	}
-	for _, want := range []string{`"status": "installed"`, `"skill_sync_status": "synced"`, `"signature_status": "not_checked"`} {
+	for _, want := range []string{`"status": "installed"`, `"current_version": "1.2.3"`, `"target_version": "1.2.3"`, `"update_available": false`, `"skill_sync_status": "synced"`, `"signature_status": "not_checked"`} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("missing %q in:\n%s", want, out)
 		}
+	}
+}
+
+func TestUpdate_NPMInstallClearsNoticeCache(t *testing.T) {
+	resetUpdateTestState(t)
+	updateNoticeTestForceEnabled = true
+	t.Cleanup(func() { updateNoticeTestForceEnabled = false })
+	version = "1.0.0"
+	srv := newUpdateTestServer(t, "1.2.3", []byte("new-binary"), "", true)
+	defer srv.Close()
+	updateExecutable = func() (string, error) {
+		return "/usr/lib/node_modules/@fateforge/gitlab-cli/bin/gitlab-cli", nil
+	}
+
+	writeUpdateNoticeCache([]updateNotice{{
+		Type:            "update_available",
+		UpdateAvailable: true,
+		CurrentVersion:  "1.0.0",
+		LatestVersion:   "1.2.3",
+		CheckedAt:       time.Now().UTC().Format(time.RFC3339),
+	}})
+	path, err := updateNoticeCachePath()
+	if err != nil {
+		t.Fatalf("cache path: %v", err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("seed cache not written: %v", err)
+	}
+
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	out := captureStdout(t, func() {
+		rootCmd.SetArgs([]string{"update", "--json"})
+		_ = rootCmd.Execute()
+	})
+	if lastExit != ExitOK {
+		t.Fatalf("exit=%d want=0\n%s", lastExit, out)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("notice cache should be cleared after package-manager install, stat err = %v", err)
 	}
 }
 
@@ -1171,6 +1249,46 @@ func TestUpdate_PackageManagerFailureReportsUnchanged(t *testing.T) {
 	for _, want := range []string{`"code": "E_IO"`, `"binary_replaced": false`, "npm install -g @fateforge/gitlab-cli@1.2.3"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("missing %q in:\n%s", want, out)
+		}
+	}
+}
+
+func TestUpdate_PackageManagerSkillSyncInterruptionIsInterrupted(t *testing.T) {
+	resetUpdateTestState(t)
+	version = "1.0.0"
+	srv := newUpdateTestServer(t, "1.2.3", []byte("new-binary"), "", true)
+	defer srv.Close()
+
+	updateExecutable = func() (string, error) {
+		return "/usr/lib/node_modules/@fateforge/gitlab-cli/bin/gitlab-cli", nil
+	}
+	updateRunPackageManager = func(context.Context, string, string) error { return nil }
+	ctx, cancel := context.WithCancel(context.Background())
+	updateSkillSync = func(context.Context, string) error {
+		cancel()
+		return context.Canceled
+	}
+
+	origCtx := rootCmd.Context()
+	rootCmd.SetContext(ctx)
+	t.Cleanup(func() {
+		cancel()
+		rootCmd.SetContext(origCtx)
+	})
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+
+	out := captureCombinedOutput(t, func() {
+		rootCmd.SetArgs([]string{"update", "--json"})
+		_ = rootCmd.Execute()
+	})
+	if lastExit != ExitInterrupted {
+		t.Fatalf("exit=%d want=%d\n%s", lastExit, ExitInterrupted, out)
+	}
+	for _, want := range []string{`"code": "E_INTERRUPTED"`, `"stage": "skill_sync"`, `"binary_replaced": true`, `"target_version": "1.2.3"`, `"update_available": false`} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q in interrupted partial success:\n%s", want, out)
 		}
 	}
 }

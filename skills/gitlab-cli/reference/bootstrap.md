@@ -57,7 +57,7 @@ gitlab-cli update --compact
 gitlab-cli changelog --since <previous_version> --compact
 ```
 
-A bare `gitlab-cli update` performs the whole self-update in one call (no confirm token): it downloads the GitHub Release assets, verifies the signed `checksums.txt` then the archive checksum, replaces the current binary, and syncs the Skill. `--check` and `--dry-run` are optional read-only probes that change nothing and issue NO token. After a successful update, confirm `skill_sync_status` (or run the returned `skill_sync_command`), review signature/checksum status, and read `changelog --since <previous_version>` before continuing. On Windows, replacement may be scheduled for after the current process exits.
+A bare `gitlab-cli update` performs the whole self-update in one call (no confirm token): it downloads the GitHub Release assets, verifies the signed `checksums.txt` then the archive checksum, replaces the current binary, and syncs the Skill. `--check` and `--dry-run` are optional read-only probes that change nothing and issue NO token. After a successful update, confirm the result is final-state (`current_version == target_version`, `update_available: false`), confirm `skill_sync_status` (or run the returned `skill_sync_command`), review signature/checksum status, and read `changelog --since <previous_version>` before continuing.
 
 ## Self-description
 

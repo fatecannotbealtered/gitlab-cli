@@ -164,6 +164,7 @@ func runUpdate(cmd *cobra.Command, _ []string) error {
 	installNeeded := reinstall || plan.UpdateAvailable || targetVersionDiffers(plan, targetVersion)
 	if !installNeeded {
 		// Idempotent: already on the target version is a no-op success.
+		writeUpdateNoticeCache(nil)
 		printUpdateResult(result)
 		return nil
 	}
@@ -273,7 +274,7 @@ func runUpdateInstall(cmd *cobra.Command, plan updatePlan) error {
 	// Binary is committed from here on. A skill_sync failure is PARTIAL SUCCESS,
 	// never a hard error that loses the fact the binary already updated.
 	if err := updateSkillSync(ctx, updateSkillRepo); err != nil {
-		if ctxErr := ctx.Err(); ctxErr != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil || errors.Is(err, context.Canceled) {
 			return emitUpdatePartialSuccess(plan, applied, signatureStatus, "interrupted", "syncing skill directory interrupted: "+err.Error())
 		}
 		return emitUpdatePartialSuccess(plan, applied, signatureStatus, "failed", "syncing skill directory: "+err.Error())
@@ -283,6 +284,7 @@ func runUpdateInstall(cmd *cobra.Command, plan updatePlan) error {
 	result["path"] = applied.Path
 	result["previous_version"] = plan.CurrentVersion
 	result["current_version"] = plan.TargetVersion
+	result["update_available"] = false
 	result["binary_replaced"] = true
 	result["checksum_verified"] = true
 	result["signature_status"] = signatureStatus
@@ -324,17 +326,21 @@ func runPackageManagerUpdate(ctx context.Context, plan updatePlan, method string
 		return failPackageManagerStage(plan, command, err)
 	}
 
+	writeUpdateNoticeCache(nil)
+
 	// The package manager replaced the on-disk binary; this process is still the
 	// old image, so the new version is effective on the next invocation.
 	if err := updateSkillSync(ctx, updateSkillRepo); err != nil {
-		partialPlan := plan
-		partialPlan.CurrentVersion = plan.TargetVersion
-		return emitUpdatePartialSuccess(partialPlan, updateApplyResult{Status: "installed"}, "not_checked", "failed", "syncing skill directory: "+err.Error())
+		if ctxErr := ctx.Err(); ctxErr != nil || errors.Is(err, context.Canceled) {
+			return emitUpdatePartialSuccess(plan, updateApplyResult{Status: "installed"}, "not_checked", "interrupted", "syncing skill directory interrupted: "+err.Error())
+		}
+		return emitUpdatePartialSuccess(plan, updateApplyResult{Status: "installed"}, "not_checked", "failed", "syncing skill directory: "+err.Error())
 	}
 
 	result := updateResultMap(plan, "installed")
 	result["previous_version"] = plan.CurrentVersion
 	result["current_version"] = plan.TargetVersion
+	result["update_available"] = false
 	result["binary_replaced"] = true
 	result["signature_status"] = "not_checked"
 	result["skill_sync_status"] = "synced"
@@ -464,9 +470,14 @@ func emitUpdatePartialSuccess(plan updatePlan, applied updateApplyResult, signat
 	details := updateStageDetails("skill_sync", plan, true, skillSyncStatus)
 	details["skill_sync_command"] = plan.SkillSyncCommand
 	details["previous_version"] = normalizeVersion(plan.CurrentVersion)
+	details["target_version"] = normalizeVersion(plan.TargetVersion)
+	details["update_available"] = false
 	details["signature_status"] = signatureStatus
 	details["binary_path"] = applied.Path
 	details["hint"] = fmt.Sprintf("binary at %s; run %q, then \"gitlab-cli changelog --since %s\"", normalizeVersion(plan.TargetVersion), plan.SkillSyncCommand, normalizeVersion(plan.CurrentVersion))
+	if skillSyncStatus == "interrupted" {
+		return failWithDetails(msg, ExitInterrupted, output.ErrInterrupted, details)
+	}
 	// Partial success is retryable: the agent re-runs the skill sync.
 	return failWithDetails(msg, ExitNetwork, output.ErrNetwork, details)
 }
