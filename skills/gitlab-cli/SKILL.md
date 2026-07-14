@@ -1,10 +1,10 @@
 ---
 name: gitlab-cli
-version: "1.2.15"
+version: "1.2.16"
 description: GitLab CLI for AI Agents. JSON is the default; use --compact for token efficiency and --format text/raw only when needed. Read reference/*.md for the module you need — do not load the whole skill upfront.
 license: MIT
 user-invocable: true
-metadata: {"requires":{"bins":["gitlab-cli"],"min_version":"1.2.15"}}
+metadata: {"requires":{"bins":["gitlab-cli"],"min_version":"1.2.16"}}
 ---
 
 # gitlab-cli
@@ -76,7 +76,7 @@ First-time setup: ask user for GitLab URL + PAT (`api` scope). `auth login` is a
 
 ## Checkpoints
 
-STOP CHECKPOINT: Ask the user before confirming merges, approvals, issue edits, release publication, repository file writes, branch/tag deletion, protected-resource changes, variable writes, or pipeline/job cancellation.
+STOP CHECKPOINT: Ask the user before confirming merges, approvals, issue edits, release publication, repository file writes, branch/tag deletion, protected-resource changes, variable writes, pipeline/job cancellation, or starting a manual job (`job play`).
 
 STOP CHECKPOINT: Ask the user before using `--force`, `--show-values`, raw log/diff output that may contain secrets, or any operation whose `reference` entry shows high blast radius.
 
@@ -136,7 +136,8 @@ Full contracts (exit codes, error JSON, list envelope, audit): **[reference/cont
 | Resolve/reopen a thread | `gitlab-cli mr discussion resolve --project G 42 --discussion-id <id> --dry-run`, then `--confirm <confirm_token>` (add `--unresolve` to reopen) |
 | Create project | `gitlab-cli project create --name "My App" --visibility private --dry-run`, then `--confirm <confirm_token>` |
 | Wait for CI | `gitlab-cli pipeline wait --project G ID --timeout 600` |
-| Job log | `gitlab-cli job log --project G JOB_ID` (add `--follow --json` for NDJSON stream) |
+| Job log | `gitlab-cli job log --project G JOB_ID` (`--tail N`/`--grep RE`/`--max-bytes N` to save tokens; `--follow --json` for NDJSON stream) |
+| Play manual job | `gitlab-cli job play --project G JOB_ID --dry-run`, then `--confirm <confirm_token>` (add repeatable `--variable KEY=val`) |
 | Close many issues | `gitlab-cli issue bulk close --project G --ids 1,2,3 --dry-run`, then `--confirm <confirm_token>` |
 | Atomic multi-file commit | `gitlab-cli repo commit create --project G --branch main --message "..." --action 'create:path=a.txt;content=hi' --action 'delete:path=old.txt' --dry-run`, then `--confirm <confirm_token>` |
 | Import CI variables | `gitlab-cli variable bulk-import --project G --file .env --dangerous --dry-run`, then `--dangerous --confirm <confirm_token>` |

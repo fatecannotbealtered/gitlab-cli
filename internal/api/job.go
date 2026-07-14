@@ -89,6 +89,32 @@ func (a *JobAPI) Cancel(ctx context.Context, projectID string, jobID int) (*Job,
 	return &j, nil
 }
 
+// JobVariable is a key/value pair supplied when playing a manual job.
+type JobVariable struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
+
+// Play runs (plays) a manual job, optionally passing job variables.
+//
+// POST /api/v4/projects/:id/jobs/:job_id/play
+func (a *JobAPI) Play(ctx context.Context, projectID string, jobID int, vars []JobVariable) (*Job, error) {
+	path := a.client.APIPath("/projects/" + EncodeProjectPath(projectID) + "/jobs/" + strconv.Itoa(jobID) + "/play")
+	var body any
+	if len(vars) > 0 {
+		body = map[string]any{"job_variables_attributes": vars}
+	}
+	data, err := a.client.Post(ctx, path, body)
+	if err != nil {
+		return nil, err
+	}
+	var j Job
+	if err := json.Unmarshal(data, &j); err != nil {
+		return nil, fmt.Errorf("parsing job: %w", err)
+	}
+	return &j, nil
+}
+
 // Artifacts downloads the artifacts archive for a job and returns the raw bytes.
 //
 // GET /api/v4/projects/:id/jobs/:job_id/artifacts

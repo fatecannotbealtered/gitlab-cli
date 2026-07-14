@@ -35,10 +35,15 @@ gitlab-cli pipeline wait --project G 123 --timeout 600 --interval 15 --compact
 gitlab-cli job get --project G 456
 gitlab-cli job log --project G 456                       # {"jobId":456,"log":"..."}
 gitlab-cli job log --project G 456 --format raw          # trace bytes
+gitlab-cli job log --project G 456 --tail 200            # last 200 lines only (token-efficient)
+gitlab-cli job log --project G 456 --grep "error|failed" # only matching lines
+gitlab-cli job log --project G 456 --max-bytes 32768     # cap payload; keeps the tail
 gitlab-cli job log --project G 456 --follow --format text --timeout 300
 gitlab-cli job log --project G 456 --follow --json       # NDJSON stream (see below)
 gitlab-cli job wait --project G 456 --timeout 300
-gitlab-cli job retry --project G 456
+gitlab-cli job retry --project G 456                     # NOT for manual/scheduled jobs — use job play
+gitlab-cli job play --project G 456 --dry-run            # start a manual or scheduled (delayed) job
+gitlab-cli job play --project G 456 --variable KEY=val --confirm <confirm_token>
 gitlab-cli job cancel --project G 456
 gitlab-cli job artifacts --project G 456 --output ./artifacts.zip
 ```
@@ -90,3 +95,6 @@ object per line:
 - `pipeline create` / `cancel` require confirmation
 - Job IDs are global numeric IDs (use `pipeline jobs` to discover)
 - `pipeline wait` progress on stderr; final JSON on stdout
+- `job play` starts a manual **or scheduled (delayed)** job (write; dry-run → confirm). `job retry` rejects a manual/scheduled job with `E_VALIDATION` and points you here — play it instead. The confirm token binds the job state, so a job that drifts to another state before confirm fails closed with `E_CONFLICT`.
+- `--variable KEY=val` (repeatable) passes job variables to `job play`; only the variable **keys** appear in the dry-run preview, never the values.
+- `job log --tail N` / `--grep RE` / `--max-bytes N` filter the trace to save tokens (kept from the tail); JSON output then adds `{totalBytes, returnedBytes, truncated}` so you know it was trimmed.

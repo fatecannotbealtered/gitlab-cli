@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.16] - 2026-07-14
+
+### Added
+
+- **`job play` starts (plays) a manual or scheduled (delayed) CI job** (#18), using the same non-interactive `--dry-run` → `--confirm <confirm_token>` write flow as other write commands. Supports repeatable `--variable KEY=VAL` job variables; only the variable **keys** appear in the dry-run preview, never the values. The confirm token binds the job's pipeline/ref/status, so a job that changes state between dry-run and confirm fails closed with `E_CONFLICT` instead of playing the wrong thing.
+- **`job log` token-efficient read modes** `--tail N`, `--grep <regex>`, and `--max-bytes N` (#17). Filters keep the tail of the trace (where CI logs are most actionable); JSON output then reports `{totalBytes, returnedBytes, truncated}` so an agent knows the trace was trimmed. Unfiltered output is unchanged.
+
+### Fixed
+
+- **`job retry` on a manual or scheduled job is now rejected up front** (#16), in both the `--dry-run` and `--confirm` steps, with `E_VALIDATION` and a hint to use `job play` — instead of issuing a confirm token and only failing after confirmation with a misleading "check PAT scope/permissions" suggestion. GitLab treats an unplayed manual (or delayed) job as not retryable; the CLI now says so accurately.
+
 ## [1.2.15] - 2026-07-08
 
 ### Fixed

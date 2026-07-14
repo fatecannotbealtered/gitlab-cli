@@ -38,12 +38,14 @@ func referenceSchemas() map[string]referenceDataSchema {
 		"pipeline[]": {Shape: "list", Fields: []string{"items[]", "count", "limit", "page", "total", "hasMore", "all"}, UntrustedFields: []string{"items[].ref"}},
 		"job":        {Shape: "object", Fields: []string{"id", "name", "status", "stage", "ref", "webUrl", "createdAt", "startedAt", "finishedAt", "duration", "username", "pipelineId", "_untrusted"}, UntrustedFields: []string{"name", "stage", "ref"}},
 		"job[]":      {Shape: "list", Fields: []string{"items[]", "count", "limit", "page", "total", "hasMore", "all"}, UntrustedFields: []string{"items[].name", "items[].stage", "items[].ref"}},
-		// Non-follow (default): single object {jobId, log}. With --follow --json the
+		// Non-follow (default): single object {jobId, log}. With --tail/--grep/
+		// --max-bytes the object also carries {totalBytes, returnedBytes, truncated}
+		// so an agent knows the trace was filtered. With --follow --json the
 		// command streams NDJSON instead (CLI-SPEC §5): one
 		// {ok,schema_version,type:"chunk",data:{jobId,offset,bytes,data}} line per
 		// new trace range (data.data carries the untrusted log bytes), then a final
 		// {type:"summary",data:{jobId,status,chunks,totalBytes}} line.
-		"job_log":       {Shape: "object|ndjson", Fields: []string{"jobId", "log", "stream:type", "stream:data.offset", "stream:data.bytes", "stream:data.data", "stream:summary.status", "stream:summary.chunks", "stream:summary.totalBytes", "_untrusted"}, UntrustedFields: []string{"log", "stream:data.data"}},
+		"job_log":       {Shape: "object|ndjson", Fields: []string{"jobId", "log", "totalBytes", "returnedBytes", "truncated", "stream:type", "stream:data.offset", "stream:data.bytes", "stream:data.data", "stream:summary.status", "stream:summary.chunks", "stream:summary.totalBytes", "_untrusted"}, UntrustedFields: []string{"log", "stream:data.data"}},
 		"job_wait":      {Shape: "object", Fields: []string{"id", "status", "log", "_untrusted"}, UntrustedFields: []string{"log"}},
 		"job_artifacts": {Shape: "object", Fields: []string{"path", "bytes"}},
 
@@ -199,6 +201,7 @@ var commandSchemaLabels = map[string]string{
 	"job cancel":    "job",
 	"job get":       "job",
 	"job log":       "job_log",
+	"job play":      "job",
 	"job retry":     "job",
 	"job wait":      "job_wait",
 
@@ -323,7 +326,8 @@ var commandExamples = map[string][]string{
 	"job artifacts": {"gitlab-cli job artifacts 999 --output artifacts.zip --compact"},
 	"job cancel":    {"gitlab-cli job cancel 999 --dry-run --compact", "gitlab-cli job cancel 999 --confirm <confirm_token> --compact"},
 	"job get":       {"gitlab-cli job get 999 --compact"},
-	"job log":       {"gitlab-cli job log 999 --compact", "gitlab-cli job log 999 --follow --json   # NDJSON: {type:chunk} lines + final {type:summary}"},
+	"job log":       {"gitlab-cli job log 999 --compact", "gitlab-cli job log 999 --tail 200 --grep \"error|failed\" --compact", "gitlab-cli job log 999 --follow --json   # NDJSON: {type:chunk} lines + final {type:summary}"},
+	"job play":      {"gitlab-cli job play 999 --dry-run --compact", "gitlab-cli job play 999 --variable KEY=val --confirm <confirm_token> --compact"},
 	"job retry":     {"gitlab-cli job retry 999 --dry-run --compact", "gitlab-cli job retry 999 --confirm <confirm_token> --compact"},
 	"job wait":      {"gitlab-cli job wait 999 --compact"},
 

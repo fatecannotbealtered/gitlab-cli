@@ -33,7 +33,7 @@ func pad(f *Fixture, parts ...string) []string {
 	return out
 }
 
-// BuildCommandCases returns integration cases for every leaf command (85).
+// BuildCommandCases returns integration cases for every leaf command (86).
 func BuildCommandCases(f *Fixture) []CommandCase {
 	host := os.Getenv("GITLAB_CLI_HOST")
 	token := os.Getenv("GITLAB_CLI_TOKEN")
@@ -236,6 +236,12 @@ func BuildCommandCases(f *Fixture) []CommandCase {
 			return out
 		}, SkipIf: skipNoJob},
 		{Path: "job retry", Args: func(f *Fixture) []string { return pad(f, "job", "retry", f.JobIDStr()) }, SkipIf: skipNoJob},
+		// The shared fixture's job is an auto-run (non-manual) job, which `job play`
+		// correctly rejects; a real manual-job play is covered by unit tests and the
+		// recorded live smoke rather than this enumeration case.
+		{Path: "job play", Args: func(f *Fixture) []string { return pad(f, "job", "play", f.JobIDStr()) }, SkipIf: func(f *Fixture) string {
+			return "job play requires a manual job; covered by unit tests + live smoke"
+		}},
 		{Path: "job cancel", Args: func(f *Fixture) []string { return pad(f, "job", "cancel", f.JobIDStr()) }, SkipIf: skipNoJob},
 		{Path: "job artifacts", Args: func(f *Fixture) []string {
 			return pa(f, "job", "artifacts", f.JobIDStr(), "--output", filepath.Join(os.TempDir(), "gitlab-cli-e2e-artifacts.zip"))

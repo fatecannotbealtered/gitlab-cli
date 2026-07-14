@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/spf13/cobra"
 )
@@ -31,7 +32,11 @@ func resetJobFlags(t *testing.T) {
 		{jobLogCmd, "project", ""},
 		{jobLogCmd, "follow", "false"},
 		{jobLogCmd, "timeout", "0"},
+		{jobLogCmd, "tail", "0"},
+		{jobLogCmd, "grep", ""},
+		{jobLogCmd, "max-bytes", "0"},
 		{jobRetryCmd, "project", ""},
+		{jobPlayCmd, "project", ""},
 		{jobCancelCmd, "project", ""},
 		{jobArtifactsCmd, "project", ""},
 		{jobArtifactsCmd, "output", ""},
@@ -43,6 +48,7 @@ func resetJobFlags(t *testing.T) {
 			t.Fatalf("reset job flag %q: %v", kv.name, err)
 		}
 	}
+	resetSliceFlagsForTest(t, []string{"job", "play"})
 }
 
 func TestJobHelp_ListsSubcommands(t *testing.T) {
@@ -99,7 +105,12 @@ func TestJobLog_Output(t *testing.T) {
 }
 
 func TestJobRetry_DryRun(t *testing.T) {
-	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":99,"name":"build","status":"failed","stage":"build","ref":"main"}`))
+	}))
+	defer srv.Close()
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
 	t.Setenv("GITLAB_CLI_TOKEN", "tok")
 
 	out := captureStdout(t, func() {
@@ -107,7 +118,7 @@ func TestJobRetry_DryRun(t *testing.T) {
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, `"confirm_token"`) {
-		t.Errorf("expected dryRun:true, got:\n%s", out)
+		t.Errorf("expected dry-run confirm_token, got:\n%s", out)
 	}
 }
 
@@ -160,7 +171,7 @@ func TestJob_Help_ListsSubcommands(t *testing.T) {
 	_ = rootCmd.Execute()
 	rootCmd.SetOut(os.Stdout)
 	out := buf.String()
-	for _, want := range []string{"get", "log", "retry", "cancel", "artifacts", "wait"} {
+	for _, want := range []string{"get", "log", "retry", "play", "cancel", "artifacts", "wait"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("job --help missing %q, got:\n%s", want, out)
 		}
@@ -229,6 +240,13 @@ func TestJob_Log_JSON(t *testing.T) {
 }
 
 func TestJob_Retry_DryRun_JSON(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":10,"name":"build","status":"failed","stage":"build","ref":"main"}`))
+	}))
+	defer srv.Close()
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "tok")
 	origDR := dryRun
 	origJM := jsonMode
 	defer func() { dryRun = origDR; jsonMode = origJM }()
@@ -238,7 +256,7 @@ func TestJob_Retry_DryRun_JSON(t *testing.T) {
 		_ = rootCmd.Execute()
 	})
 	if !strings.Contains(out, `"confirm_token"`) {
-		t.Errorf("expected dryRun:true, got:\n%s", out)
+		t.Errorf("expected dry-run confirm_token, got:\n%s", out)
 	}
 }
 
@@ -333,12 +351,13 @@ func TestJob_Wait_Timeout(t *testing.T) {
 
 func TestJob_Retry_JSON(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		if r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/retry") {
-			w.Header().Set("Content-Type", "application/json")
 			_, _ = fmt.Fprint(w, `{"id":10,"name":"build","status":"pending","stage":"build","ref":"main","web_url":"http://x","created_at":"2024-01-01","duration":0}`)
 			return
 		}
-		http.NotFound(w, r)
+		// Pre-retry status probe: return a retryable (non-manual) job.
+		_, _ = fmt.Fprint(w, `{"id":10,"name":"build","status":"failed","stage":"build","ref":"main"}`)
 	}))
 	defer srv.Close()
 	t.Setenv("GITLAB_CLI_HOST", srv.URL)
@@ -873,7 +892,7 @@ func TestJob_Retry_NewClientError(t *testing.T) {
 	origExit := lastExit
 	defer func() { lastExit = origExit }()
 	lastExit = 0
-	rootCmd.SetArgs(withConfirmForTest(t, []string{"job", "retry", "--project", "42", "99"}))
+	rootCmd.SetArgs([]string{"job", "retry", "--project", "42", "99"})
 	_ = rootCmd.Execute()
 	if lastExit != ExitAuth {
 		t.Errorf("exit = %d, want %d", lastExit, ExitAuth)
@@ -1287,5 +1306,415 @@ func TestJob_Artifacts_MissingProject(t *testing.T) {
 	_ = rootCmd.Execute()
 	if lastExit != ExitBadArgs {
 		t.Errorf("exit = %d, want %d", lastExit, ExitBadArgs)
+	}
+}
+
+// ── manual-aware retry (#16) ─────────────────────────────────────────────────
+
+func TestJob_Retry_ManualRejected(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":50,"name":"deploy","status":"manual","stage":"deploy","ref":"main"}`))
+	}))
+	defer srv.Close()
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "tok")
+	resetJobFlags(t)
+	origExit := lastExit
+	origDR := dryRun
+	defer func() { lastExit = origExit; dryRun = origDR }()
+	lastExit = 0
+	out := captureStdout(t, func() {
+		rootCmd.SetArgs([]string{"job", "retry", "--project", "42", "50", "--dry-run", "--json"})
+		_ = rootCmd.Execute()
+	})
+	// A manual job must be rejected before a confirm token is issued, with a hint
+	// pointing at `job play` rather than an auth-troubleshooting message.
+	if strings.Contains(out, `"confirm_token"`) {
+		t.Errorf("manual job should not receive a confirm token, got:\n%s", out)
+	}
+	if !strings.Contains(out, "job play") {
+		t.Errorf("expected hint pointing to job play, got:\n%s", out)
+	}
+	if lastExit != ExitBadArgs {
+		t.Errorf("exit = %d, want %d (E_VALIDATION)", lastExit, ExitBadArgs)
+	}
+}
+
+// ── job play (#18) ───────────────────────────────────────────────────────────
+
+// jobPlayServer mocks GitLab for `job play`: the GET status probe returns a job
+// with the given status; POST .../play returns a started (pending) job.
+func jobPlayServer(t *testing.T, getStatus string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/play") {
+			_, _ = fmt.Fprint(w, `{"id":50,"name":"deploy","status":"pending","stage":"deploy","ref":"main","web_url":"http://x","created_at":"2024-01-01","duration":0}`)
+			return
+		}
+		_, _ = fmt.Fprintf(w, `{"id":50,"name":"deploy","status":%q,"stage":"deploy","ref":"main","pipeline":{"id":7,"ref":"main"}}`, getStatus)
+	}))
+}
+
+func TestJob_Play_DryRun_JSON(t *testing.T) {
+	srv := jobPlayServer(t, "manual")
+	defer srv.Close()
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "tok")
+	resetJobFlags(t)
+	origDR := dryRun
+	origJM := jsonMode
+	defer func() { dryRun = origDR; jsonMode = origJM }()
+	out := captureStdout(t, func() {
+		rootCmd.SetArgs([]string{"job", "play", "--project", "42", "50", "--dry-run", "--json"})
+		_ = rootCmd.Execute()
+	})
+	if !strings.Contains(out, `"confirm_token"`) {
+		t.Errorf("expected dry-run confirm_token, got:\n%s", out)
+	}
+}
+
+func TestJob_Play_JSON(t *testing.T) {
+	srv := jobPlayServer(t, "manual")
+	defer srv.Close()
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "tok")
+	resetJobFlags(t)
+	origDR := dryRun
+	origJM := jsonMode
+	defer func() { dryRun = origDR; jsonMode = origJM }()
+	dryRun = false
+	out := captureStdout(t, func() {
+		rootCmd.SetArgs(withConfirmForTest(t, []string{"job", "play", "--project", "foo/bar", "50", "--json"}))
+		_ = rootCmd.Execute()
+	})
+	if !strings.Contains(out, `"pending"`) {
+		t.Errorf("expected played job (status pending), got:\n%s", out)
+	}
+}
+
+func TestJob_Play_WithVariables_DryRunKeysOnly(t *testing.T) {
+	srv := jobPlayServer(t, "manual")
+	defer srv.Close()
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "tok")
+	resetJobFlags(t)
+	origDR := dryRun
+	origJM := jsonMode
+	defer func() { dryRun = origDR; jsonMode = origJM }()
+	out := captureStdout(t, func() {
+		rootCmd.SetArgs([]string{"job", "play", "--project", "42", "50", "--variable", "TOKEN=s3cr3t", "--dry-run", "--json"})
+		_ = rootCmd.Execute()
+	})
+	if !strings.Contains(out, `"confirm_token"`) {
+		t.Errorf("expected dry-run confirm_token, got:\n%s", out)
+	}
+	// The preview binds/exposes the variable KEY but must never leak the value.
+	if !strings.Contains(out, "TOKEN") {
+		t.Errorf("expected variable key TOKEN in preview, got:\n%s", out)
+	}
+	if strings.Contains(out, "s3cr3t") {
+		t.Errorf("variable value leaked into dry-run preview:\n%s", out)
+	}
+}
+
+func TestJob_Play_NotManualRejected(t *testing.T) {
+	srv := jobPlayServer(t, "success")
+	defer srv.Close()
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "tok")
+	resetJobFlags(t)
+	origExit := lastExit
+	origDR := dryRun
+	defer func() { lastExit = origExit; dryRun = origDR }()
+	lastExit = 0
+	out := captureStdout(t, func() {
+		rootCmd.SetArgs([]string{"job", "play", "--project", "42", "50", "--dry-run", "--json"})
+		_ = rootCmd.Execute()
+	})
+	if strings.Contains(out, `"confirm_token"`) {
+		t.Errorf("non-manual job should not receive a confirm token, got:\n%s", out)
+	}
+	if lastExit != ExitBadArgs {
+		t.Errorf("exit = %d, want %d (E_VALIDATION)", lastExit, ExitBadArgs)
+	}
+}
+
+func TestJob_Play_InvalidVariable(t *testing.T) {
+	srv := jobPlayServer(t, "manual")
+	defer srv.Close()
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "tok")
+	resetJobFlags(t)
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"job", "play", "--project", "42", "50", "--variable", "BROKEN", "--dry-run", "--json"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitBadArgs {
+		t.Errorf("exit = %d, want %d for invalid --variable", lastExit, ExitBadArgs)
+	}
+}
+
+func TestJob_Play_MissingProject(t *testing.T) {
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "tok")
+	resetJobFlags(t)
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	_ = jobPlayCmd.Flags().Set("project", "")
+	rootCmd.SetArgs([]string{"job", "play", "50"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitBadArgs {
+		t.Errorf("exit = %d, want %d", lastExit, ExitBadArgs)
+	}
+}
+
+func TestJob_Play_InvalidID(t *testing.T) {
+	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
+	t.Setenv("GITLAB_CLI_TOKEN", "tok")
+	resetJobFlags(t)
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"job", "play", "--project", "42", "bad"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitBadArgs {
+		t.Errorf("exit = %d, want %d", lastExit, ExitBadArgs)
+	}
+}
+
+func TestJob_Play_NewClientError(t *testing.T) {
+	isolateConfigHome(t)
+	t.Setenv("GITLAB_CLI_HOST", "")
+	t.Setenv("GITLAB_CLI_TOKEN", "")
+	resetJobFlags(t)
+	origExit := lastExit
+	defer func() { lastExit = origExit }()
+	lastExit = 0
+	rootCmd.SetArgs([]string{"job", "play", "--project", "42", "50"})
+	_ = rootCmd.Execute()
+	if lastExit != ExitAuth {
+		t.Errorf("exit = %d, want %d", lastExit, ExitAuth)
+	}
+}
+
+// ── token-efficient job log read modes (#17) ─────────────────────────────────
+
+func jobTraceServer(t *testing.T, trace string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(trace))
+	}))
+}
+
+func TestJob_Log_Tail(t *testing.T) {
+	srv := jobTraceServer(t, "l1\nl2\nl3\nl4\nl5\n")
+	defer srv.Close()
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "tok")
+	resetJobFlags(t)
+	setTextFormatForTest(t)
+	_ = rootCmd.PersistentFlags().Set("json", "false")
+	out := captureStdout(t, func() {
+		rootCmd.SetArgs([]string{"job", "log", "--project", "42", "99", "--tail", "2"})
+		_ = rootCmd.Execute()
+	})
+	if strings.Contains(out, "l3") || !strings.Contains(out, "l4") || !strings.Contains(out, "l5") {
+		t.Errorf("--tail 2 should return only the last 2 lines, got:\n%s", out)
+	}
+}
+
+func TestJob_Log_Grep(t *testing.T) {
+	srv := jobTraceServer(t, "starting\nPlan: 1 to add\nApply complete!\ncleanup\n")
+	defer srv.Close()
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "tok")
+	resetJobFlags(t)
+	setTextFormatForTest(t)
+	_ = rootCmd.PersistentFlags().Set("json", "false")
+	out := captureStdout(t, func() {
+		rootCmd.SetArgs([]string{"job", "log", "--project", "42", "99", "--grep", "Plan:|Apply complete"})
+		_ = rootCmd.Execute()
+	})
+	if !strings.Contains(out, "Plan: 1 to add") || !strings.Contains(out, "Apply complete!") {
+		t.Errorf("--grep should keep matching lines, got:\n%s", out)
+	}
+	if strings.Contains(out, "starting") || strings.Contains(out, "cleanup") {
+		t.Errorf("--grep should drop non-matching lines, got:\n%s", out)
+	}
+}
+
+func TestJob_Log_MaxBytes(t *testing.T) {
+	srv := jobTraceServer(t, "0123456789ABCDEF")
+	defer srv.Close()
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "tok")
+	resetJobFlags(t)
+	out := captureStdout(t, func() {
+		rootCmd.SetArgs([]string{"job", "log", "--project", "42", "99", "--max-bytes", "4", "--json"})
+		_ = rootCmd.Execute()
+	})
+	m := unwrapJSONDataMap(t, out)
+	if log, _ := m["log"].(string); log != "CDEF" {
+		t.Errorf("--max-bytes 4 should keep the last 4 bytes 'CDEF', got %q\nfull:\n%s", log, out)
+	}
+}
+
+func TestJob_Log_Filter_JSONMeta(t *testing.T) {
+	srv := jobTraceServer(t, "l1\nl2\nl3\nl4\nl5\n")
+	defer srv.Close()
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "tok")
+	resetJobFlags(t)
+	out := captureStdout(t, func() {
+		rootCmd.SetArgs([]string{"job", "log", "--project", "42", "99", "--tail", "1", "--json"})
+		_ = rootCmd.Execute()
+	})
+	m := unwrapJSONDataMap(t, out)
+	if _, ok := m["totalBytes"]; !ok {
+		t.Errorf("expected totalBytes in filtered log JSON, got:\n%s", out)
+	}
+	if trunc, _ := m["truncated"].(bool); !trunc {
+		t.Errorf("expected truncated=true when tailing, got:\n%s", out)
+	}
+	if log, _ := m["log"].(string); !strings.Contains(log, "l5") || strings.Contains(log, "l1") {
+		t.Errorf("expected only the last line, got:\n%s", out)
+	}
+}
+
+func TestJob_Log_NoFilter_NoMeta(t *testing.T) {
+	srv := jobTraceServer(t, "hello\nworld\n")
+	defer srv.Close()
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "tok")
+	resetJobFlags(t)
+	out := captureStdout(t, func() {
+		rootCmd.SetArgs([]string{"job", "log", "--project", "42", "99", "--json"})
+		_ = rootCmd.Execute()
+	})
+	m := unwrapJSONDataMap(t, out)
+	if _, ok := m["totalBytes"]; ok {
+		t.Errorf("unfiltered log should not carry truncation meta, got:\n%s", out)
+	}
+	if log, _ := m["log"].(string); !strings.Contains(log, "hello") || !strings.Contains(log, "world") {
+		t.Errorf("expected the full log, got:\n%s", out)
+	}
+}
+
+// ── review follow-ups: scheduled state, state-drift conflict, UTF-8 boundary ──
+
+func TestJob_Play_Scheduled_DryRun(t *testing.T) {
+	srv := jobPlayServer(t, "scheduled")
+	defer srv.Close()
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "tok")
+	resetJobFlags(t)
+	origDR := dryRun
+	origJM := jsonMode
+	defer func() { dryRun = origDR; jsonMode = origJM }()
+	out := captureStdout(t, func() {
+		rootCmd.SetArgs([]string{"job", "play", "--project", "42", "50", "--dry-run", "--json"})
+		_ = rootCmd.Execute()
+	})
+	// GitLab's play endpoint accepts scheduled (delayed) jobs too, so play must
+	// treat them as startable, not reject them.
+	if !strings.Contains(out, `"confirm_token"`) {
+		t.Errorf("scheduled job should be playable (expect confirm_token), got:\n%s", out)
+	}
+}
+
+func TestJob_Retry_ScheduledRejected(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":50,"name":"deploy","status":"scheduled","stage":"deploy","ref":"main"}`))
+	}))
+	defer srv.Close()
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "tok")
+	resetJobFlags(t)
+	origExit := lastExit
+	origDR := dryRun
+	defer func() { lastExit = origExit; dryRun = origDR }()
+	lastExit = 0
+	out := captureStdout(t, func() {
+		rootCmd.SetArgs([]string{"job", "retry", "--project", "42", "50", "--dry-run", "--json"})
+		_ = rootCmd.Execute()
+	})
+	if strings.Contains(out, `"confirm_token"`) {
+		t.Errorf("scheduled job should not be retryable, got:\n%s", out)
+	}
+	if !strings.Contains(out, "job play") {
+		t.Errorf("expected hint pointing to job play, got:\n%s", out)
+	}
+	if lastExit != ExitBadArgs {
+		t.Errorf("exit = %d, want %d (E_VALIDATION)", lastExit, ExitBadArgs)
+	}
+}
+
+func TestJob_Play_StateDrift_Conflict(t *testing.T) {
+	// GET returns manual on the dry-run probe, then running on the confirm probe
+	// — simulating another actor playing the job in between. POST /play must not
+	// be reached: the confirm-token comparison fails closed first.
+	var getCount atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/play") {
+			t.Errorf("POST /play must not be reached on state drift")
+			_, _ = fmt.Fprint(w, `{"id":50,"name":"deploy","status":"pending","stage":"deploy","ref":"main"}`)
+			return
+		}
+		status := "manual"
+		if getCount.Add(1) >= 2 {
+			status = "running"
+		}
+		_, _ = fmt.Fprintf(w, `{"id":50,"name":"deploy","status":%q,"stage":"deploy","ref":"main","pipeline":{"id":7,"ref":"main"}}`, status)
+	}))
+	defer srv.Close()
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "tok")
+	resetJobFlags(t)
+	origExit := lastExit
+	origDR := dryRun
+	origJM := jsonMode
+	defer func() { lastExit = origExit; dryRun = origDR; jsonMode = origJM }()
+	lastExit = 0
+	dryRun = false
+	out := captureStdout(t, func() {
+		rootCmd.SetArgs(withConfirmForTest(t, []string{"job", "play", "--project", "foo/bar", "50", "--json"}))
+		_ = rootCmd.Execute()
+	})
+	// A token issued while manual, confirmed after drift to running, must fail
+	// closed with E_CONFLICT (exit 6) — not E_VALIDATION.
+	if !strings.Contains(out, "E_CONFLICT") {
+		t.Errorf("expected E_CONFLICT on state drift, got:\n%s", out)
+	}
+	if LastExitCode() != ExitConflict {
+		t.Errorf("exit = %d, want %d (E_CONFLICT)", LastExitCode(), ExitConflict)
+	}
+}
+
+func TestJob_Log_MaxBytes_RuneBoundary(t *testing.T) {
+	// "世界" runes are 3 bytes each in UTF-8; a byte cap of 7 lands mid-rune.
+	srv := jobTraceServer(t, "hello 世界世界世界世界")
+	defer srv.Close()
+	t.Setenv("GITLAB_CLI_HOST", srv.URL)
+	t.Setenv("GITLAB_CLI_TOKEN", "tok")
+	resetJobFlags(t)
+	out := captureStdout(t, func() {
+		rootCmd.SetArgs([]string{"job", "log", "--project", "42", "99", "--max-bytes", "7", "--json"})
+		_ = rootCmd.Execute()
+	})
+	m := unwrapJSONDataMap(t, out)
+	log, _ := m["log"].(string)
+	if !utf8.ValidString(log) {
+		t.Errorf("--max-bytes must not split a UTF-8 rune; got invalid UTF-8: %q", log)
+	}
+	if len(log) > 7 {
+		t.Errorf("returned %d bytes, want <= 7 (the cap)", len(log))
 	}
 }

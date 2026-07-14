@@ -159,6 +159,8 @@ func commandPathForConfirmAction(action string) string {
 		return "gitlab-cli issue comment delete"
 	case "retry job":
 		return "gitlab-cli job retry"
+	case "play job":
+		return "gitlab-cli job play"
 	case "cancel job":
 		return "gitlab-cli job cancel"
 	case "create label":
