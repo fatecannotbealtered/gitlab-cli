@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Raise the Go toolchain to 1.26.6 to clear four reachable Go standard-library
+  vulnerabilities reported by `govulncheck`: GO-2026-6218 (`net/url`),
+  GO-2026-6090 (`crypto/tls`), GO-2026-5972 (`encoding/asn1`), and
+  GO-2026-5026 (`net/http`).
+
+### Fixed
+
+- The scheduled `Integration` workflow no longer pins its own Go version. It
+  pinned `1.24` while `go.mod` required `1.25.8`, so with `GOTOOLCHAIN=local`
+  every weekly run failed at `go test` before reaching the reference-JSON
+  smoke. It now reads `go-version-file: go.mod`, matching `ci.yml` and
+  `release.yml`, so the toolchain can no longer drift away from `go.mod`.
+
 ## [1.2.16] - 2026-07-14
 
 ### Added
