@@ -1,170 +1,150 @@
 package cmd
 
 import (
+	"fmt"
 	"strconv"
+	"strings"
 
-	"github.com/fatecannotbealtered/gitlab-cli/internal/api"
 	"github.com/spf13/cobra"
+
+	"github.com/fatecannotbealtered/gitlab-cli/internal/aicli"
 )
 
-// mr bulk is a class-B batch (CLI-SPEC §15.7): GitLab has no public bulk REST for
-// MR state/approval/merge, so the command loops client-side over --ids. bulk
-// merge is irreversible/high-blast, so it is registered write-dangerous and
-// requires the §15.4 two-step gate: --dangerous declares intent, the confirm
-// token authorizes the resolved batch. Dangerous batches also default
-// --continue-on-error to false (stop at first failure; no rollback).
+// mr bulk: one write across many merge requests of one project, through
+// App.WriteBatch (CLI-063): one preview listing every merge request, one token, a
+// receipt per item and a summary. GitLab has no bulk endpoint for these, so each
+// item is the single command's plan (mr_write.go), previewed, blocked and verified
+// the same way. bulk merge is dangerous, so it stops at the first failure unless
+// --continue-on-error (the library's default for dangerous batches).
 
-var mrBulkCmd = &cobra.Command{
-	Use:   "bulk",
-	Short: "Run a write action across many merge requests in one call",
+const mrBulkEvidence = "simulated:cmd/mr_bulk_test.go"
+
+func registerMRBulk(app *aicli.App, parent *cobra.Command) {
+	group := &cobra.Command{Use: "bulk"}
+	parent.AddCommand(group)
+	app.Group(group, "Merge, approve, close or update many merge requests of a project in one gated call")
+	addMRBulkMerge(app, group)
+	addMRBulkApprove(app, group)
+	addMRBulkClose(app, group)
+	addMRBulkUpdate(app, group)
 }
 
-// bulkMRAction performs one MR mutation and returns optional per-item detail.
-type bulkMRAction func(client *api.Client, project string, iid int) (map[string]any, error)
-
-func runMRBulk(cmd *cobra.Command, action string, extra map[string]any, fn bulkMRAction) error {
-	project, _ := cmd.Flags().GetString("project")
-	if project == "" {
-		return failArg("--project is required")
-	}
-	ids, err := parsePluralIntFlag(cmd, "ids")
+// mrBulkTargets reads --project and --ids (iids, !iids or refs of that project),
+// drops repeats with the order kept, and binds the iids (CLI-054, CLI-063).
+func mrBulkTargets(cmd *cobra.Command, gl *lazyClient) ([]mrSel, error) {
+	project, err := projectFlag(cmd, "", gl)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	targets := make([]string, len(ids))
-	for i, id := range ids {
-		targets[i] = strconv.Itoa(id)
-	}
-
-	previewExtra := map[string]any{"project": project}
-	for k, v := range extra {
-		previewExtra[k] = v
-	}
-	if done, err := prepareBatchWrite(cmd, action, targets, previewExtra); done || err != nil {
-		return err
-	}
-
-	client, _, err := newClient()
-	if err != nil {
-		return err
-	}
-
-	keepGoing := continueOnError(cmd)
-	items := make([]batchItem, 0, len(ids))
-	var unattempted []string
-	for i, iid := range ids {
-		detail, err := fn(client, project, iid)
-		if err != nil {
-			items = append(items, batchItem{Target: targets[i], OK: false, Error: batchErrorFor(err)})
-			setExitCode(ExitError)
-			if !keepGoing {
-				unattempted = targetsTail(targets, i+1)
-				break
-			}
+	raws, _ := cmd.Flags().GetStringSlice("ids")
+	var sels []mrSel
+	var iids []string
+	seen := map[int]bool{}
+	for _, raw := range raws {
+		if strings.TrimSpace(raw) == "" {
 			continue
 		}
-		items = append(items, batchItem{Target: targets[i], OK: true, Extra: detail})
+		p, iid, _, err := parseMRArg(raw)
+		if err != nil {
+			return nil, aicli.Validation("--ids", "merge request iids (5,6) or refs of the --project (acme/web!5)", "An --ids entry is not a merge request iid or ref.")
+		}
+		if p != "" && !strings.EqualFold(p, project) {
+			e := aicli.Usage("conflicting_flags", "--ids", "An --ids entry names another project than --project; a batch acts on one project.")
+			e.Details["next_action"] = "Run one batch per project."
+			return nil, e
+		}
+		if !seen[iid] {
+			seen[iid] = true
+			sels = append(sels, mrSel{project: project, iid: iid})
+			iids = append(iids, strconv.Itoa(iid))
+		}
 	}
-	emitBatchResult(items, unattempted)
-	return nil
-}
-
-// ─── mr bulk merge (dangerous) ───────────────────────────────────────────────
-
-var mrBulkMergeCmd = &cobra.Command{
-	Use:   "merge",
-	Short: "Merge many merge requests (write-dangerous; requires --dangerous)",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		squash, _ := cmd.Flags().GetBool("squash")
-		removeSource, _ := cmd.Flags().GetBool("should-remove-source-branch")
-		req := &api.MergeRequestMergeRequest{
-			Squash:                   squash,
-			ShouldRemoveSourceBranch: removeSource,
-		}
-		return runMRBulk(cmd, "mr bulk merge", nil, func(c *api.Client, project string, iid int) (map[string]any, error) {
-			_, err := c.MergeRequests.Merge(apiCtx(), project, iid, req)
-			return map[string]any{"action": "merge"}, err
-		})
-	},
-}
-
-// ─── mr bulk approve ─────────────────────────────────────────────────────────
-
-var mrBulkApproveCmd = &cobra.Command{
-	Use:   "approve",
-	Short: "Approve many merge requests",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		return runMRBulk(cmd, "mr bulk approve", nil, func(c *api.Client, project string, iid int) (map[string]any, error) {
-			return map[string]any{"action": "approve"}, c.MergeRequests.Approve(apiCtx(), project, iid)
-		})
-	},
-}
-
-// ─── mr bulk close ───────────────────────────────────────────────────────────
-
-var mrBulkCloseCmd = &cobra.Command{
-	Use:   "close",
-	Short: "Close many merge requests",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		return runMRBulk(cmd, "mr bulk close", nil, func(c *api.Client, project string, iid int) (map[string]any, error) {
-			_, err := c.MergeRequests.Close(apiCtx(), project, iid)
-			return map[string]any{"action": "close"}, err
-		})
-	},
-}
-
-// ─── mr bulk update ──────────────────────────────────────────────────────────
-
-var mrBulkUpdateCmd = &cobra.Command{
-	Use:   "update",
-	Short: "Update many merge requests (title/description/labels/target-branch)",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		title, _ := cmd.Flags().GetString("title")
-		desc, _ := cmd.Flags().GetString("description")
-		addLabels, _ := cmd.Flags().GetString("add-labels")
-		removeLabels, _ := cmd.Flags().GetString("remove-labels")
-		targetBranch, _ := cmd.Flags().GetString("target-branch")
-		if title == "" && desc == "" && addLabels == "" && removeLabels == "" && targetBranch == "" {
-			return failArg("at least one of --title, --description, --add-labels, --remove-labels, --target-branch is required")
-		}
-		req := &api.MergeRequestUpdateRequest{
-			Title:        title,
-			Description:  desc,
-			AddLabels:    addLabels,
-			RemoveLabels: removeLabels,
-			TargetBranch: targetBranch,
-		}
-		return runMRBulk(cmd, "mr bulk update", nil, func(c *api.Client, project string, iid int) (map[string]any, error) {
-			_, err := c.MergeRequests.Update(apiCtx(), project, iid, req)
+	if len(iids) > 0 {
+		if err := aicli.SetResolved(cmd, "ids", iids...); err != nil {
 			return nil, err
-		})
-	},
+		}
+	}
+	return sels, nil
 }
 
-func init() {
-	mrCmd.AddCommand(mrBulkCmd)
-
-	for _, c := range []*cobra.Command{mrBulkApproveCmd, mrBulkCloseCmd, mrBulkUpdateCmd} {
-		c.Flags().String("project", "", "Project ID or path (required)")
-		c.Flags().StringSlice("ids", nil, "MR IIDs (comma-separated or repeatable)")
-		mrBulkCmd.AddCommand(c)
-		markBatch(c, true)
+// mrBulk runs one plan per merge request through the batch gate.
+func mrBulk(app *aicli.App, cmd *cobra.Command, plan func(gl *lazyClient, sel mrSel) mrPlan) error {
+	gl := gitlabFor(app)
+	sels, err := mrBulkTargets(cmd, gl)
+	if err != nil {
+		return err
 	}
+	items := make([]aicli.BatchItem, 0, len(sels))
+	for _, sel := range sels {
+		items = append(items, plan(gl, sel).item())
+	}
+	return app.WriteBatch(cmd, aicli.BatchSpec{Items: items})
+}
 
-	// merge is dangerous: default --continue-on-error to false so a failed merge
-	// stops the batch rather than charging ahead through the rest.
-	mrBulkMergeCmd.Flags().String("project", "", "Project ID or path (required)")
-	mrBulkMergeCmd.Flags().StringSlice("ids", nil, "MR IIDs (comma-separated or repeatable)")
-	mrBulkMergeCmd.Flags().Bool("squash", false, "Squash commits")
-	mrBulkMergeCmd.Flags().Bool("should-remove-source-branch", false, "Remove source branch after merge")
-	mrBulkCmd.AddCommand(mrBulkMergeCmd)
-	markBatch(mrBulkMergeCmd, false)
-	markConfirm(mrBulkMergeCmd)
-	markRiskLevel(mrBulkMergeCmd, "critical")
+func addMRBulkFlags(c *cobra.Command) {
+	c.Flags().String("project", "", "Project path (acme/web), web URL or numeric ID")
+	_ = c.MarkFlagRequired("project")
+	c.Flags().StringSlice("ids", nil, "Merge request iids or refs, comma-separated or repeated")
+	_ = c.MarkFlagRequired("ids")
+}
 
-	mrBulkUpdateCmd.Flags().String("title", "", "New title")
-	mrBulkUpdateCmd.Flags().String("description", "", "New description")
-	mrBulkUpdateCmd.Flags().String("add-labels", "", "Labels to add (comma-separated)")
-	mrBulkUpdateCmd.Flags().String("remove-labels", "", "Labels to remove (comma-separated)")
-	mrBulkUpdateCmd.Flags().String("target-branch", "", "New target branch")
+func mrBulkMeta(summary, output string, dangerous bool, example string) aicli.Meta {
+	dangerFlag := ""
+	if dangerous {
+		dangerFlag = " --dangerous"
+	}
+	return aicli.Meta{Summary: summary, Effects: []aicli.Effect{aicli.Change}, Dangerous: dangerous, Output: output, BatchFlag: "ids",
+		ErrorCodes: gitlabWriteCodes, Maturity: aicli.Experimental, Evidence: []string{mrBulkEvidence},
+		Examples: []string{fmt.Sprintf("gitlab-cli mr bulk %s%s --dry-run", example, dangerFlag),
+			fmt.Sprintf("gitlab-cli mr bulk %s%s --confirm <confirm_token>", example, dangerFlag)}}
+}
+
+func addMRBulkMerge(app *aicli.App, parent *cobra.Command) {
+	c := &cobra.Command{Use: "merge", RunE: func(cmd *cobra.Command, _ []string) error {
+		w := readMRMergeFlags(cmd)
+		return mrBulk(app, cmd, func(gl *lazyClient, sel mrSel) mrPlan { return mrMergePlan(gl, sel, w) })
+	}}
+	addMRBulkFlags(c)
+	addMRMergeFlags(c)
+	parent.AddCommand(c)
+	app.Register(c, mrBulkMeta("Merge many merge requests, each at the head commit its preview shows (cannot be undone; stops at the first failure)",
+		"merge_request_result", true, "merge --project acme/web --ids 5,6"))
+}
+
+func addMRBulkApprove(app *aicli.App, parent *cobra.Command) {
+	c := &cobra.Command{Use: "approve", RunE: func(cmd *cobra.Command, _ []string) error {
+		return mrBulk(app, cmd, func(gl *lazyClient, sel mrSel) mrPlan { return mrApprovePlan(gl, sel, true) })
+	}}
+	addMRBulkFlags(c)
+	parent.AddCommand(c)
+	app.Register(c, mrBulkMeta("Approve many merge requests as this account", "merge_request_approval", false,
+		"approve --project acme/web --ids 5,8"))
+}
+
+func addMRBulkClose(app *aicli.App, parent *cobra.Command) {
+	c := &cobra.Command{Use: "close", RunE: func(cmd *cobra.Command, _ []string) error {
+		return mrBulk(app, cmd, func(gl *lazyClient, sel mrSel) mrPlan { return mrStatePlan(gl, sel, "close") })
+	}}
+	addMRBulkFlags(c)
+	parent.AddCommand(c)
+	app.Register(c, mrBulkMeta("Close many merge requests without merging them", "merge_request_result", false,
+		"close --project acme/web --ids 5,6"))
+}
+
+func addMRBulkUpdate(app *aicli.App, parent *cobra.Command) {
+	c := &cobra.Command{Use: "update", RunE: func(cmd *cobra.Command, _ []string) error {
+		w, err := readMRUpdateFlags(app, cmd)
+		if err != nil {
+			return err
+		}
+		return mrBulk(app, cmd, func(gl *lazyClient, sel mrSel) mrPlan { return mrUpdatePlan(gl, sel, w) })
+	}}
+	addMRBulkFlags(c)
+	addMRUpdateFields(c, false)
+	c.MarkFlagsOneRequired("title", "description", "description-file", "add-labels", "remove-labels", "target-branch")
+	parent.AddCommand(c)
+	meta := mrBulkMeta("Change the title, description, labels or target branch of many merge requests", "merge_request_result", false,
+		"update --project acme/web --ids 5,6 --add-labels needs-review")
+	meta.FileInputs = map[string]string{"description-file": "description"}
+	app.Register(c, meta)
 }

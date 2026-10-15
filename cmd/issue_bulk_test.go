@@ -1,203 +1,189 @@
 package cmd
 
 import (
+	"encoding/json"
 	"net/http"
-	"net/http/httptest"
-	"strconv"
 	"strings"
-	"sync"
 	"testing"
 )
 
-// issueBulkServer returns a mock that fails the issues whose iid is in failIIDs
-// (returns 404), and succeeds the rest. It tracks how many update calls landed.
-func issueBulkServer(t *testing.T, failIIDs map[int]bool) (*httptest.Server, *int) {
-	t.Helper()
-	var mu sync.Mutex
-	calls := 0
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		// /users for assign resolution
-		if strings.Contains(r.URL.Path, "/users") {
-			_, _ = w.Write([]byte(`[{"id":42,"username":"alice"}]`))
-			return
-		}
-		mu.Lock()
-		calls++
-		mu.Unlock()
-		// extract iid: .../issues/<iid> or .../issues/<iid>/notes
-		iid := extractIIDFromPath(r.URL.Path)
-		if failIIDs[iid] {
-			w.WriteHeader(http.StatusNotFound)
-			_, _ = w.Write([]byte(`{"message":"404 Not found"}`))
-			return
-		}
-		_, _ = w.Write([]byte(`{"id":` + strconv.Itoa(iid) + `,"iid":` + strconv.Itoa(iid) + `,"state":"closed","author":{"username":"alice"},"created_at":"2024-01-01","updated_at":"2024-01-01"}`))
-	}))
-	return srv, &calls
-}
+// The fake's issue endpoints are in issue_test.go: open issues 1, 2, 3, 5, 6 and
+// closed 4, 7 in acme/web.
 
-func extractIIDFromPath(path string) int {
-	parts := strings.Split(strings.Trim(path, "/"), "/")
-	for i, p := range parts {
-		if p == "issues" && i+1 < len(parts) {
-			n, _ := strconv.Atoi(parts[i+1])
-			return n
-		}
-		if p == "merge_requests" && i+1 < len(parts) {
-			n, _ := strconv.Atoi(parts[i+1])
-			return n
-		}
-	}
-	return 0
-}
-
-func TestIssueBulkClose_DryRun(t *testing.T) {
-	resetRootPersistentFlags(t)
-	resetCompactForTest(t)
-	resetSliceFlagsForTest(t, []string{"issue", "bulk", "close"})
-	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
-	t.Setenv("GITLAB_CLI_TOKEN", "x")
-
-	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"issue", "bulk", "close", "--project", "g/r", "--ids", "1,2,3", "--dry-run", "--json", "--compact"})
-		_ = rootCmd.Execute()
+func init() {
+	addConformanceSamples(map[string][]string{
+		"issue bulk close":   {"--project", "acme/web", "--ids", "1,2"},
+		"issue bulk reopen":  {"--project", "acme/web", "--ids", "4,7"},
+		"issue bulk update":  {"--project", "acme/web", "--ids", "1,2", "--add-labels", "needs-triage"},
+		"issue bulk label":   {"--project", "acme/web", "--ids", "2,6", "--add", "needs-triage"},
+		"issue bulk assign":  {"erin", "--project", "acme/web", "--ids", "1,3"},
+		"issue bulk comment": {"--project", "acme/web", "--ids", "1,2", "--body", "Triaged in the weekly sync."},
 	})
-	for _, want := range []string{`"confirm_token"`, `"total":3`, `"action":"issue bulk close"`, `"targets":["1","2","3"]`} {
-		if !strings.Contains(out, want) {
-			t.Errorf("missing %q in dry-run, got:\n%s", want, out)
+}
+
+func TestIssueBulkMatrix(t *testing.T) {
+	cases := []matrixCase{
+		{Path: "issue bulk close", Args: []string{"--project", "acme/web", "--ids", "1,2"}, Role: "reporter",
+			Invalid: []invalidCase{
+				{[]string{"--project", "acme/web"}, "E_USAGE", "missing_parameter", "--ids"},
+				{[]string{"--project", "acme/web", "--ids", "1,x"}, "E_VALIDATION", "invalid_value", "--ids"},
+				{[]string{"--ids", "acme/web#1,acme/other#2"}, "E_USAGE", "conflicting_flags", "--ids"},
+				{[]string{"--ids", "1,2"}, "E_USAGE", "missing_parameter", "--project"},
+				{[]string{"--project", "acme/other", "--ids", "acme/web#1"}, "E_USAGE", "conflicting_flags", "--project"},
+			}},
+		{Path: "issue bulk reopen", Args: []string{"--project", "acme/web", "--ids", "4,7"}, Role: "reporter",
+			Invalid: []invalidCase{{[]string{"--project", "acme/web", "--ids", ","}, "E_USAGE", "missing_parameter", "--ids"}}},
+		{Path: "issue bulk update", Args: []string{"--project", "acme/web", "--ids", "1,2", "--add-labels", "needs-triage",
+			"--milestone", "v2.0"}, Role: "reporter", PreviewReads: 2,
+			Invalid: []invalidCase{
+				{[]string{"--project", "acme/web", "--ids", "1"}, "E_USAGE", "missing_parameter", "--title"},
+				{[]string{"--project", "acme/web", "--ids", "1", "--title", ""}, "E_VALIDATION", "invalid_value", "--title"},
+			}},
+		{Path: "issue bulk label", Args: []string{"--project", "acme/web", "--ids", "2,6", "--add", "needs-triage"}, Role: "reporter",
+			Invalid: []invalidCase{{[]string{"--project", "acme/web", "--ids", "2"}, "E_USAGE", "missing_parameter", "--add"}}},
+		{Path: "issue bulk assign", Args: []string{"erin", "--project", "acme/web", "--ids", "1,3"}, Role: "reporter", PreviewReads: 2,
+			Invalid: []invalidCase{{[]string{"--project", "acme/web", "--ids", "1"}, "E_USAGE", "missing_parameter", "--assignee"}}},
+		{Path: "issue bulk comment", Args: []string{"--project", "acme/web", "--ids", "1,2", "--body", "Triaged."}, Role: "guest",
+			Invalid: []invalidCase{{[]string{"--project", "acme/web", "--ids", "1"}, "E_USAGE", "missing_parameter", "--body"}}},
+	}
+	for _, c := range cases {
+		t.Run(c.Path, func(t *testing.T) { runMatrix(t, c) })
+	}
+}
+
+// TestIssueBulkLabelsTheTimeoutIssues is the eval's T06: list the open issues whose
+// title mentions a timeout, label them in one batch, one token, every item verified,
+// and no other issue touched.
+func TestIssueBulkLabelsTheTimeoutIssues(t *testing.T) {
+	e := newTestEnv(t)
+	list := e.run("issue", "list", "--project", "acme/web", "--query", "timeout", "--in", "title", "--fields", "ref")
+	var refs []string
+	for _, it := range list.items() {
+		refs = append(refs, it["ref"].(string))
+	}
+	args := []string{"issue", "bulk", "label", "--ids", strings.Join(refs, ","), "--add", "needs-triage"}
+	dry := e.run(append(args, "--dry-run")...)
+	p := dry.preview()
+	if dry.exit != 0 || p["total"] != json.Number("2") || p["dangerous"] != false ||
+		!strings.HasPrefix(p["action"].(string), "Label issues in acme/web") {
+		t.Fatalf("preview: %s", dry.out)
+	}
+	r := e.confirm(dry.token(), args...)
+	if r.exit != 0 || r.summary()["succeeded"] != json.Number("2") {
+		t.Fatalf("label: %s", r.out)
+	}
+	for _, it := range r.batchItems() {
+		res := it["result"].(map[string]any)
+		if !hasString(stringsOf(res["labels"]), "needs-triage") || res["description"] != nil {
+			t.Fatalf("item result: %v", it)
 		}
 	}
+	e.gl.locked(func() {
+		for _, iss := range fakeIssues(e.gl)["acme/web"] {
+			if hasString(iss.Labels, "needs-triage") != (iss.IID == 2 || iss.IID == 6) {
+				t.Errorf("#%d labels %v", iss.IID, iss.Labels)
+			}
+		}
+	})
+	if !hasString(stringsOf(r.doc["meta"].(map[string]any)["untrusted"]), "data.items[].result.title") {
+		t.Fatalf("item titles are untrusted: %s", r.out)
+	}
 }
 
-func TestIssueBulkClose_Confirm_Success(t *testing.T) {
-	resetRootPersistentFlags(t)
-	resetCompactForTest(t)
-	srv, _ := issueBulkServer(t, nil)
-	defer srv.Close()
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "x")
-	dryRun = false
+// TestIssueBulkBindsTheIssuesAsRefs: numbers with --project and refs are one batch
+// (CLI-054); repeated issues count once (CLI-063); the items' issues are read in
+// one request at the dry-run and one at the confirm.
+func TestIssueBulkBindsTheIssuesAsRefs(t *testing.T) {
+	e := newTestEnv(t)
+	dry := e.run("issue", "bulk", "close", "--project", "acme/web", "--ids", "2,6", "--ids", "2", "--dry-run")
+	if in := dry.preview()["inputs"].(map[string]any); strings.Join(stringsOf(in["ids"]), ",") != "2,6" ||
+		in["project"] != "acme/web" || dry.preview()["total"] != json.Number("2") {
+		t.Fatalf("inputs: %s", dry.out)
+	}
+	var keys []string
+	for _, tg := range dry.preview()["targets"].([]any) {
+		keys = append(keys, tg.(map[string]any)["key"].(string))
+	}
+	if strings.Join(keys, " ") != "acme/web#2 acme/web#6" {
+		t.Fatalf("the targets are the refs: %v", keys)
+	}
+	if n := len(e.gl.Requests()); n != 1 || !strings.Contains(e.gl.Requests()[0].Query, "iids%5B%5D=2&iids%5B%5D=6") {
+		t.Fatalf("one read for the batch, got %d: %+v", n, e.gl.Requests())
+	}
+	r := e.confirm(dry.token(), "issue", "bulk", "close", "--ids", "acme/web#2,acme/web#6")
+	if r.exit != 0 || e.gl.Writes() != 2 || len(e.gl.Requests()) != 4 {
+		t.Fatalf("confirm with refs: %s (requests %d)", r.out, len(e.gl.Requests()))
+	}
+}
 
-	out := captureStdout(t, func() {
-		rootCmd.SetArgs(withConfirmForTest(t, []string{"issue", "bulk", "close", "--project", "g/r", "--ids", "1,2,3", "--json", "--compact"}))
-		_ = rootCmd.Execute()
-	})
-	for _, want := range []string{`"total":3`, `"succeeded":3`, `"failed":0`, `"target":"1"`, `"target":"3"`} {
-		if !strings.Contains(out, want) {
-			t.Errorf("missing %q in confirm output, got:\n%s", want, out)
+// TestIssueBulkIsBlockedWhenAnItemCannotApply: an issue already closed, or one the
+// project does not have, blocks the batch at the dry-run, naming the issue (CLI-063).
+func TestIssueBulkIsBlockedWhenAnItemCannotApply(t *testing.T) {
+	e := newTestEnv(t)
+	for _, c := range []struct {
+		args []string
+		kind string
+	}{
+		{[]string{"issue", "bulk", "close", "--project", "acme/web", "--ids", "1,4", "--dry-run"}, "already_closed"},
+		{[]string{"issue", "bulk", "label", "--project", "acme/web", "--ids", "1,99", "--add", "x", "--dry-run"}, "not_found"},
+		{[]string{"issue", "bulk", "assign", "nobody", "--project", "acme/web", "--ids", "1", "--dry-run"}, "not_found"},
+	} {
+		r := e.run(c.args...)
+		blocks, _ := r.preview()["blocked_by"].([]any)
+		if r.exit != 0 || r.preview()["can_apply"] != false || r.token() != "" || len(blocks) == 0 ||
+			blocks[0].(map[string]any)["kind"] != c.kind {
+			t.Fatalf("%v: %s", c.args, r.out)
 		}
 	}
+	if e.gl.Writes() != 0 {
+		t.Fatal("a blocked batch sent a write")
+	}
 }
 
-func TestIssueBulkClose_PartialFailure_Aggregated(t *testing.T) {
-	resetRootPersistentFlags(t)
-	resetCompactForTest(t)
-	srv, _ := issueBulkServer(t, map[int]bool{2: true})
-	defer srv.Close()
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "x")
-	dryRun = false
+// TestIssueBulkStopsWhenAsked: --continue-on-error=false stops at the first
+// failure and reports the rest as skipped (CLI-063).
+func TestIssueBulkStopsWhenAsked(t *testing.T) {
+	e := newTestEnv(t)
+	args := []string{"issue", "bulk", "comment", "--project", "acme/web", "--ids", "1,2,3", "--body", "Triaged.", "--continue-on-error=false"}
+	tok := e.dryRun(args...)
+	e.gl.fail(fakeFault{Method: "WRITE", Status: 403, Times: 1})
+	r := e.confirm(tok, args...)
+	s := r.summary()
+	if r.code() != "E_FORBIDDEN" || s["failed"] != json.Number("1") || s["skipped"] != json.Number("2") || e.gl.Writes() != 1 {
+		t.Fatalf("stop at the first failure: %s", r.out)
+	}
+	if r.details()["required"] != "guest" {
+		t.Fatalf("a refused comment names the role: %s", r.out)
+	}
+}
 
-	out := captureStdout(t, func() {
-		rootCmd.SetArgs(withConfirmForTest(t, []string{"issue", "bulk", "close", "--project", "g/r", "--ids", "1,2,3", "--json", "--compact"}))
-		_ = rootCmd.Execute()
-	})
-	// Top-level ok=true (batch ran), per-item failure for iid 2, others succeed.
-	for _, want := range []string{`"ok":true`, `"succeeded":2`, `"failed":1`, `"E_NOT_FOUND"`, `"target":"2"`} {
-		if !strings.Contains(out, want) {
-			t.Errorf("missing %q in partial-failure output, got:\n%s", want, out)
+// TestIssueBulkAssignAndUpdate: the assignee given as the argument or --assignee
+// is one request, and a bulk update reports each item's milestone and labels.
+func TestIssueBulkAssignAndUpdate(t *testing.T) {
+	e := newTestEnv(t)
+	tok := e.dryRun("issue", "bulk", "assign", "@erin", "--project", "acme/web", "--ids", "3,5")
+	r := e.confirm(tok, "issue", "bulk", "assign", "--assignee", "erin", "--project", "acme/web", "--ids", "3,5")
+	if r.exit != 0 {
+		t.Fatalf("assign: %s", r.out)
+	}
+	for _, it := range r.batchItems() {
+		if obs := it["receipt"].(map[string]any)["observed"].(map[string]any); strings.Join(stringsOf(obs["assignees"]), ",") != "@erin" {
+			t.Fatalf("item: %v", it)
 		}
 	}
-}
-
-func TestIssueBulkClose_ConfirmReplay_Rejected(t *testing.T) {
-	resetRootPersistentFlags(t)
-	resetCompactForTest(t)
-	srv, _ := issueBulkServer(t, nil)
-	defer srv.Close()
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "x")
-	dryRun = false
-
-	confirmedArgs := withConfirmForTest(t, []string{"issue", "bulk", "close", "--project", "g/r", "--ids", "1,2", "--json", "--compact"})
-
-	// First confirm consumes the token.
-	_ = captureStdout(t, func() {
-		rootCmd.SetArgs(confirmedArgs)
-		_ = rootCmd.Execute()
-	})
-	// Replay the same token: single-use → E_CONFLICT.
-	out := captureStdout(t, func() {
-		resetSliceFlagsForTest(t, confirmedArgs)
-		rootCmd.SetArgs(confirmedArgs)
-		_ = rootCmd.Execute()
-	})
-	if !strings.Contains(out, "E_CONFLICT") {
-		t.Errorf("expected E_CONFLICT on token replay, got:\n%s", out)
+	args := []string{"issue", "bulk", "update", "--project", "acme/web", "--ids", "3,5", "--remove-labels", "feature", "--milestone", ""}
+	r = e.confirm(e.dryRun(args...), args...)
+	if r.exit != 0 {
+		t.Fatalf("update: %s", r.out)
 	}
-}
-
-func TestIssueBulkClose_StopOnFirstError(t *testing.T) {
-	resetRootPersistentFlags(t)
-	resetCompactForTest(t)
-	srv, _ := issueBulkServer(t, map[int]bool{1: true})
-	defer srv.Close()
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "x")
-	dryRun = false
-
-	out := captureStdout(t, func() {
-		rootCmd.SetArgs(withConfirmForTest(t, []string{"issue", "bulk", "close", "--project", "g/r", "--ids", "1,2,3", "--continue-on-error=false", "--json", "--compact"}))
-		_ = rootCmd.Execute()
-	})
-	// Stops at iid 1; 2 and 3 reported as skipped, summary covers only attempted.
-	for _, want := range []string{`"failed":1`, `"total":1`, `"skipped":["2","3"]`} {
-		if !strings.Contains(out, want) {
-			t.Errorf("missing %q in stop-on-error output, got:\n%s", want, out)
+	for _, it := range r.batchItems() {
+		obs := it["receipt"].(map[string]any)["observed"].(map[string]any)
+		if obs["milestone"] != nil || hasString(stringsOf(obs["labels"]), "feature") || itemOutcome(it)["verification"] != "passed" {
+			t.Fatalf("item: %v", it)
 		}
 	}
-}
-
-func TestIssueBulkClose_EmptyIDs_Validation(t *testing.T) {
-	resetRootPersistentFlags(t)
-	resetCompactForTest(t)
-	resetSliceFlagsForTest(t, []string{"issue", "bulk", "close"})
-	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
-	t.Setenv("GITLAB_CLI_TOKEN", "x")
-
-	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"issue", "bulk", "close", "--project", "g/r", "--dry-run", "--json", "--compact"})
-		_ = rootCmd.Execute()
-	})
-	if !strings.Contains(out, "E_VALIDATION") {
-		t.Errorf("expected E_VALIDATION for empty --ids, got:\n%s", out)
-	}
-}
-
-func TestIssueBulk_ReopenUpdateLabelAssignComment_Confirm(t *testing.T) {
-	resetRootPersistentFlags(t)
-	resetCompactForTest(t)
-	srv, _ := issueBulkServer(t, nil)
-	defer srv.Close()
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "x")
-	dryRun = false
-
-	cases := [][]string{
-		{"issue", "bulk", "reopen", "--project", "g/r", "--ids", "1,2", "--json", "--compact"},
-		{"issue", "bulk", "update", "--project", "g/r", "--ids", "1,2", "--add-labels", "triage", "--json", "--compact"},
-		{"issue", "bulk", "label", "--project", "g/r", "--ids", "1,2", "--add", "bug", "--json", "--compact"},
-		{"issue", "bulk", "assign", "alice", "--project", "g/r", "--ids", "1,2", "--json", "--compact"},
-		{"issue", "bulk", "comment", "--project", "g/r", "--ids", "1,2", "--body", "triaged", "--json", "--compact"},
-	}
-	for _, args := range cases {
-		out := captureStdout(t, func() {
-			rootCmd.SetArgs(withConfirmForTest(t, args))
-			_ = rootCmd.Execute()
-		})
-		if !strings.Contains(out, `"succeeded":2`) {
-			t.Errorf("%v: expected succeeded:2, got:\n%s", args, out)
-		}
+	req, _ := e.gl.lastWrite()
+	if req.Method != http.MethodPut || req.Body["remove_labels"] != "feature" || req.Body["milestone_id"] != float64(0) {
+		t.Fatalf("request: %+v", req)
 	}
 }

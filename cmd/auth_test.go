@@ -1,1168 +1,347 @@
 package cmd
 
 import (
-	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/fatecannotbealtered/gitlab-cli/internal/config"
 )
 
-func mockUserServer(t *testing.T) *httptest.Server {
+func init() {
+	addConformanceSamples(map[string][]string{
+		// The host is GITLAB_CLI_HOST (the fake); the token is the fake's second account.
+		"auth login":  {"--token", daveToken},
+		"auth logout": {},
+	})
+	// auth logout removes the keyring entry of profile "default": restore it.
+	addConformanceReset(func(gl *fakeGitLab) {
+		host := "http://127.0.0.1:1"
+		if gl != nil {
+			host = gl.URL
+		}
+		_ = writeCredential("", storedCredential{Host: host, Token: daveToken, Username: "dave"})
+	})
+}
+
+// storeTestCredential puts a token in the test keyring for a profile.
+func storeTestCredential(t *testing.T, profile, host, token, user string) {
 	t.Helper()
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/v4/user" {
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"id":1,"username":"alice","name":"Alice"}`))
-			return
-		}
-		w.WriteHeader(http.StatusNotFound)
-	}))
-}
-
-func clearAuthEnv(t *testing.T) {
-	t.Helper()
-	t.Setenv("GITLAB_CLI_HOST", "")
-	t.Setenv("GITLAB_CLI_TOKEN", "")
-	t.Setenv("GITLAB_HOST", "")
-	t.Setenv("GITLAB_TOKEN", "")
-}
-
-func TestAuth_Help_ListsSubcommands(t *testing.T) {
-	buf := new(bytes.Buffer)
-	rootCmd.SetOut(buf)
-	rootCmd.SetArgs([]string{"auth", "--help"})
-	_ = rootCmd.Execute()
-	rootCmd.SetOut(nil)
-	out := buf.String()
-	for _, want := range []string{"login", "logout", "status"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("auth --help missing %q\noutput:\n%s", want, out)
-		}
-	}
-}
-
-func TestAuth_Login_DryRun(t *testing.T) {
-	origDR := dryRun
-	origJM := jsonMode
-	defer func() { dryRun = origDR; jsonMode = origJM }()
-
-	origExit := lastExit
-	defer func() { lastExit = origExit }()
-	lastExit = 0
-
-	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"auth", "login",
-			"--host", "https://gitlab.example.com",
-			"--token", "mytoken",
-			"--dry-run", "--json",
-		})
-		_ = rootCmd.Execute()
-	})
-
-	if lastExit != ExitOK {
-		t.Errorf("expected exit 0, got %d", lastExit)
-	}
-	if !strings.Contains(out, `"confirm_token"`) {
-		t.Errorf("expected dry-run JSON, got:\n%s", out)
-	}
-}
-
-func TestAuth_Logout_DryRun(t *testing.T) {
-	origDR := dryRun
-	origJM := jsonMode
-	defer func() { dryRun = origDR; jsonMode = origJM }()
-
-	origExit := lastExit
-	defer func() { lastExit = origExit }()
-	lastExit = 0
-
-	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"auth", "logout", "--dry-run", "--json"})
-		_ = rootCmd.Execute()
-	})
-
-	if lastExit != ExitOK {
-		t.Errorf("expected exit 0, got %d", lastExit)
-	}
-	if !strings.Contains(out, `"confirm_token"`) {
-		t.Errorf("expected dry-run JSON, got:\n%s", out)
-	}
-}
-
-func TestAuth_Status_NoConfig(t *testing.T) {
-	isolateConfigHome(t)
-	t.Setenv("GITLAB_CLI_HOST", "")
-	t.Setenv("GITLAB_CLI_TOKEN", "")
-	t.Setenv("GITLAB_HOST", "")
-	t.Setenv("GITLAB_TOKEN", "")
-
-	origExit := lastExit
-	defer func() { lastExit = origExit }()
-	lastExit = 0
-
-	rootCmd.SetArgs([]string{"auth", "status", "--json"})
-	_ = rootCmd.Execute()
-
-	if lastExit == ExitOK {
-		t.Errorf("expected non-zero exit when not configured, got %d", lastExit)
-	}
-}
-
-func TestAuth_Status_ProfileOnly(t *testing.T) {
-	isolateConfigHome(t)
-	t.Setenv("GITLAB_CLI_HOST", "")
-	t.Setenv("GITLAB_CLI_TOKEN", "")
-	t.Setenv("GITLAB_HOST", "")
-	t.Setenv("GITLAB_TOKEN", "")
-
-	if err := config.SetProfile("default", &config.Config{
-		Host:  "https://gitlab.example.com",
-		Token: "profiletoken",
-	}); err != nil {
-		t.Fatalf("SetProfile: %v", err)
-	}
-
-	origExit := lastExit
-	defer func() { lastExit = origExit }()
-	lastExit = 0
-
-	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"auth", "status", "--json"})
-		_ = rootCmd.Execute()
-	})
-
-	if lastExit != ExitOK {
-		t.Errorf("expected exit 0 when profile configured, got %d", lastExit)
-	}
-	if !strings.Contains(out, `"source": "profile"`) {
-		t.Errorf("expected source=profile, got:\n%s", out)
-	}
-	if !strings.Contains(out, `"configured": true`) {
-		t.Errorf("expected configured=true, got:\n%s", out)
-	}
-}
-
-func TestAuth_Status_JSON_Configured(t *testing.T) {
-	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
-	t.Setenv("GITLAB_CLI_TOKEN", "mytoken")
-
-	origExit := lastExit
-	defer func() { lastExit = origExit }()
-	lastExit = 0
-
-	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"auth", "status", "--json"})
-		_ = rootCmd.Execute()
-	})
-
-	if lastExit != ExitOK {
-		t.Errorf("expected exit 0 when configured, got %d", lastExit)
-	}
-	if !strings.Contains(out, `"configured"`) {
-		t.Errorf("expected configured field in JSON, got:\n%s", out)
-	}
-}
-
-func TestAuth_Logout_PlainText_DryRun(t *testing.T) {
-	origDR := dryRun
-	origJM := jsonMode
-	defer func() { dryRun = origDR; jsonMode = origJM }()
-	setTextFormatForTest(t)
-
-	origExit := lastExit
-	defer func() { lastExit = origExit }()
-	lastExit = 0
-
-	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"auth", "logout", "--dry-run"})
-		_ = rootCmd.Execute()
-	})
-
-	if lastExit != ExitOK {
-		t.Errorf("expected exit 0, got %d", lastExit)
-	}
-	if !strings.Contains(out, "dry-run") {
-		t.Errorf("expected dry-run in output:\n%s", out)
-	}
-}
-
-func TestAuth_ProfileList_JSON(t *testing.T) {
-	home := isolateConfigHome(t)
-	clearAuthEnv(t)
-	resetAuthLoginFlags(t)
-
-	writeGitLabCLIFile(t, home, "profiles.json", `{
-  "active": "work",
-  "profiles": {
-    "default": {"host": "https://gitlab.example.com", "token": "t1"},
-    "work": {"host": "https://work.example.com", "token": "t2"}
-  }
-}`)
-
-	origExit := lastExit
-	defer func() { lastExit = origExit }()
-	lastExit = 0
-
-	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"auth", "profile", "list", "--json"})
-		_ = rootCmd.Execute()
-	})
-
-	if lastExit != ExitOK {
-		t.Errorf("expected exit 0, got %d", lastExit)
-	}
-	if !strings.Contains(out, `"items"`) || !strings.Contains(out, `"name": "work"`) || !strings.Contains(out, `"active": true`) {
-		t.Errorf("expected profile list JSON, got:\n%s", out)
-	}
-}
-
-func TestAuth_ProfileList_PlainText(t *testing.T) {
-	setTextFormatForTest(t)
-	home := isolateConfigHome(t)
-	clearAuthEnv(t)
-	resetAuthLoginFlags(t)
-
-	writeGitLabCLIFile(t, home, "profiles.json", `{
-  "active": "default",
-  "profiles": {
-    "default": {"host": "https://gitlab.example.com", "token": "t1"}
-  }
-}`)
-
-	origExit := lastExit
-	defer func() { lastExit = origExit }()
-	lastExit = 0
-
-	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"auth", "profile", "list"})
-		_ = rootCmd.Execute()
-	})
-
-	if lastExit != ExitOK {
-		t.Errorf("expected exit 0, got %d", lastExit)
-	}
-	if !strings.Contains(out, "Active profile: default") || !strings.Contains(out, "(active)") {
-		t.Errorf("expected active profile marker, got:\n%s", out)
-	}
-}
-
-func TestAuth_ProfileList_LoadError(t *testing.T) {
-	home := isolateConfigHome(t)
-	clearAuthEnv(t)
-	resetAuthLoginFlags(t)
-	writeGitLabCLIFile(t, home, "profiles.json", `{invalid`)
-
-	origExit := lastExit
-	defer func() { lastExit = origExit }()
-	lastExit = 0
-
-	rootCmd.SetArgs([]string{"auth", "profile", "list", "--json"})
-	_ = rootCmd.Execute()
-
-	if lastExit != ExitNetwork {
-		t.Errorf("expected exit %d, got %d", ExitNetwork, lastExit)
-	}
-}
-
-func TestAuth_Login_NonInteractive_Success(t *testing.T) {
-	setTextFormatForTest(t)
-	srv := mockUserServer(t)
-	defer srv.Close()
-
-	isolateConfigHome(t)
-	clearAuthEnv(t)
-	resetAuthLoginFlags(t)
-
-	origExit := lastExit
-	defer func() { lastExit = origExit }()
-	lastExit = 0
-
-	out := captureStdout(t, func() {
-		args := []string{
-			"auth", "login",
-			"--host", srv.URL,
-			"--token", "secret",
-			"--profile", "work",
-		}
-		args = append(args, confirmArgsForTest(t, "save credentials", map[string]any{"host": srv.URL})...)
-		rootCmd.SetArgs(args)
-		_ = rootCmd.Execute()
-	})
-
-	if lastExit != ExitOK {
-		t.Errorf("expected exit 0, got %d", lastExit)
-	}
-	if !strings.Contains(out, "Logged in as Alice") || !strings.Contains(out, "work") {
-		t.Errorf("expected success output, got:\n%s", out)
-	}
-	pf, err := config.LoadProfiles()
-	if err != nil {
-		t.Fatalf("LoadProfiles: %v", err)
-	}
-	if pf.Active != "work" || pf.Profiles["work"].Token != "secret" {
-		t.Fatalf("profile not saved: %+v", pf)
-	}
-}
-
-func TestAuth_Login_NonInteractive_JSON(t *testing.T) {
-	srv := mockUserServer(t)
-	defer srv.Close()
-
-	isolateConfigHome(t)
-	clearAuthEnv(t)
-	resetAuthLoginFlags(t)
-
-	origExit := lastExit
-	defer func() { lastExit = origExit }()
-	lastExit = 0
-
-	out := captureStdout(t, func() {
-		args := []string{
-			"auth", "login",
-			"--host", srv.URL,
-			"--token", "secret",
-			"--json",
-		}
-		args = append(args, confirmArgsForTest(t, "save credentials", map[string]any{"host": srv.URL})...)
-		rootCmd.SetArgs(args)
-		_ = rootCmd.Execute()
-	})
-
-	if lastExit != ExitOK {
-		t.Errorf("expected exit 0, got %d", lastExit)
-	}
-	if !strings.Contains(out, `"username": "alice"`) || !strings.Contains(out, `"status": "ok"`) {
-		t.Errorf("expected login JSON, got:\n%s", out)
-	}
-}
-
-func TestAuth_Login_NonInteractive_InvalidHost(t *testing.T) {
-	resetAuthLoginFlags(t)
-	clearAuthEnv(t)
-
-	origExit := lastExit
-	defer func() { lastExit = origExit }()
-	lastExit = 0
-
-	rootCmd.SetArgs([]string{"auth", "login", "--host", "gitlab.example.com", "--token", "tok"})
-	_ = rootCmd.Execute()
-
-	if lastExit != ExitBadArgs {
-		t.Errorf("expected exit %d, got %d", ExitBadArgs, lastExit)
-	}
-}
-
-func TestAuth_Login_NonInteractive_EmptyToken(t *testing.T) {
-	resetAuthLoginFlags(t)
-	clearAuthEnv(t)
-
-	origExit := lastExit
-	defer func() { lastExit = origExit }()
-	lastExit = 0
-
-	rootCmd.SetArgs([]string{"auth", "login", "--host", "https://gitlab.example.com", "--token", "   "})
-	_ = rootCmd.Execute()
-
-	if lastExit != ExitBadArgs {
-		t.Errorf("expected exit %d, got %d", ExitBadArgs, lastExit)
-	}
-}
-
-func TestAuth_Login_NonInteractive_APIError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusUnauthorized)
-		_, _ = w.Write([]byte(`{"message":"401 Unauthorized"}`))
-	}))
-	defer srv.Close()
-
-	resetAuthLoginFlags(t)
-	clearAuthEnv(t)
-
-	origExit := lastExit
-	defer func() { lastExit = origExit }()
-	lastExit = 0
-
-	args := []string{"auth", "login", "--host", srv.URL, "--token", "bad", "--json"}
-	args = append(args, confirmArgsForTest(t, "save credentials", map[string]any{"host": srv.URL})...)
-	rootCmd.SetArgs(args)
-	_ = rootCmd.Execute()
-
-	if lastExit != ExitAuth {
-		t.Errorf("expected exit %d, got %d", ExitAuth, lastExit)
-	}
-}
-
-func TestAuth_Login_NonInteractive_SaveError(t *testing.T) {
-	srv := mockUserServer(t)
-	defer srv.Close()
-
-	home := isolateConfigHome(t)
-	clearAuthEnv(t)
-	resetAuthLoginFlags(t)
-	blockProfilesRemove(t, home)
-
-	origExit := lastExit
-	defer func() { lastExit = origExit }()
-	lastExit = 0
-
-	args := []string{"auth", "login", "--host", srv.URL, "--token", "secret", "--json"}
-	args = append(args, confirmArgsForTest(t, "save credentials", map[string]any{"host": srv.URL})...)
-	rootCmd.SetArgs(args)
-	_ = rootCmd.Execute()
-
-	if lastExit != ExitNetwork {
-		t.Errorf("expected exit %d, got %d", ExitNetwork, lastExit)
-	}
-}
-
-func TestAuth_Login_Interactive_Success(t *testing.T) {
-	srv := mockUserServer(t)
-	defer srv.Close()
-
-	isolateConfigHome(t)
-	clearAuthEnv(t)
-	resetAuthLoginFlags(t)
-	setTextFormatForTest(t)
-	withStdinInput(t, "my-token\n")
-
-	origExit := lastExit
-	defer func() { lastExit = origExit }()
-	lastExit = 0
-
-	out := captureStdout(t, func() {
-		args := []string{"auth", "login", "--host", srv.URL}
-		args = append(args, confirmArgsForTest(t, "save credentials", map[string]any{"host": srv.URL})...)
-		rootCmd.SetArgs(args)
-		_ = rootCmd.Execute()
-	})
-
-	if lastExit != ExitOK {
-		t.Errorf("expected exit 0, got %d", lastExit)
-	}
-	if !strings.Contains(out, "Logged in as Alice") || !strings.Contains(out, "Try: gitlab-cli doctor") {
-		t.Errorf("expected interactive success output, got:\n%s", out)
-	}
-}
-
-func TestAuth_Login_Interactive_ReadHostFromStdin(t *testing.T) {
-	srv := mockUserServer(t)
-	defer srv.Close()
-
-	isolateConfigHome(t)
-	clearAuthEnv(t)
-	resetAuthLoginFlags(t)
-	setTextFormatForTest(t)
-	withStdinInput(t, srv.URL+"\nsecret\n")
-
-	origExit := lastExit
-	defer func() { lastExit = origExit }()
-	lastExit = 0
-
-	args := []string{"auth", "login"}
-	args = append(args, confirmArgsForTest(t, "save credentials", map[string]any{"host": srv.URL})...)
-	rootCmd.SetArgs(args)
-	_ = rootCmd.Execute()
-
-	if lastExit != ExitOK {
-		t.Errorf("expected exit 0, got %d", lastExit)
-	}
-}
-
-func TestAuth_Login_Interactive_InvalidHost(t *testing.T) {
-	resetAuthLoginFlags(t)
-	clearAuthEnv(t)
-	setTextFormatForTest(t)
-	withStdinInput(t, "bad-host\n")
-
-	origExit := lastExit
-	defer func() { lastExit = origExit }()
-	lastExit = 0
-
-	rootCmd.SetArgs([]string{"auth", "login"})
-	_ = rootCmd.Execute()
-
-	if lastExit != ExitBadArgs {
-		t.Errorf("expected exit %d, got %d", ExitBadArgs, lastExit)
-	}
-}
-
-func TestAuth_Login_Interactive_EmptyToken(t *testing.T) {
-	resetAuthLoginFlags(t)
-	clearAuthEnv(t)
-	setTextFormatForTest(t)
-	withStdinInput(t, "\n")
-
-	origExit := lastExit
-	defer func() { lastExit = origExit }()
-	lastExit = 0
-
-	rootCmd.SetArgs([]string{"auth", "login", "--host", "https://gitlab.example.com"})
-	_ = rootCmd.Execute()
-
-	if lastExit != ExitBadArgs {
-		t.Errorf("expected exit %d, got %d", ExitBadArgs, lastExit)
-	}
-}
-
-func TestAuth_Login_Interactive_DryRun(t *testing.T) {
-	resetAuthLoginFlags(t)
-	clearAuthEnv(t)
-	withStdinInput(t, "secret\n")
-
-	origExit := lastExit
-	defer func() { lastExit = origExit }()
-	lastExit = 0
-
-	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"auth", "login", "--host", "https://gitlab.example.com", "--dry-run", "--json"})
-		_ = rootCmd.Execute()
-	})
-
-	if lastExit != ExitOK {
-		t.Errorf("expected exit 0, got %d", lastExit)
-	}
-	if !strings.Contains(out, `"confirm_token"`) {
-		t.Errorf("expected dry-run JSON, got:\n%s", out)
-	}
-}
-
-func TestAuth_Login_Interactive_APIError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusForbidden)
-		_, _ = w.Write([]byte(`{"message":"403 Forbidden"}`))
-	}))
-	defer srv.Close()
-
-	resetAuthLoginFlags(t)
-	clearAuthEnv(t)
-	setTextFormatForTest(t)
-	withStdinInput(t, "secret\n")
-
-	origExit := lastExit
-	defer func() { lastExit = origExit }()
-	lastExit = 0
-
-	args := []string{"auth", "login", "--host", srv.URL}
-	args = append(args, confirmArgsForTest(t, "save credentials", map[string]any{"host": srv.URL})...)
-	rootCmd.SetArgs(args)
-	_ = rootCmd.Execute()
-
-	if lastExit != ExitForbidden {
-		t.Errorf("expected exit %d, got %d", ExitForbidden, lastExit)
-	}
-}
-
-func TestAuth_Login_Interactive_SaveError(t *testing.T) {
-	srv := mockUserServer(t)
-	defer srv.Close()
-
-	home := isolateConfigHome(t)
-	clearAuthEnv(t)
-	resetAuthLoginFlags(t)
-	setTextFormatForTest(t)
-	blockProfilesRemove(t, home)
-	withStdinInput(t, "secret\n")
-
-	origExit := lastExit
-	defer func() { lastExit = origExit }()
-	lastExit = 0
-
-	args := []string{"auth", "login", "--host", srv.URL}
-	args = append(args, confirmArgsForTest(t, "save credentials", map[string]any{"host": srv.URL})...)
-	rootCmd.SetArgs(args)
-	_ = rootCmd.Execute()
-
-	if lastExit != ExitNetwork {
-		t.Errorf("expected exit %d, got %d", ExitNetwork, lastExit)
-	}
-}
-
-func TestAuth_Logout_Success_JSON(t *testing.T) {
-	home := isolateConfigHome(t)
-	clearAuthEnv(t)
-	resetAuthLoginFlags(t)
-	writeGitLabCLIFile(t, home, "config.json", `{"host":"https://gitlab.example.com","token":"tok"}`)
-	writeGitLabCLIFile(t, home, "profiles.json", `{"active":"default","profiles":{"default":{"host":"https://gitlab.example.com","token":"tok"}}}`)
-
-	origExit := lastExit
-	defer func() { lastExit = origExit }()
-	lastExit = 0
-
-	out := captureStdout(t, func() {
-		args := []string{"auth", "logout", "--json"}
-		args = append(args, confirmArgsForTest(t, "delete credentials", map[string]any{"path": config.FilePath()})...)
-		rootCmd.SetArgs(args)
-		_ = rootCmd.Execute()
-	})
-
-	if lastExit != ExitOK {
-		t.Errorf("expected exit 0, got %d", lastExit)
-	}
-	if !strings.Contains(out, `"status": "logged_out"`) {
-		t.Errorf("expected logged_out JSON, got:\n%s", out)
-	}
-	if _, err := os.Stat(filepath.Join(home, ".gitlab-cli", "config.json")); !os.IsNotExist(err) {
-		t.Errorf("expected config removed, stat err=%v", err)
-	}
-}
-
-func TestAuth_Logout_Success_PlainText(t *testing.T) {
-	setTextFormatForTest(t)
-	home := isolateConfigHome(t)
-	clearAuthEnv(t)
-	resetAuthLoginFlags(t)
-	writeGitLabCLIFile(t, home, "config.json", `{"host":"https://gitlab.example.com","token":"tok"}`)
-
-	origExit := lastExit
-	defer func() { lastExit = origExit }()
-	lastExit = 0
-
-	out := captureStdout(t, func() {
-		args := []string{"auth", "logout"}
-		args = append(args, confirmArgsForTest(t, "delete credentials", map[string]any{"path": config.FilePath()})...)
-		rootCmd.SetArgs(args)
-		_ = rootCmd.Execute()
-	})
-
-	if lastExit != ExitOK {
-		t.Errorf("expected exit 0, got %d", lastExit)
-	}
-	if !strings.Contains(out, "Logged out") {
-		t.Errorf("expected logout message, got:\n%s", out)
-	}
-}
-
-func TestAuth_Logout_RemoveError(t *testing.T) {
-	home := isolateConfigHome(t)
-	clearAuthEnv(t)
-	resetAuthLoginFlags(t)
-	blockConfigRemove(t, home)
-
-	origExit := lastExit
-	defer func() { lastExit = origExit }()
-	lastExit = 0
-
-	args := []string{"auth", "logout", "--json"}
-	args = append(args, confirmArgsForTest(t, "delete credentials", map[string]any{"path": config.FilePath()})...)
-	rootCmd.SetArgs(args)
-	_ = rootCmd.Execute()
-
-	if lastExit != ExitNetwork {
-		t.Errorf("expected exit %d, got %d", ExitNetwork, lastExit)
-	}
-}
-
-func TestAuthStatusSource(t *testing.T) {
-	tests := []struct {
-		name    string
-		setup   func(t *testing.T, home string)
-		env     map[string]string
-		want    string
-		wantErr bool
-	}{
-		{
-			name: "env-cli",
-			env:  map[string]string{"GITLAB_CLI_HOST": "https://a.example.com"},
-			want: "env-cli",
-		},
-		{
-			name: "env",
-			env:  map[string]string{"GITLAB_HOST": "https://a.example.com"},
-			want: "env",
-		},
-		{
-			name: "profile",
-			setup: func(t *testing.T, home string) {
-				writeGitLabCLIFile(t, home, "profiles.json", `{
-  "active": "default",
-  "profiles": {"default": {"host": "https://gitlab.example.com", "token": "tok"}}
-}`)
-			},
-			want: "profile",
-		},
-		{
-			name: "profile active but empty token falls through",
-			setup: func(t *testing.T, home string) {
-				writeGitLabCLIFile(t, home, "profiles.json", `{
-  "active": "default",
-  "profiles": {"default": {"host": "https://gitlab.example.com", "token": ""}}
-}`)
-			},
-			want: "none",
-		},
-		{
-			name: "profile active but missing entry falls through",
-			setup: func(t *testing.T, home string) {
-				writeGitLabCLIFile(t, home, "profiles.json", `{
-  "active": "ghost",
-  "profiles": {"default": {"host": "https://gitlab.example.com", "token": "tok"}}
-}`)
-			},
-			want: "none",
-		},
-		{
-			name: "file empty credentials treated as none",
-			setup: func(t *testing.T, home string) {
-				writeGitLabCLIFile(t, home, "config.json", `{"host":"https://legacy.example.com","token":""}`)
-			},
-			want: "none",
-		},
-		{
-			name: "file",
-			setup: func(t *testing.T, home string) {
-				writeGitLabCLIFile(t, home, "config.json", `{"host":"https://legacy.example.com","token":"legacy"}`)
-			},
-			want: "file",
-		},
-		{
-			name: "none",
-			want: "none",
-		},
-		{
-			name: "profiles load error",
-			setup: func(t *testing.T, home string) {
-				writeGitLabCLIFile(t, home, "profiles.json", `{bad`)
-			},
-			wantErr: true,
-		},
-		{
-			name: "config read error",
-			setup: func(t *testing.T, home string) {
-				dir := filepath.Join(home, ".gitlab-cli", "config.json")
-				if err := os.MkdirAll(filepath.Dir(dir), 0o700); err != nil {
-					t.Fatalf("mkdir: %v", err)
-				}
-				if err := os.Mkdir(dir, 0o700); err != nil {
-					t.Fatalf("mkdir config.json: %v", err)
-				}
-			},
-			wantErr: true,
-		},
-		{
-			name: "config parse error",
-			setup: func(t *testing.T, home string) {
-				writeGitLabCLIFile(t, home, "config.json", `{bad`)
-			},
-			wantErr: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			home := isolateConfigHome(t)
-			clearAuthEnv(t)
-			for _, k := range []string{"GITLAB_CLI_HOST", "GITLAB_CLI_TOKEN", "GITLAB_HOST", "GITLAB_TOKEN"} {
-				t.Setenv(k, "")
-			}
-			for k, v := range tt.env {
-				t.Setenv(k, v)
-			}
-			if tt.setup != nil {
-				tt.setup(t, home)
-			}
-
-			got, err := authStatusSource()
-			if tt.wantErr {
-				if err == nil {
-					t.Fatal("expected error, got nil")
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("authStatusSource: %v", err)
-			}
-			if got != tt.want {
-				t.Errorf("authStatusSource = %q, want %q", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestAuth_Status_JSON_NotConfigured(t *testing.T) {
-	isolateConfigHome(t)
-	clearAuthEnv(t)
-	resetAuthLoginFlags(t)
-
-	origExit := lastExit
-	defer func() { lastExit = origExit }()
-	lastExit = 0
-
-	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"auth", "status", "--json"})
-		_ = rootCmd.Execute()
-	})
-
-	if lastExit != ExitAuth {
-		t.Errorf("expected exit %d, got %d", ExitAuth, lastExit)
-	}
-	if !strings.Contains(out, `"configured": false`) {
-		t.Errorf("expected configured=false JSON, got:\n%s", out)
-	}
-}
-
-func TestAuth_Status_LoadError_PlainText(t *testing.T) {
-	setTextFormatForTest(t)
-	home := isolateConfigHome(t)
-	clearAuthEnv(t)
-	resetAuthLoginFlags(t)
-	writeGitLabCLIFile(t, home, "profiles.json", `{bad`)
-
-	origExit := lastExit
-	defer func() { lastExit = origExit }()
-	lastExit = 0
-
-	out := captureCombinedOutput(t, func() {
-		rootCmd.SetArgs([]string{"auth", "status"})
-		_ = rootCmd.Execute()
-	})
-
-	if lastExit != ExitNetwork {
-		t.Errorf("expected exit %d, got %d", ExitNetwork, lastExit)
-	}
-	if !strings.Contains(strings.ToLower(out), "reading config") {
-		t.Errorf("expected config read error, got:\n%s", out)
-	}
-}
-
-func TestAuth_Status_LoadError(t *testing.T) {
-	home := isolateConfigHome(t)
-	clearAuthEnv(t)
-	resetAuthLoginFlags(t)
-	writeGitLabCLIFile(t, home, "profiles.json", `{bad`)
-
-	origExit := lastExit
-	defer func() { lastExit = origExit }()
-	lastExit = 0
-
-	rootCmd.SetArgs([]string{"auth", "status", "--json"})
-	_ = rootCmd.Execute()
-
-	if lastExit != ExitNetwork {
-		t.Errorf("expected exit %d, got %d", ExitNetwork, lastExit)
-	}
-}
-
-func TestAuth_Status_PlainText_Configured(t *testing.T) {
-	setTextFormatForTest(t)
-	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
-	t.Setenv("GITLAB_CLI_TOKEN", "tok")
-	resetAuthLoginFlags(t)
-
-	origExit := lastExit
-	defer func() { lastExit = origExit }()
-	lastExit = 0
-
-	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"auth", "status"})
-		_ = rootCmd.Execute()
-	})
-
-	if lastExit != ExitOK {
-		t.Errorf("expected exit 0, got %d", lastExit)
-	}
-	if !strings.Contains(out, "Configured") || !strings.Contains(out, "env-cli") {
-		t.Errorf("expected configured status, got:\n%s", out)
-	}
-}
-
-func TestAuth_Status_PlainText_NotConfigured(t *testing.T) {
-	setTextFormatForTest(t)
-	isolateConfigHome(t)
-	clearAuthEnv(t)
-	resetAuthLoginFlags(t)
-
-	origExit := lastExit
-	defer func() { lastExit = origExit }()
-	lastExit = 0
-
-	out := captureCombinedOutput(t, func() {
-		rootCmd.SetArgs([]string{"auth", "status"})
-		_ = rootCmd.Execute()
-	})
-
-	if lastExit != ExitAuth {
-		t.Errorf("expected exit %d, got %d", ExitAuth, lastExit)
-	}
-	if !strings.Contains(out, "Not configured") {
-		t.Errorf("expected not configured warning, got:\n%s", out)
-	}
-}
-
-func TestAuth_Status_EnvSource(t *testing.T) {
-	isolateConfigHome(t)
-	clearAuthEnv(t)
-	t.Setenv("GITLAB_HOST", "https://gitlab.example.com")
-	t.Setenv("GITLAB_TOKEN", "tok")
-
-	origExit := lastExit
-	defer func() { lastExit = origExit }()
-	lastExit = 0
-
-	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"auth", "status", "--json"})
-		_ = rootCmd.Execute()
-	})
-
-	if lastExit != ExitOK {
-		t.Errorf("expected exit 0, got %d", lastExit)
-	}
-	if !strings.Contains(out, `"source": "env"`) {
-		t.Errorf("expected source=env, got:\n%s", out)
-	}
-}
-
-func TestAuth_Status_AuthStatusSourceError(t *testing.T) {
-	home := isolateConfigHome(t)
-	clearAuthEnv(t)
-	resetAuthLoginFlags(t)
-	writeGitLabCLIFile(t, home, "profiles.json", `{
-  "active": "default",
-  "profiles": {"default": {"host": "https://gitlab.example.com", "token": "tok"}}
-}`)
-	cfgDir := filepath.Join(home, ".gitlab-cli", "config.json")
-	if err := os.MkdirAll(filepath.Dir(cfgDir), 0o700); err != nil {
+	if err := writeCredential(profile, storedCredential{Host: host, Token: token, Username: user}); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Mkdir(cfgDir, 0o700); err != nil {
+}
+
+// ---------------------------------------------------------------- behaviour matrix
+
+func TestAuthMatrix(t *testing.T) {
+	notUpstream := "logout changes only the local keyring; GitLab is not contacted"
+	cases := []matrixCase{
+		{Path: "auth login", Args: []string{"--token", daveToken},
+			Invalid: []invalidCase{
+				{[]string{"--host", "ftp://gitlab.example.com", "--token", "x"}, "E_VALIDATION", "invalid_value", "--host"},
+				{[]string{"--host", "http://gitlab.example.com", "--token", "x"}, "E_VALIDATION", "invalid_value", "--host"},
+				{[]string{"--token", "a", "--token-file", "f"}, "E_USAGE", "conflicting_flags", "--token-file"},
+				{[]string{"--token", "  "}, "E_VALIDATION", "invalid_value", "--token"},
+			},
+			Rows: map[string]func(t *testing.T){
+				"auth and permission": testAuthLoginCredentials,
+				"apply failure":       testAuthLoginApplyFailure,
+			}},
+		{Path: "auth status"},
+		{Path: "auth logout",
+			Skip: map[string]string{"auth and permission": notUpstream, "upstream failure": notUpstream},
+			Rows: map[string]func(t *testing.T){
+				"success":       testAuthLogoutSuccess,
+				"exit code":     testAuthLogoutSuccess,
+				"gate":          testAuthLogoutSuccess,
+				"apply failure": testAuthLogoutApplyFailure,
+			}},
+	}
+	for _, c := range cases {
+		t.Run(c.Path, func(t *testing.T) { runMatrix(t, c) })
+	}
+}
+
+// testAuthLoginCredentials: login checks the new token with GitLab before it is
+// stored; without a token it asks the user, never the agent.
+func testAuthLoginCredentials(t *testing.T) {
+	e := newTestEnv(t)
+	e.vars["GITLAB_CLI_TOKEN"] = ""
+	r := e.run("auth", "login", "--dangerous", "--dry-run")
+	if r.code() != "E_USAGE" || r.details()["parameter"] != "--token-file" || !strings.Contains(r.details()["next_action"].(string), "own terminal") {
+		t.Fatalf("no token: %s", r.out)
+	}
+	r = e.run("auth", "login", "--token", "glpat-revoked", "--dangerous", "--dry-run")
+	if r.code() != "E_AUTH" || len(e.gl.Requests()) != 1 {
+		t.Fatalf("a token GitLab rejects is not stored: %s", r.out)
+	}
+	e.gl.fail(fakeFault{Path: "/user", Status: 403})
+	if r = e.run("auth", "login", "--token", daveToken, "--dangerous", "--dry-run"); r.code() != "E_FORBIDDEN" {
+		t.Fatalf("a 403 from GitLab: %s", r.out)
+	}
+}
+
+// testAuthLoginApplyFailure: the keyring goes first, so a refused keyring leaves
+// settings.json alone, and a settings.json that cannot be written puts the keyring
+// entry back; there is no upstream write to refuse or lose.
+func testAuthLoginApplyFailure(t *testing.T) {
+	t.Run("not sent", func(t *testing.T) {
+		e := newTestEnv(t)
+		args := []string{"auth", "login", "--token", daveToken, "--dangerous"}
+		tok := e.dryRun(args...)
+		testKeyring.failSet = errors.New("no secret service")
+		r := e.confirm(tok, args...)
+		if r.code() != "E_IO" || r.details()["dispatch_state"] != "not_started" || r.outcome()["change"] != "not_applied" {
+			t.Fatalf("a refused keyring: %s", r.out)
+		}
+		if _, err := os.Stat(filepath.Join(e.vars["GITLAB_CLI_STATE_DIR"], "settings.json")); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("settings.json must not be written: %v", err)
+		}
+	})
+	t.Run("settings not written", func(t *testing.T) {
+		e := newTestEnv(t)
+		e.vars["GITLAB_CLI_SETTINGS_FILE"] = filepath.Join(e.dir, "missing", "settings.json")
+		storeTestCredential(t, "", e.gl.URL, testToken, "carol")
+		before := testKeyring.raw(keyringAccount(""))
+		args := []string{"auth", "login", "--host", e.gl.URL, "--token", daveToken, "--dangerous"}
+		r := e.confirm(e.dryRun(args...), args...)
+		if r.code() != "E_IO" || r.details()["dispatch_state"] != "not_started" || testKeyring.raw(keyringAccount("")) != before {
+			t.Fatalf("an unwritable settings.json: %s", r.out)
+		}
+	})
+	t.Run("refused", func(t *testing.T) { t.Skip("not applicable: login writes no upstream request GitLab could refuse") })
+	t.Run("unknown", func(t *testing.T) {
+		t.Skip("not applicable: the keyring write either succeeds or fails; only a failed keyring restore is unknown")
+	})
+}
+
+func testAuthLogoutSuccess(t *testing.T) {
+	e := newTestEnv(t)
+	storeTestCredential(t, "", e.gl.URL, daveToken, "dave")
+	dry := e.run("auth", "logout", "--dangerous", "--dry-run")
+	if ch := dry.preview()["changes"].([]any)[0].(map[string]any); ch["field"] != "token_stored" || ch["before"] != true {
+		t.Fatalf("preview: %s", dry.out)
+	}
+	r := e.confirm(dry.token(), "auth", "logout", "--dangerous")
+	if r.exit != 0 || r.outcome()["verification"] != "passed" || r.receipt()["observed"].(map[string]any)["token_stored"] != false {
+		t.Fatalf("logout: %s", r.out)
+	}
+	if res := r.data()["result"].(map[string]any); res["profile"] != "default" || res["host"] != e.gl.URL {
+		t.Fatalf("result: %v", res)
+	}
+	if testKeyring.raw(keyringAccount("")) != "" {
+		t.Fatal("the token is still in the keyring")
+	}
+	if e.gl.Writes() != 0 || len(e.gl.Requests()) != 0 {
+		t.Fatal("logout contacted GitLab")
+	}
+}
+
+func testAuthLogoutApplyFailure(t *testing.T) {
+	t.Run("not sent", func(t *testing.T) {
+		e := newTestEnv(t)
+		storeTestCredential(t, "", e.gl.URL, daveToken, "dave")
+		tok := e.dryRun("auth", "logout", "--dangerous")
+		testKeyring.failSet = errors.New("keyring locked")
+		r := e.confirm(tok, "auth", "logout", "--dangerous")
+		if r.code() != "E_IO" || r.details()["dispatch_state"] != "not_started" || r.outcome()["change"] != "not_applied" {
+			t.Fatalf("a locked keyring: %s", r.out)
+		}
+	})
+	t.Run("refused", func(t *testing.T) { t.Skip("not applicable: logout writes no upstream request") })
+	t.Run("unknown", func(t *testing.T) { t.Skip("not applicable: a keyring delete either succeeds or fails") })
+}
+
+// ---------------------------------------------------------------- focused tests
+
+// TestAuthLoginStoresTheTokenInTheKeyring: the documented path (--token-file -):
+// the token goes to the keyring, the host to settings.json, and later commands use
+// them; the token never reaches an output, the settings file or the state directory
+// (SEC-021, SEC-040).
+func TestAuthLoginStoresTheTokenInTheKeyring(t *testing.T) {
+	e := newTestEnv(t)
+	e.vars["GITLAB_CLI_TOKEN"] = ""
+	e.stdin = daveToken + "\n"
+	args := []string{"auth", "login", "--host", e.gl.URL + "/", "--token-file", "-", "--dangerous"}
+	dry := e.run(append(args, "--dry-run")...)
+	r := e.confirm(dry.token(), args...)
+	if r.exit != 0 || r.outcome()["verification"] != "passed" {
+		t.Fatalf("login: %s", r.out)
+	}
+	res := r.data()["result"].(map[string]any)
+	if res["account"] != "dave" || res["profile"] != "default" || res["host"] != e.gl.URL || res["credentials_source"] != "keyring" {
+		t.Fatalf("result: %v", res)
+	}
+	if inputs := dry.preview()["inputs"].(map[string]any); inputs["token"] != "***" {
+		t.Fatalf("the token is shown as ***: %v", inputs)
+	}
+	settings, err := os.ReadFile(res["settings_file"].(string))
+	if err != nil {
 		t.Fatal(err)
 	}
-
-	origExit := lastExit
-	defer func() { lastExit = origExit }()
-	lastExit = 0
-
-	out := captureCombinedOutput(t, func() {
-		rootCmd.SetArgs([]string{"auth", "status", "--json"})
-		_ = rootCmd.Execute()
-	})
-
-	if lastExit != ExitNetwork {
-		t.Errorf("expected exit %d, got %d", ExitNetwork, lastExit)
+	// App.SetProfileSettings writes the host, and the first profile becomes the
+	// default (Q3).
+	var doc map[string]any
+	if json.Unmarshal(settings, &doc) != nil || doc["default_profile"] != "default" ||
+		doc["profiles"].(map[string]any)["default"].(map[string]any)["host"] != e.gl.URL {
+		t.Fatalf("settings.json: %s", settings)
 	}
-	if !strings.Contains(out, `"error"`) && !strings.Contains(strings.ToLower(out), "reading config") {
-		t.Errorf("expected config error, got:\n%s", out)
+	var stored storedCredential
+	if err := json.Unmarshal([]byte(testKeyring.raw("profile:default")), &stored); err != nil || stored.Token != daveToken ||
+		stored.Username != "dave" || stored.Host != e.gl.URL {
+		t.Fatalf("keyring: %+v %v", stored, err)
 	}
+	// Later commands sign in from the keyring and report it without a network call.
+	ctx := e.run("context")
+	if prof := ctx.data()["profile"].(map[string]any); ctx.data()["account"] != "dave" ||
+		ctx.data()["credentials"].(map[string]any)["source"] != "keyring" || prof["name"] != "default" || prof["source"] != "config" {
+		t.Fatalf("context: %s", ctx.out)
+	}
+	if st := e.run("auth", "status"); st.data()["account"] != "dave" || st.data()["credentials_source"] != "keyring" {
+		t.Fatalf("auth status: %s", st.out)
+	}
+	assertSecretAbsent(t, e, daveToken, dry, r)
 }
 
-func TestAuth_Status_FileSource(t *testing.T) {
-	home := isolateConfigHome(t)
-	clearAuthEnv(t)
-	writeGitLabCLIFile(t, home, "config.json", `{"host":"https://legacy.example.com","token":"legacy"}`)
-
-	origExit := lastExit
-	defer func() { lastExit = origExit }()
-	lastExit = 0
-
-	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"auth", "status", "--json"})
-		_ = rootCmd.Execute()
-	})
-
-	if lastExit != ExitOK {
-		t.Errorf("expected exit 0, got %d", lastExit)
+// assertSecretAbsent searches outputs and the state directory for a secret and its
+// unsalted SHA-256 (SEC-021).
+func assertSecretAbsent(t *testing.T, e *testEnv, secret string, runs ...cliResult) {
+	t.Helper()
+	sum := sha256.Sum256([]byte(secret))
+	needles := []string{secret, hex.EncodeToString(sum[:])}
+	for _, r := range runs {
+		for _, n := range needles {
+			if strings.Contains(r.out+r.errOut, n) {
+				t.Fatalf("the token (or its hash) appeared in an output: %s", r.out)
+			}
+		}
 	}
-	if !strings.Contains(out, `"source": "file"`) {
-		t.Errorf("expected source=file, got:\n%s", out)
-	}
-}
-
-func TestAuth_Login_NonInteractive_PlainText(t *testing.T) {
-	srv := mockUserServer(t)
-	defer srv.Close()
-	isolateConfigHome(t)
-	clearAuthEnv(t)
-	resetAuthLoginFlags(t)
-
-	origJM := jsonMode
-	defer func() { jsonMode = origJM }()
-	setTextFormatForTest(t)
-
-	captureCombinedOutput(t, func() {
-		args := []string{"auth", "login", "--host", srv.URL, "--token", "secret-token"}
-		args = append(args, confirmArgsForTest(t, "save credentials", map[string]any{"host": srv.URL})...)
-		rootCmd.SetArgs(args)
-		_ = rootCmd.Execute()
+	_ = filepath.Walk(e.vars["GITLAB_CLI_STATE_DIR"], func(p string, info os.FileInfo, err error) error {
+		if err == nil && !info.IsDir() {
+			b, _ := os.ReadFile(p)
+			for _, n := range needles {
+				if strings.Contains(string(b), n) {
+					t.Errorf("%s holds the token (or its hash)", p)
+				}
+			}
+		}
+		return nil
 	})
 }
 
-func TestAuth_Login_Interactive_NonTTY_TokenLine(t *testing.T) {
-	srv := mockUserServer(t)
-	defer srv.Close()
-	isolateConfigHome(t)
-	clearAuthEnv(t)
-	resetAuthLoginFlags(t)
-	setTextFormatForTest(t)
-
-	origTTY := stdinIsTerminalForAuth
-	defer func() { stdinIsTerminalForAuth = origTTY }()
-	stdinIsTerminalForAuth = func() bool { return false }
-
-	withStdinInput(t, "line-token\n")
-
-	captureCombinedOutput(t, func() {
-		args := []string{"auth", "login", "--host", srv.URL}
-		args = append(args, confirmArgsForTest(t, "save credentials", map[string]any{"host": srv.URL})...)
-		rootCmd.SetArgs(args)
-		_ = rootCmd.Execute()
-	})
-
-	pf, err := config.LoadProfiles()
-	if err != nil {
-		t.Fatalf("LoadProfiles: %v", err)
+// TestAuthLoginProfiles: login writes the profile it is asked for, refuses to
+// guess between several, and a new profile needs --host (CLI-101); login and logout
+// run under a profile settings.json lacks (Meta.AllowUnknownProfile), other commands stop up
+// front (D4).
+func TestAuthLoginProfiles(t *testing.T) {
+	e := newTestEnv(t)
+	e.writeSettings(`{"profiles": {"work": {"host": "` + e.gl.URL + `"}, "home": {"host": "https://gitlab.com"}}}`)
+	e.vars["GITLAB_CLI_HOST"] = ""
+	r := e.run("auth", "login", "--token", daveToken, "--dangerous", "--dry-run")
+	if r.code() != "E_USAGE" || r.details()["parameter"] != "--profile" {
+		t.Fatalf("several profiles and none active: %s", r.out)
 	}
-	if pf.Profiles["default"].Token != "line-token" {
-		t.Fatalf("token = %q, want line-token", pf.Profiles["default"].Token)
+	if r = e.run("auth", "login", "--profile", "lab", "--token", daveToken, "--dangerous", "--dry-run"); r.details()["parameter"] != "--host" {
+		t.Fatalf("a new profile needs --host: %s", r.out)
 	}
-}
-
-func TestAuth_Login_Interactive_PromptHost(t *testing.T) {
-	srv := mockUserServer(t)
-	defer srv.Close()
-	isolateConfigHome(t)
-	clearAuthEnv(t)
-	resetAuthLoginFlags(t)
-	setTextFormatForTest(t)
-
-	origTTY := stdinIsTerminalForAuth
-	defer func() { stdinIsTerminalForAuth = origTTY }()
-	stdinIsTerminalForAuth = func() bool { return false }
-
-	withStdinInput(t, srv.URL+"\nsecret-token\n")
-
-	captureCombinedOutput(t, func() {
-		args := []string{"auth", "login"}
-		args = append(args, confirmArgsForTest(t, "save credentials", map[string]any{"host": srv.URL})...)
-		rootCmd.SetArgs(args)
-		_ = rootCmd.Execute()
-	})
-}
-
-func TestAuth_Login_ReadPasswordErrorHook(t *testing.T) {
-	srv := mockUserServer(t)
-	defer srv.Close()
-	resetAuthLoginFlags(t)
-	setTextFormatForTest(t)
-
-	origTTY := stdinIsTerminalForAuth
-	origRead := readPasswordForAuth
-	origExit := lastExit
-	defer func() {
-		stdinIsTerminalForAuth = origTTY
-		readPasswordForAuth = origRead
-		lastExit = origExit
-	}()
-	stdinIsTerminalForAuth = func() bool { return true }
-	readPasswordForAuth = func() ([]byte, error) { return nil, errors.New("read failed") }
-	lastExit = 0
-
-	rootCmd.SetArgs([]string{"auth", "login", "--host", srv.URL})
-	_ = rootCmd.Execute()
-	if lastExit != ExitNetwork {
-		t.Fatalf("exit=%d want=%d", lastExit, ExitNetwork)
+	args := []string{"auth", "login", "--profile", "work", "--token", daveToken, "--dangerous"}
+	if r = e.confirm(e.dryRun(args...), args...); r.exit != 0 || r.data()["result"].(map[string]any)["profile"] != "work" {
+		t.Fatalf("login to work: %s", r.out)
+	}
+	if testKeyring.raw("profile:work") == "" || testKeyring.raw("profile:home") != "" {
+		t.Fatal("only work's entry is written")
+	}
+	// The token of work is used with --profile work, not with home.
+	e.vars["GITLAB_CLI_TOKEN"] = ""
+	if r = e.run("label", "list", "--project", "acme/web", "--profile", "work"); r.exit != 0 {
+		t.Fatalf("work signs in from the keyring: %s", r.out)
+	}
+	if r = e.run("label", "list", "--project", "acme/web", "--profile", "home"); r.code() != "E_AUTH" {
+		t.Fatalf("home has no token: %s", r.out)
+	}
+	sent := len(e.gl.Requests())
+	if r = e.run("label", "list", "--project", "acme/web", "--profile", "nope"); r.code() != "E_CONFIG" ||
+		r.details()["profile"] != "nope" || strings.Contains(r.errObj()["message"].(string), "nope") || len(e.gl.Requests()) != sent {
+		t.Fatalf("an unknown profile: %s", r.out)
+	}
+	// Two profiles and no default_profile: a keyring token is used only for a named
+	// profile.
+	if r = e.run("label", "list", "--project", "acme/web"); r.code() != "E_USAGE" || r.details()["parameter"] != "--profile" {
+		t.Fatalf("no active profile: %s", r.out)
+	}
+	// A new profile is created by its first login (aicli's gate resolves the
+	// identity under a profile settings.json does not have yet).
+	args = []string{"auth", "login", "--profile", "lab", "--host", e.gl.URL, "--token", daveToken, "--dangerous"}
+	if r = e.confirm(e.dryRun(args...), args...); r.exit != 0 {
+		t.Fatalf("login creating profile lab: %s", r.out)
+	}
+	if r = e.run("auth", "status", "--profile", "lab"); r.data()["account"] != "dave" || r.data()["profile"] != "lab" {
+		t.Fatalf("lab signs in: %s", r.out)
+	}
+	settings, _ := os.ReadFile(filepath.Join(e.vars["GITLAB_CLI_STATE_DIR"], "settings.json"))
+	var doc map[string]any
+	// Only a file's first profile becomes its default (Q3, RC2-1): this file had two
+	// profiles and no default_profile, a person's choice that lab's login keeps, so a
+	// command without --profile still has to name one.
+	if json.Unmarshal(settings, &doc) != nil || len(doc["profiles"].(map[string]any)) != 3 {
+		t.Fatalf("settings.json keeps the other profiles: %s", settings)
+	}
+	if _, set := doc["default_profile"]; set {
+		t.Fatalf("login of a new profile set default_profile: %s", settings)
+	}
+	if r = e.run("label", "list", "--project", "acme/web"); r.code() != "E_USAGE" || r.details()["parameter"] != "--profile" {
+		t.Fatalf("still no active profile after lab's login: %s", r.out)
+	}
+	// A profile removed from settings.json by hand: logout still removes its token.
+	storeTestCredential(t, "gone", e.gl.URL, daveToken, "dave")
+	args = []string{"auth", "logout", "--profile", "gone", "--dangerous"}
+	if r = e.confirm(e.dryRun(args...), args...); r.exit != 0 || testKeyring.raw("profile:gone") != "" {
+		t.Fatalf("logout of a profile settings.json lacks: %s", r.out)
 	}
 }
 
-func TestAuth_Status_PlainText_WithHostUnconfigured(t *testing.T) {
-	home := isolateConfigHome(t)
-	clearAuthEnv(t)
-	writeGitLabCLIFile(t, home, "config.json", `{"host":"https://partial.example.com","token":""}`)
-
-	origJM := jsonMode
-	origExit := lastExit
-	defer func() {
-		jsonMode = origJM
-		lastExit = origExit
-	}()
-	setTextFormatForTest(t)
-	lastExit = 0
-
-	captureCombinedOutput(t, func() {
-		rootCmd.SetArgs([]string{"auth", "status"})
-		_ = rootCmd.Execute()
-	})
-	if lastExit != ExitAuth {
-		t.Fatalf("exit=%d want=%d", lastExit, ExitAuth)
+// TestAuthTokenStaysWithItsHost: a keyring token is sent only to the host it was
+// stored for, whatever GITLAB_CLI_HOST says.
+func TestAuthTokenStaysWithItsHost(t *testing.T) {
+	e := newTestEnv(t)
+	e.vars["GITLAB_CLI_TOKEN"] = ""
+	storeTestCredential(t, "", "https://gitlab.other.example", testToken, "carol")
+	r := e.run("label", "list", "--project", "acme/web")
+	if r.code() != "E_AUTH" || !strings.Contains(r.errObj()["message"].(string), "another GitLab host") || len(e.gl.Requests()) != 0 {
+		t.Fatalf("a token for another host: %s", r.out)
+	}
+	ctx := e.run("context")
+	if ctx.data()["credentials"].(map[string]any)["configured"] != false {
+		t.Fatalf("context: %s", ctx.out)
 	}
 }
 
-func TestAuth_ProfileUse_PlainText(t *testing.T) {
-	home := isolateConfigHome(t)
-	writeGitLabCLIFile(t, home, "profiles.json", `{
-  "active": "default",
-  "profiles": {
-    "default": {"host": "https://a.example.com", "token": "t1"},
-    "work": {"host": "https://b.example.com", "token": "t2"}
-  }
-}`)
-	origJM := jsonMode
-	defer func() { jsonMode = origJM }()
-	setTextFormatForTest(t)
-
-	out := captureCombinedOutput(t, func() {
-		args := []string{"auth", "profile", "use", "work"}
-		args = append(args, confirmArgsForTest(t, "use profile", map[string]any{"name": "work"})...)
-		rootCmd.SetArgs(args)
-		_ = rootCmd.Execute()
-	})
-	if !strings.Contains(out, "Active profile: work") {
-		t.Fatalf("expected plain success, got:\n%s", out)
+func TestAuthStatusReportsTheToken(t *testing.T) {
+	e := newTestEnv(t)
+	r := e.run("auth", "status")
+	d := r.data()
+	if r.exit != 0 || d["account"] != "carol" || d["user_id"] != "7" || d["credentials_source"] != "env" ||
+		d["expires_at"] != "2027-01-31T00:00:00Z" || d["token_name"] != "agent token" || stringsOf(d["scopes"])[0] != "api" {
+		t.Fatalf("auth status: %s", r.out)
+	}
+	e.gl.fail(fakeFault{Path: "personal_access_tokens", Status: 404})
+	if r = e.run("auth", "status"); r.exit != 0 || r.data()["expires_at"] != nil || r.data()["token_name"] != nil {
+		t.Fatalf("a token GitLab has no record of (OAuth, job token): %s", r.out)
 	}
 }
 
-func TestAuth_ProfileRemove_PlainText(t *testing.T) {
-	home := isolateConfigHome(t)
-	writeGitLabCLIFile(t, home, "profiles.json", `{
-  "active": "default",
-  "profiles": {
-    "default": {"host": "https://a.example.com", "token": "t1"},
-    "work": {"host": "https://b.example.com", "token": "t2"}
-  }
-}`)
-	origJM := jsonMode
-	defer func() { jsonMode = origJM }()
-	setTextFormatForTest(t)
-
-	out := captureCombinedOutput(t, func() {
-		args := []string{"auth", "profile", "remove", "work"}
-		args = append(args, confirmArgsForTest(t, "remove profile", map[string]any{"name": "work"})...)
-		rootCmd.SetArgs(args)
-		_ = rootCmd.Execute()
-	})
-	if !strings.Contains(out, "Removed profile: work") {
-		t.Fatalf("expected plain success, got:\n%s", out)
+func TestAuthLogoutWithoutAStoredToken(t *testing.T) {
+	e := newTestEnv(t)
+	r := e.run("auth", "logout", "--dangerous", "--dry-run")
+	if r.code() != "E_NOT_FOUND" || !strings.Contains(r.details()["next_action"].(string), "GITLAB_CLI_TOKEN") {
+		t.Fatalf("nothing stored, an env token in use: %s", r.out)
 	}
-}
-
-func TestAuth_Status_AuthStatusSourceHookError(t *testing.T) {
-	isolateConfigHome(t)
-	clearAuthEnv(t)
-	origHook := authStatusSourceHook
-	origExit := lastExit
-	defer func() {
-		authStatusSourceHook = origHook
-		lastExit = origExit
-	}()
-	authStatusSourceHook = func() (string, error) { return "", errors.New("source boom") }
-	lastExit = 0
-
-	out := captureCombinedOutput(t, func() {
-		rootCmd.SetArgs([]string{"auth", "status"})
-		_ = rootCmd.Execute()
-	})
-	if lastExit != ExitNetwork {
-		t.Fatalf("exit=%d want=%d", lastExit, ExitNetwork)
+	r = e.run("auth", "logout", "--dry-run")
+	if r.details()["problem"] != "dangerous_flag_required" {
+		t.Fatalf("logout is configure, so dangerous: %s", r.out)
 	}
-	if !strings.Contains(strings.ToLower(out), "source boom") {
-		t.Fatalf("expected source error, got:\n%s", out)
-	}
-}
-
-func TestAuth_DefaultTerminalHook(t *testing.T) {
-	_ = stdinIsTerminalForAuth()
 }

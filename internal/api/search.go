@@ -5,49 +5,71 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
-	"strconv"
+	"strings"
 )
 
-// SearchAPI wraps the global search API.
+// SearchAPI wraps GitLab's search API, global and within a project.
 //
 // Endpoint reference: https://docs.gitlab.com/api/search/
 //
-// Methods are implemented in this file by Phase 1 Wave B.
+// Order: GitLab ranks results by relevance only with advanced search; basic search
+// lists issues and merge requests newest first and ranks no scope by relevance.
+// Global commit and code search need advanced search (or exact code search for
+// code); within a project, basic search serves both.
 type SearchAPI struct{ client *Client }
 
 // ─── DTOs ────────────────────────────────────────────────────────────────────
 
-// SearchProject is a slim project result from global search.
-type SearchProject struct {
-	ID                int    `json:"id"`
-	Name              string `json:"name"`
-	PathWithNamespace string `json:"path_with_namespace"`
-	WebURL            string `json:"web_url"`
-	Visibility        string `json:"visibility"`
-	DefaultBranch     string `json:"default_branch"`
+// SearchOpts selects one page of a search. Project is a path or numeric ID; ""
+// searches every project this account can see.
+type SearchOpts struct {
+	Project string
+	Query   string
+	Page    int
+	PerPage int
 }
 
-// SearchIssue is a slim issue result from search.
+// References is the references object of an issue or merge request; Full is the
+// cross-project form (acme/web#12, acme/web!5).
+type References struct {
+	Full string `json:"full"`
+}
+
+// SearchIssue is an issue as the search API returns it.
 type SearchIssue struct {
-	ID        int    `json:"id"`
-	IID       int    `json:"iid"`
-	Title     string `json:"title"`
-	State     string `json:"state"`
-	WebURL    string `json:"web_url"`
-	ProjectID int    `json:"project_id"`
+	ID         int        `json:"id"`
+	IID        int        `json:"iid"`
+	ProjectID  int        `json:"project_id"`
+	Title      string     `json:"title"`
+	State      string     `json:"state"`
+	Labels     []string   `json:"labels"`
+	Author     *User      `json:"author"`
+	CreatedAt  string     `json:"created_at"`
+	UpdatedAt  string     `json:"updated_at"`
+	WebURL     string     `json:"web_url"`
+	References References `json:"references"`
 }
 
-// SearchMR is a slim merge request result from search.
+// SearchMR is a merge request as the search API returns it.
 type SearchMR struct {
-	ID        int    `json:"id"`
-	IID       int    `json:"iid"`
-	Title     string `json:"title"`
-	State     string `json:"state"`
-	WebURL    string `json:"web_url"`
-	ProjectID int    `json:"project_id"`
+	ID           int        `json:"id"`
+	IID          int        `json:"iid"`
+	ProjectID    int        `json:"project_id"`
+	Title        string     `json:"title"`
+	State        string     `json:"state"`
+	Draft        bool       `json:"draft"`
+	SourceBranch string     `json:"source_branch"`
+	TargetBranch string     `json:"target_branch"`
+	Labels       []string   `json:"labels"`
+	Author       *User      `json:"author"`
+	CreatedAt    string     `json:"created_at"`
+	UpdatedAt    string     `json:"updated_at"`
+	WebURL       string     `json:"web_url"`
+	References   References `json:"references"`
 }
 
-// SearchBlob is a code search result (blob/file match).
+// SearchBlob is a code search result: the matching lines of a file. Ref is the
+// branch, tag or commit searched.
 type SearchBlob struct {
 	Basename  string `json:"basename"`
 	Data      string `json:"data"`
@@ -58,7 +80,7 @@ type SearchBlob struct {
 	ProjectID int    `json:"project_id"`
 }
 
-// SearchCommit is a slim commit result from search.
+// SearchCommit is a commit as the search API returns it.
 type SearchCommit struct {
 	ID         string `json:"id"`
 	ShortID    string `json:"short_id"`
@@ -69,132 +91,74 @@ type SearchCommit struct {
 	ProjectID  int    `json:"project_id"`
 }
 
-// ─── helpers ─────────────────────────────────────────────────────────────────
-
-func perPageParam(limit int) string {
-	return strconv.Itoa(listPerPage(limit))
-}
-
-func (a *SearchAPI) globalSearch(ctx context.Context, scope, query string, limit int) ([]byte, error) {
-	params := url.Values{}
-	params.Set("scope", scope)
-	params.Set("search", query)
-	params.Set("per_page", perPageParam(limit))
-	path := a.client.APIPath("/search") + "?" + params.Encode()
-	data, _, err := PaginateGET(ctx, a.client, path, limit)
-	return data, err
-}
-
-func (a *SearchAPI) projectSearch(ctx context.Context, projectID, scope, query string, limit int) ([]byte, error) {
-	params := url.Values{}
-	params.Set("scope", scope)
-	params.Set("search", query)
-	params.Set("per_page", perPageParam(limit))
-	path := a.client.APIPath("/projects/"+EncodeProjectPath(projectID)+"/search") + "?" + params.Encode()
-	data, _, err := PaginateGET(ctx, a.client, path, limit)
-	return data, err
-}
-
 // ─── Methods ─────────────────────────────────────────────────────────────────
 
-// Projects searches for projects globally.
-//
-// GET /api/v4/search?scope=projects&search=<q>
-func (a *SearchAPI) Projects(ctx context.Context, query string, limit int) ([]SearchProject, error) {
-	data, err := a.globalSearch(ctx, "projects", query, limit)
+// page fetches one page of scope into out.
+func (a *SearchAPI) page(ctx context.Context, scope string, opts SearchOpts, out any) (Pagination, error) {
+	q := url.Values{}
+	q.Set("scope", scope)
+	q.Set("search", strings.TrimSpace(opts.Query))
+	path := a.client.APIPath("/search")
+	if opts.Project != "" {
+		path = a.client.APIPath("/projects/" + EncodeProjectPath(opts.Project) + "/search")
+	}
+	data, pag, err := GetPage(ctx, a.client, path+"?"+q.Encode(), opts.Page, opts.PerPage)
 	if err != nil {
-		return nil, err
+		return Pagination{}, err
 	}
-	var out []SearchProject
-	if err := json.Unmarshal(data, &out); err != nil {
-		return nil, fmt.Errorf("parsing search projects: %w", err)
+	if err := json.Unmarshal(data, out); err != nil {
+		return Pagination{}, fmt.Errorf("parsing search %s: %w", scope, err)
 	}
-	return out, nil
+	return pag, nil
 }
 
-// Issues searches for issues. If project is non-empty, uses project-scoped endpoint.
+// ProjectsPage returns one page of the projects matching query (global search;
+// GitLab's project search has no projects scope).
 //
-// GET /api/v4/search?scope=issues&search=<q>
-// GET /api/v4/projects/:id/search?scope=issues&search=<q>
-func (a *SearchAPI) Issues(ctx context.Context, query, project string, limit int) ([]SearchIssue, error) {
-	var (
-		data []byte
-		err  error
-	)
-	if project != "" {
-		data, err = a.projectSearch(ctx, project, "issues", query, limit)
-	} else {
-		data, err = a.globalSearch(ctx, "issues", query, limit)
-	}
-	if err != nil {
-		return nil, err
-	}
+// GET /api/v4/search?scope=projects
+func (a *SearchAPI) ProjectsPage(ctx context.Context, query string, page, perPage int) ([]Project, Pagination, error) {
+	var out []Project
+	pag, err := a.page(ctx, "projects", SearchOpts{Query: query, Page: page, PerPage: perPage}, &out)
+	return out, pag, err
+}
+
+// IssuesPage returns one page of the issues matching opts.Query.
+//
+// GET /api/v4/search?scope=issues
+// GET /api/v4/projects/:id/search?scope=issues
+func (a *SearchAPI) IssuesPage(ctx context.Context, opts SearchOpts) ([]SearchIssue, Pagination, error) {
 	var out []SearchIssue
-	if err := json.Unmarshal(data, &out); err != nil {
-		return nil, fmt.Errorf("parsing search issues: %w", err)
-	}
-	return out, nil
+	pag, err := a.page(ctx, "issues", opts, &out)
+	return out, pag, err
 }
 
-// MergeRequests searches for MRs. If project is non-empty, uses project-scoped endpoint.
+// MergeRequestsPage returns one page of the merge requests matching opts.Query.
 //
-// GET /api/v4/search?scope=merge_requests&search=<q>
-// GET /api/v4/projects/:id/search?scope=merge_requests&search=<q>
-func (a *SearchAPI) MergeRequests(ctx context.Context, query, project string, limit int) ([]SearchMR, error) {
-	var (
-		data []byte
-		err  error
-	)
-	if project != "" {
-		data, err = a.projectSearch(ctx, project, "merge_requests", query, limit)
-	} else {
-		data, err = a.globalSearch(ctx, "merge_requests", query, limit)
-	}
-	if err != nil {
-		return nil, err
-	}
+// GET /api/v4/search?scope=merge_requests
+// GET /api/v4/projects/:id/search?scope=merge_requests
+func (a *SearchAPI) MergeRequestsPage(ctx context.Context, opts SearchOpts) ([]SearchMR, Pagination, error) {
 	var out []SearchMR
-	if err := json.Unmarshal(data, &out); err != nil {
-		return nil, fmt.Errorf("parsing search mrs: %w", err)
-	}
-	return out, nil
+	pag, err := a.page(ctx, "merge_requests", opts, &out)
+	return out, pag, err
 }
 
-// Code searches for code (blobs) within a project. project is required.
+// BlobsPage returns one page of code matches (global code search needs advanced or
+// exact code search).
 //
-// GET /api/v4/projects/:id/search?scope=blobs&search=<q>
-func (a *SearchAPI) Code(ctx context.Context, query, project string, limit int) ([]SearchBlob, error) {
-	data, err := a.projectSearch(ctx, project, "blobs", query, limit)
-	if err != nil {
-		return nil, err
-	}
+// GET /api/v4/projects/:id/search?scope=blobs
+func (a *SearchAPI) BlobsPage(ctx context.Context, opts SearchOpts) ([]SearchBlob, Pagination, error) {
 	var out []SearchBlob
-	if err := json.Unmarshal(data, &out); err != nil {
-		return nil, fmt.Errorf("parsing search blobs: %w", err)
-	}
-	return out, nil
+	pag, err := a.page(ctx, "blobs", opts, &out)
+	return out, pag, err
 }
 
-// Commits searches for commits. If project is non-empty, uses project-scoped endpoint.
+// CommitsPage returns one page of the commits matching opts.Query (global commit
+// search needs advanced search).
 //
-// GET /api/v4/search?scope=commits&search=<q>
-// GET /api/v4/projects/:id/search?scope=commits&search=<q>
-func (a *SearchAPI) Commits(ctx context.Context, query, project string, limit int) ([]SearchCommit, error) {
-	var (
-		data []byte
-		err  error
-	)
-	if project != "" {
-		data, err = a.projectSearch(ctx, project, "commits", query, limit)
-	} else {
-		data, err = a.globalSearch(ctx, "commits", query, limit)
-	}
-	if err != nil {
-		return nil, err
-	}
+// GET /api/v4/search?scope=commits
+// GET /api/v4/projects/:id/search?scope=commits
+func (a *SearchAPI) CommitsPage(ctx context.Context, opts SearchOpts) ([]SearchCommit, Pagination, error) {
 	var out []SearchCommit
-	if err := json.Unmarshal(data, &out); err != nil {
-		return nil, fmt.Errorf("parsing search commits: %w", err)
-	}
-	return out, nil
+	pag, err := a.page(ctx, "commits", opts, &out)
+	return out, pag, err
 }

@@ -1,92 +1,51 @@
 package api
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"strconv"
 	"time"
 )
 
-// Job represents a GitLab CI job.
+// Job is a GitLab CI job.
 type Job struct {
-	ID         int       `json:"id"`
-	Name       string    `json:"name"`
-	Status     string    `json:"status"`
-	Stage      string    `json:"stage"`
-	Ref        string    `json:"ref"`
-	WebURL     string    `json:"web_url"`
-	CreatedAt  string    `json:"created_at"`
-	StartedAt  string    `json:"started_at"`
-	FinishedAt string    `json:"finished_at"`
-	Duration   float64   `json:"duration"`
-	User       *User     `json:"user"`
-	Pipeline   *Pipeline `json:"pipeline"`
+	ID                int            `json:"id"`
+	Name              string         `json:"name"`
+	Stage             string         `json:"stage"`
+	Status            string         `json:"status"`
+	FailureReason     string         `json:"failure_reason"` // set when the job failed: script_failure, ...
+	AllowFailure      bool           `json:"allow_failure"`
+	Ref               string         `json:"ref"` // the branch or tag
+	Tag               bool           `json:"tag"`
+	WebURL            string         `json:"web_url"`
+	CreatedAt         string         `json:"created_at"`
+	StartedAt         string         `json:"started_at"`
+	FinishedAt        string         `json:"finished_at"`
+	Duration          *float64       `json:"duration"`        // seconds; null before the job starts
+	QueuedDuration    *float64       `json:"queued_duration"` // seconds
+	Coverage          *float64       `json:"coverage"`
+	User              *User          `json:"user"`
+	Pipeline          *Pipeline      `json:"pipeline"`
+	ArtifactsFile     *ArtifactsFile `json:"artifacts_file"` // the archive; nil when there is none
+	Artifacts         []JobArtifact  `json:"artifacts"`
+	ArtifactsExpireAt string         `json:"artifacts_expire_at"`
 }
 
-// JobAPI wraps CI job–related API calls.
-//
-// Endpoint reference: https://docs.gitlab.com/api/jobs/
-//
-// Methods are implemented in this file by Phase 1 Wave A.
-type JobAPI struct{ client *Client }
-
-// Get returns a single job.
-//
-// GET /api/v4/projects/:id/jobs/:job_id
-func (a *JobAPI) Get(ctx context.Context, projectID string, jobID int) (*Job, error) {
-	path := a.client.APIPath("/projects/" + EncodeProjectPath(projectID) + "/jobs/" + strconv.Itoa(jobID))
-	data, err := a.client.Get(ctx, path)
-	if err != nil {
-		return nil, err
-	}
-	var j Job
-	if err := json.Unmarshal(data, &j); err != nil {
-		return nil, fmt.Errorf("parsing job: %w", err)
-	}
-	return &j, nil
+// ArtifactsFile is a job's artifacts archive.
+type ArtifactsFile struct {
+	Filename string `json:"filename"`
+	Size     int64  `json:"size"`
 }
 
-// Log returns the plain-text trace for a job.
-//
-// GET /api/v4/projects/:id/jobs/:job_id/trace
-func (a *JobAPI) Log(ctx context.Context, projectID string, jobID int) ([]byte, error) {
-	path := a.client.APIPath("/projects/" + EncodeProjectPath(projectID) + "/jobs/" + strconv.Itoa(jobID) + "/trace")
-	return a.client.Get(ctx, path)
-}
-
-// Retry retries a job.
-//
-// POST /api/v4/projects/:id/jobs/:job_id/retry
-func (a *JobAPI) Retry(ctx context.Context, projectID string, jobID int) (*Job, error) {
-	path := a.client.APIPath("/projects/" + EncodeProjectPath(projectID) + "/jobs/" + strconv.Itoa(jobID) + "/retry")
-	data, err := a.client.Post(ctx, path, nil)
-	if err != nil {
-		return nil, err
-	}
-	var j Job
-	if err := json.Unmarshal(data, &j); err != nil {
-		return nil, fmt.Errorf("parsing job: %w", err)
-	}
-	return &j, nil
-}
-
-// Cancel cancels a job.
-//
-// POST /api/v4/projects/:id/jobs/:job_id/cancel
-func (a *JobAPI) Cancel(ctx context.Context, projectID string, jobID int) (*Job, error) {
-	path := a.client.APIPath("/projects/" + EncodeProjectPath(projectID) + "/jobs/" + strconv.Itoa(jobID) + "/cancel")
-	data, err := a.client.Post(ctx, path, nil)
-	if err != nil {
-		return nil, err
-	}
-	var j Job
-	if err := json.Unmarshal(data, &j); err != nil {
-		return nil, fmt.Errorf("parsing job: %w", err)
-	}
-	return &j, nil
+// JobArtifact is one artifact file of a job (archive, metadata, trace, reports).
+type JobArtifact struct {
+	FileType   string `json:"file_type"`
+	Size       int64  `json:"size"`
+	Filename   string `json:"filename"`
+	FileFormat string `json:"file_format"`
 }
 
 // JobVariable is a key/value pair supplied when playing a manual job.
@@ -95,124 +54,145 @@ type JobVariable struct {
 	Value string `json:"value"`
 }
 
-// Play runs (plays) a manual job, optionally passing job variables.
+// JobAPI wraps CI job–related API calls.
+//
+// Endpoint reference: https://docs.gitlab.com/api/jobs/
+type JobAPI struct{ client *Client }
+
+func (a *JobAPI) path(projectID string, jobID int, rest string) string {
+	return a.client.APIPath("/projects/" + EncodeProjectPath(projectID) + "/jobs/" + strconv.Itoa(jobID) + rest)
+}
+
+// Get returns a single job.
+//
+// GET /api/v4/projects/:id/jobs/:job_id
+func (a *JobAPI) Get(ctx context.Context, projectID string, jobID int) (*Job, error) {
+	data, err := a.client.Get(ctx, a.path(projectID, jobID, ""))
+	if err != nil {
+		return nil, err
+	}
+	return parseJob(data)
+}
+
+// Log returns the whole plain-text trace of a job.
+//
+// GET /api/v4/projects/:id/jobs/:job_id/trace
+func (a *JobAPI) Log(ctx context.Context, projectID string, jobID int) ([]byte, error) {
+	return a.client.Get(ctx, a.path(projectID, jobID, "/trace"))
+}
+
+// TraceFrom returns the trace bytes past offset. It asks for them with a Range
+// header; GitLab answers 206 with the new bytes, or ignores the range and sends the
+// whole trace (200), of which the bytes past offset are returned. 416 means there is
+// nothing new yet.
+func (a *JobAPI) TraceFrom(ctx context.Context, projectID string, jobID, offset int) ([]byte, error) {
+	status, body, err := a.client.RawGet(ctx, a.path(projectID, jobID, "/trace"),
+		map[string]string{"Range": fmt.Sprintf("bytes=%d-", offset)})
+	switch {
+	case err != nil:
+		return nil, err
+	case status == http.StatusPartialContent:
+		return body, nil
+	case status == http.StatusRequestedRangeNotSatisfiable:
+		return nil, nil
+	case status >= 400:
+		return nil, parseError(status, nil, body)
+	case offset >= len(body):
+		return nil, nil
+	}
+	return body[offset:], nil
+}
+
+// LogStream follows a job's trace into w until the job reaches a final status
+// (success, failed, canceled, skipped or manual) or ctx ends, polling every interval
+// (0 means 3 s).
+func (a *JobAPI) LogStream(ctx context.Context, projectID string, jobID int, w io.Writer, interval time.Duration) error {
+	if interval == 0 {
+		interval = 3 * time.Second
+	}
+	offset := 0
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		chunk, err := a.TraceFrom(ctx, projectID, jobID, offset)
+		if err != nil {
+			return err
+		}
+		if len(chunk) > 0 {
+			if _, err := w.Write(chunk); err != nil {
+				return err
+			}
+			offset += len(chunk)
+		}
+		data, err := a.client.Get(ctx, a.path(projectID, jobID, ""))
+		if err != nil {
+			return err
+		}
+		var j Job
+		if err := json.Unmarshal(data, &j); err != nil {
+			return fmt.Errorf("parsing job status: %w", err)
+		}
+		switch j.Status {
+		case "success", "failed", "canceled", "skipped", "manual":
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(interval):
+		}
+	}
+}
+
+// Retry retries a job; GitLab answers with the new job it created.
+//
+// POST /api/v4/projects/:id/jobs/:job_id/retry
+func (a *JobAPI) Retry(ctx context.Context, projectID string, jobID int) (*Job, error) {
+	data, err := a.client.Post(ctx, a.path(projectID, jobID, "/retry"), nil)
+	if err != nil {
+		return nil, err
+	}
+	return parseJob(data)
+}
+
+// Cancel cancels a job.
+//
+// POST /api/v4/projects/:id/jobs/:job_id/cancel
+func (a *JobAPI) Cancel(ctx context.Context, projectID string, jobID int) (*Job, error) {
+	data, err := a.client.Post(ctx, a.path(projectID, jobID, "/cancel"), nil)
+	if err != nil {
+		return nil, err
+	}
+	return parseJob(data)
+}
+
+// Play starts a manual or scheduled (delayed) job, optionally with job variables.
 //
 // POST /api/v4/projects/:id/jobs/:job_id/play
 func (a *JobAPI) Play(ctx context.Context, projectID string, jobID int, vars []JobVariable) (*Job, error) {
-	path := a.client.APIPath("/projects/" + EncodeProjectPath(projectID) + "/jobs/" + strconv.Itoa(jobID) + "/play")
 	var body any
 	if len(vars) > 0 {
 		body = map[string]any{"job_variables_attributes": vars}
 	}
-	data, err := a.client.Post(ctx, path, body)
+	data, err := a.client.Post(ctx, a.path(projectID, jobID, "/play"), body)
 	if err != nil {
 		return nil, err
 	}
+	return parseJob(data)
+}
+
+// ArtifactsTo streams a job's artifacts archive to w.
+//
+// GET /api/v4/projects/:id/jobs/:job_id/artifacts
+func (a *JobAPI) ArtifactsTo(ctx context.Context, projectID string, jobID int, w io.Writer) error {
+	return a.client.DownloadTo(ctx, a.path(projectID, jobID, "/artifacts"), w)
+}
+
+func parseJob(data []byte) (*Job, error) {
 	var j Job
 	if err := json.Unmarshal(data, &j); err != nil {
 		return nil, fmt.Errorf("parsing job: %w", err)
 	}
 	return &j, nil
-}
-
-// Artifacts downloads the artifacts archive for a job and returns the raw bytes.
-//
-// GET /api/v4/projects/:id/jobs/:job_id/artifacts
-func (a *JobAPI) Artifacts(ctx context.Context, projectID string, jobID int) ([]byte, error) {
-	var buf bytes.Buffer
-	if err := a.ArtifactsTo(ctx, projectID, jobID, &buf); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
-}
-
-// ArtifactsTo streams the artifacts archive for a job to w.
-//
-// GET /api/v4/projects/:id/jobs/:job_id/artifacts
-func (a *JobAPI) ArtifactsTo(ctx context.Context, projectID string, jobID int, w io.Writer) error {
-	path := a.client.APIPath("/projects/" + EncodeProjectPath(projectID) + "/jobs/" + strconv.Itoa(jobID) + "/artifacts")
-	return a.client.DownloadTo(ctx, path, w)
-}
-
-// LogStream polls the job trace endpoint and writes new bytes to w until the
-// job reaches a terminal state or ctx is cancelled.
-// interval is the poll interval; defaults to 3s if zero.
-func (a *JobAPI) LogStream(ctx context.Context, projectID string, jobID int, w io.Writer, interval time.Duration) error {
-	return a.LogStreamFunc(ctx, projectID, jobID, interval, func(chunk []byte, _ int) error {
-		_, err := w.Write(chunk)
-		return err
-	})
-}
-
-// LogChunkFunc receives each new trace chunk along with the byte offset at which
-// the chunk starts. Returning an error aborts the stream.
-type LogChunkFunc func(chunk []byte, offset int) error
-
-// LogStreamFunc polls the job trace endpoint and invokes onChunk for every new
-// byte range until the job reaches a terminal state or ctx is cancelled. It is
-// the shared engine behind both the plain io.Writer stream and the NDJSON
-// streaming command (which needs per-chunk offsets, not just a flat byte sink).
-// It returns the job's terminal status (empty if the stream ended without one,
-// e.g. on cancellation).
-func (a *JobAPI) LogStreamFunc(ctx context.Context, projectID string, jobID int, interval time.Duration, onChunk LogChunkFunc) error {
-	_, err := a.logStreamFunc(ctx, projectID, jobID, interval, onChunk)
-	return err
-}
-
-// LogStreamStatus is LogStreamFunc but also returns the terminal job status, so
-// the NDJSON command can emit it in the summary line.
-func (a *JobAPI) LogStreamStatus(ctx context.Context, projectID string, jobID int, interval time.Duration, onChunk LogChunkFunc) (string, error) {
-	return a.logStreamFunc(ctx, projectID, jobID, interval, onChunk)
-}
-
-func (a *JobAPI) logStreamFunc(ctx context.Context, projectID string, jobID int, interval time.Duration, onChunk LogChunkFunc) (string, error) {
-	if interval == 0 {
-		interval = 3 * time.Second
-	}
-	offset := 0
-	jobPath := a.client.APIPath("/projects/" + EncodeProjectPath(projectID) + "/jobs/" + strconv.Itoa(jobID))
-	tracePath := jobPath + "/trace"
-
-	for {
-		select {
-		case <-ctx.Done():
-			return "", ctx.Err()
-		default:
-		}
-
-		sc, body, err := a.client.RawGet(ctx, tracePath, map[string]string{
-			"Range": fmt.Sprintf("bytes=%d-", offset),
-		})
-		if err != nil {
-			return "", err
-		}
-		if sc == 206 || sc == 200 {
-			if len(body) > 0 {
-				if err := onChunk(body, offset); err != nil {
-					return "", err
-				}
-				offset += len(body)
-			}
-		}
-		// 416 = log not yet available; fall through to status check
-
-		statusData, err := a.client.Get(ctx, jobPath)
-		if err != nil {
-			return "", err
-		}
-		var j Job
-		if err := json.Unmarshal(statusData, &j); err != nil {
-			return "", fmt.Errorf("parsing job status: %w", err)
-		}
-		switch j.Status {
-		case "success", "failed", "canceled", "skipped", "manual":
-			return j.Status, nil
-		}
-
-		select {
-		case <-ctx.Done():
-			return "", ctx.Err()
-		case <-time.After(interval):
-		}
-	}
 }

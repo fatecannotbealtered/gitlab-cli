@@ -1,616 +1,183 @@
 package cmd
 
 import (
-	"bytes"
-	"net/http"
-	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
 
-func TestIssueComment_Help_ListsSubcommands(t *testing.T) {
-	buf := new(bytes.Buffer)
-	rootCmd.SetOut(buf)
-	rootCmd.SetArgs([]string{"issue", "comment", "--help"})
-	_ = rootCmd.Execute()
-	rootCmd.SetOut(nil)
+// The fake's issue and comment endpoints are in issue_test.go. Issue #1 has two
+// comments (8101 by carol, 8102 by dave), #2 a system note (8201) and erin's 8202,
+// whose text carries an injected instruction; #3 has none.
 
-	out := buf.String()
-	for _, want := range []string{"add", "list", "delete"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("issue comment --help missing %q\noutput:\n%s", want, out)
+func init() {
+	addConformanceSamples(map[string][]string{
+		"issue comment create": {"1", "--project", "acme/web", "--body", "Reproduced on staging."},
+		"issue comment delete": {"1", "--project", "acme/web", "--note-id", "8102"},
+	})
+}
+
+func TestIssueCommentMatrix(t *testing.T) {
+	cases := []matrixCase{
+		{Path: "issue comment list", Args: []string{"1", "--project", "acme/web"}, EmptyArgs: []string{"3", "--project", "acme/web"},
+			Invalid: []invalidCase{
+				{[]string{"--project", "acme/web"}, "E_USAGE", "missing_parameter", "--issue"},
+				{[]string{"acme/web#1/notes/x"}, "E_VALIDATION", "invalid_value", "--issue"},
+				{[]string{"1", "--project", "acme/web", "--limit", "0"}, "E_USAGE", "invalid_value", "--limit"},
+			}},
+		{Path: "issue comment create", Args: []string{"1", "--project", "acme/web", "--body", "Reproduced on staging."},
+			Role: "guest", RequestFields: map[string]string{"body": "body"},
+			Invalid: []invalidCase{
+				{[]string{"1", "--project", "acme/web"}, "E_USAGE", "missing_parameter", "--body"},
+				{[]string{"1", "--project", "acme/web", "--body", " "}, "E_USAGE", "missing_parameter", "--body"},
+				{[]string{"1", "--project", "acme/web", "--body", "x", "--body-file", "x.md"}, "E_USAGE", "conflicting_flags", "--body-file"},
+				{[]string{"--project", "acme/web", "--body", "x"}, "E_USAGE", "missing_parameter", "--issue"},
+			}},
+		{Path: "issue comment delete", Args: []string{"1", "--project", "acme/web", "--note-id", "8102"}, Role: "maintainer",
+			Invalid: []invalidCase{
+				{[]string{"1", "--project", "acme/web"}, "E_USAGE", "missing_parameter", "--note-id"},
+				{[]string{"acme/web#1/notes/8101", "--note-id", "8102"}, "E_USAGE", "conflicting_flags", "--note-id"},
+				{[]string{"1", "--project", "acme/web", "--note-id", "-3"}, "E_VALIDATION", "invalid_value", "--note-id"},
+				{[]string{"https://h/acme/web/-/issues/1#note_x"}, "E_VALIDATION", "invalid_value", "--issue"},
+			}},
+	}
+	for _, c := range cases {
+		t.Run(c.Path, func(t *testing.T) { runMatrix(t, c) })
+	}
+}
+
+// TestIssueCommentFormsAreOneTarget: a comment's ref, its web URL, and the issue
+// with --note-id name one comment and bind as one request (CLI-048, CLI-054).
+func TestIssueCommentFormsAreOneTarget(t *testing.T) {
+	e := newTestEnv(t)
+	r := e.run("issue", "comment", "list", "acme/web#1")
+	if r.exit != 0 || len(r.items()) != 2 || r.items()[0]["ref"] != "acme/web#1/notes/8102" || r.items()[0]["author"] != "@dave" {
+		t.Fatalf("list: %s", r.out)
+	}
+	for _, form := range [][]string{
+		{"acme/web#1/notes/8102"},
+		{e.gl.URL + "/acme/web/-/issues/1#note_8102"},
+		{"1", "--project", "acme/web", "--note-id", "8102"},
+		{"acme/web#1", "--note-id", "8102"},
+	} {
+		dry := e.run(append(append([]string{"issue", "comment", "delete"}, form...), "--dangerous", "--dry-run")...)
+		in, _ := dry.preview()["inputs"].(map[string]any)
+		if dry.exit != 0 || in["issue"] != "1" || in["project"] != "acme/web" || in["note_id"] != "8102" ||
+			dry.preview()["target"].(map[string]any)["key"] != "acme/web#1/notes/8102" {
+			t.Fatalf("%v: %s", form, dry.out)
 		}
 	}
-}
-
-func TestIssueComment_Add_DryRun_JSON(t *testing.T) {
-	origDR := dryRun
-	origJM := jsonMode
-	defer func() {
-		dryRun = origDR
-		jsonMode = origJM
-		_ = issueCommentAddCmd.Flags().Set("body-file", "")
-	}()
-	_ = issueCommentAddCmd.Flags().Set("body-file", "")
-
-	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{
-			"issue", "comment", "add", "1",
-			"--project", "group/proj",
-			"--body", "hello",
-			"--dry-run", "--json",
-		})
-		_ = rootCmd.Execute()
-	})
-	for _, want := range []string{`"confirm_token"`, `"body": "hello"`} {
-		if !strings.Contains(out, want) {
-			t.Errorf("missing %q in output:\n%s", want, out)
-		}
+	tok := e.dryRun("issue", "comment", "delete", "acme/web#1/notes/8102", "--dangerous")
+	r = e.confirm(tok, "issue", "comment", "delete", "1", "--project", "acme/web", "--note-id", "8102", "--dangerous")
+	if r.exit != 0 || r.receipt()["observed"].(map[string]any)["exists"] != false || r.outcome()["verification"] != "passed" {
+		t.Fatalf("the ref and --note-id must bind alike: %s", r.out)
+	}
+	if res := r.data()["result"].(map[string]any); res["ref"] != "acme/web#1/notes/8102" || res["deleted"] != true {
+		t.Fatalf("result: %v", res)
 	}
 }
 
-func TestIssueComment_List_JSON(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`[{"id":1,"body":"hello","author":{"username":"alice"},"created_at":"2024-01-01","updated_at":"2024-01-01"}]`))
-	}))
-	defer srv.Close()
-
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "tok")
-
-	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"issue", "comment", "list", "--project", "group/proj", "1", "--json"})
-		_ = rootCmd.Execute()
-	})
-	for _, want := range []string{`"hello"`, `"alice"`} {
-		if !strings.Contains(out, want) {
-			t.Errorf("missing %q in output:\n%s", want, out)
-		}
+// TestIssueCommentListLeavesOutSystemNotes: system notes are not comments; the
+// page says so in scope and reports no total, since GitLab's counts them (CLI-041).
+// Comment bodies are untrusted: the injected instruction is data (CLI-046, SEC-002).
+func TestIssueCommentListLeavesOutSystemNotes(t *testing.T) {
+	e := newTestEnv(t)
+	r := e.run("issue", "comment", "list", "2", "--project", "acme/web")
+	if r.exit != 0 || len(r.items()) != 1 || r.items()[0]["ref"] != "acme/web#2/notes/8202" || r.data()["total"] != nil {
+		t.Fatalf("system notes left out: %s", r.out)
+	}
+	if !strings.Contains(r.data()["scope"].(map[string]any)["covers"].(string), "system notes") || r.data()["sort"] != "created_at_desc" {
+		t.Fatalf("scope and sort: %s", r.out)
+	}
+	if !hasString(stringsOf(r.doc["meta"].(map[string]any)["untrusted"]), "data.items[].body") {
+		t.Fatalf("bodies are untrusted: %s", r.out)
+	}
+	if e.gl.Writes() != 0 {
+		t.Fatal("reading an instruction must not act on it")
+	}
+	if r := e.run("issue", "comment", "list", "acme/web#99"); r.code() != "E_NOT_FOUND" {
+		t.Fatalf("a missing issue: %s", r.out)
 	}
 }
 
-func TestIssueComment_Delete_DryRun_JSON(t *testing.T) {
-	origDR := dryRun
-	origJM := jsonMode
-	defer func() { dryRun = origDR; jsonMode = origJM }()
-
-	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{
-			"issue", "comment", "delete", "1",
-			"--project", "group/proj",
-			"--note-id", "42",
-			"--dry-run", "--json",
-		})
-		_ = rootCmd.Execute()
-	})
-	for _, want := range []string{`"confirm_token"`, `"noteId": "42"`} {
-		if !strings.Contains(out, want) {
-			t.Errorf("missing %q in output:\n%s", want, out)
-		}
-	}
-}
-
-func TestIssueComment_Add_JSON(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`{"id":5,"body":"hello","author":{"username":"alice"},"created_at":"2024-01-01"}`))
-	}))
-	defer srv.Close()
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origDR := dryRun
-	origJM := jsonMode
-	defer func() { dryRun = origDR; jsonMode = origJM }()
-	dryRun = false
-	out := captureStdout(t, func() {
-		args := []string{"issue", "comment", "add", "1", "--project", "foo/bar", "--body", "hello", "--json"}
-		args = append(args, confirmArgsForTest(t, "add comment", map[string]any{"project": "foo/bar", "iid": 1, "body": "hello"})...)
-		rootCmd.SetArgs(args)
-		_ = rootCmd.Execute()
-	})
-	if !strings.Contains(out, `"hello"`) {
-		t.Errorf("expected body in output, got: %s", out)
-	}
-}
-
-func TestIssueComment_Add_PlainText(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`{"id":5,"body":"hello","author":{"username":"alice"},"created_at":"2024-01-01"}`))
-	}))
-	defer srv.Close()
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origDR := dryRun
-	origJM := jsonMode
-	defer func() { dryRun = origDR; jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
-	dryRun = false
-	setTextFormatForTest(t)
-	_ = rootCmd.PersistentFlags().Set("json", "false")
-	out := captureStdout(t, func() {
-		args := []string{"issue", "comment", "add", "1", "--project", "foo/bar", "--body", "hello"}
-		args = append(args, confirmArgsForTest(t, "add comment", map[string]any{"project": "foo/bar", "iid": 1, "body": "hello"})...)
-		rootCmd.SetArgs(args)
-		_ = rootCmd.Execute()
-	})
-	if !strings.Contains(out, "Added") {
-		t.Errorf("expected 'Added' in output, got: %s", out)
-	}
-}
-
-func TestIssueComment_List_PlainText(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`[{"id":1,"body":"hello","system":false,"author":{"username":"alice"},"created_at":"2024-01-01"}]`))
-	}))
-	defer srv.Close()
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "tok")
-	origJM := jsonMode
-	defer func() { jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
-	setTextFormatForTest(t)
-	_ = rootCmd.PersistentFlags().Set("json", "false")
-	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"issue", "comment", "list", "--project", "group/proj", "1"})
-		_ = rootCmd.Execute()
-	})
-	if !strings.Contains(out, "hello") {
-		t.Errorf("expected comment body in plain text output, got: %s", out)
-	}
-}
-
-func TestIssueComment_Delete_JSON(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodDelete {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		http.NotFound(w, r)
-	}))
-	defer srv.Close()
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origDR := dryRun
-	origJM := jsonMode
-	origExit := lastExit
-	defer func() { dryRun = origDR; jsonMode = origJM; lastExit = origExit }()
-	dryRun = false
-	lastExit = 0
-	captureStdout(t, func() {
-		args := []string{"issue", "comment", "delete", "1", "--project", "foo/bar", "--note-id", "5", "--json"}
-		args = append(args, confirmArgsForTest(t, "delete comment", map[string]any{"project": "foo/bar", "iid": 1, "noteId": 5})...)
-		rootCmd.SetArgs(args)
-		_ = rootCmd.Execute()
-	})
-	if lastExit != ExitOK {
-		t.Errorf("expected exit 0, got %d", lastExit)
-	}
-}
-
-func TestIssueComment_Add_MissingProject(t *testing.T) {
-	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origExit := lastExit
-	origDR := dryRun
-	defer func() { lastExit = origExit; dryRun = origDR }()
-	lastExit = 0
-	dryRun = false
-	_ = issueCommentAddCmd.Flags().Set("project", "")
-	_ = issueCommentAddCmd.Flags().Set("body", "")
-	rootCmd.SetArgs([]string{"issue", "comment", "add", "1", "--body", "hi"})
-	_ = rootCmd.Execute()
-	if lastExit != ExitBadArgs {
-		t.Errorf("exit code = %d, want %d", lastExit, ExitBadArgs)
-	}
-}
-
-func TestIssueComment_Add_MissingBody(t *testing.T) {
-	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origExit := lastExit
-	origDR := dryRun
-	defer func() { lastExit = origExit; dryRun = origDR }()
-	lastExit = 0
-	dryRun = false
-	_ = issueCommentAddCmd.Flags().Set("project", "")
-	_ = issueCommentAddCmd.Flags().Set("body", "")
-	rootCmd.SetArgs([]string{"issue", "comment", "add", "1", "--project", "foo/bar"})
-	_ = rootCmd.Execute()
-	if lastExit != ExitBadArgs {
-		t.Errorf("exit code = %d, want %d", lastExit, ExitBadArgs)
-	}
-}
-
-func TestIssueComment_List_MissingProject(t *testing.T) {
-	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origExit := lastExit
-	defer func() { lastExit = origExit }()
-	lastExit = 0
-	_ = issueCommentListCmd.Flags().Set("project", "")
-	rootCmd.SetArgs([]string{"issue", "comment", "list", "1"})
-	_ = rootCmd.Execute()
-	if lastExit != ExitBadArgs {
-		t.Errorf("exit code = %d, want %d", lastExit, ExitBadArgs)
-	}
-}
-
-func TestIssueComment_Delete_MissingNoteID(t *testing.T) {
-	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origExit := lastExit
-	origDR := dryRun
-	defer func() { lastExit = origExit; dryRun = origDR }()
-	lastExit = 0
-	dryRun = false
-	_ = issueCommentDeleteCmd.Flags().Set("note-id", "0")
-	rootCmd.SetArgs([]string{"issue", "comment", "delete", "1", "--project", "foo/bar"})
-	_ = rootCmd.Execute()
-	if lastExit != ExitBadArgs {
-		t.Errorf("exit code = %d, want %d", lastExit, ExitBadArgs)
-	}
-}
-
-func TestIssueComment_Delete_PlainText(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodDelete {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		http.NotFound(w, r)
-	}))
-	defer srv.Close()
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origDR := dryRun
-	origJM := jsonMode
-	origExit := lastExit
-	defer func() {
-		dryRun = origDR
-		jsonMode = origJM
-		lastExit = origExit
-		_ = rootCmd.PersistentFlags().Set("json", "false")
-	}()
-	dryRun = false
-	setTextFormatForTest(t)
-	lastExit = 0
-	_ = rootCmd.PersistentFlags().Set("json", "false")
-	out := captureStdout(t, func() {
-		args := []string{"issue", "comment", "delete", "1", "--project", "foo/bar", "--note-id", "5"}
-		args = append(args, confirmArgsForTest(t, "delete comment", map[string]any{"project": "foo/bar", "iid": 1, "noteId": 5})...)
-		rootCmd.SetArgs(args)
-		_ = rootCmd.Execute()
-	})
-	if !strings.Contains(out, "Deleted") {
-		t.Errorf("expected 'Deleted' in output, got: %s", out)
-	}
-}
-
-func TestIssueComment_Add_InvalidIID(t *testing.T) {
-	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origExit := lastExit
-	origDR := dryRun
-	defer func() { lastExit = origExit; dryRun = origDR }()
-	lastExit = 0
-	dryRun = false
-	rootCmd.SetArgs([]string{"issue", "comment", "add", "x", "--project", "foo/bar", "--body", "hi"})
-	_ = rootCmd.Execute()
-	if lastExit != ExitBadArgs {
-		t.Errorf("exit code = %d, want %d", lastExit, ExitBadArgs)
-	}
-}
-
-func TestIssueComment_Add_BodyFile(t *testing.T) {
-	dir := t.TempDir()
-	path := dir + string(os.PathSeparator) + "body.txt"
-	if err := os.WriteFile(path, []byte("from file"), 0o644); err != nil {
+// TestIssueCommentBodyFileBindsItsContent: --body-file and the same text given
+// with --body are one request (CLI-054); a file's trailing line break is not sent.
+func TestIssueCommentBodyFileBindsItsContent(t *testing.T) {
+	e := newTestEnv(t)
+	path := filepath.Join(e.dir, "comment.md")
+	if err := os.WriteFile(path, []byte("Fixed in !5."), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`{"id":5,"body":"from file","author":{"username":"alice"},"created_at":"2024-01-01"}`))
-	}))
-	defer srv.Close()
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origDR := dryRun
-	origJM := jsonMode
-	defer func() { dryRun = origDR; jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
-	dryRun = false
-	setTextFormatForTest(t)
-	out := captureStdout(t, func() {
-		args := []string{"issue", "comment", "add", "1", "--project", "foo/bar", "--body-file", path}
-		args = append(args, confirmArgsForTest(t, "add comment", map[string]any{"project": "foo/bar", "iid": 1, "body": "from file"})...)
-		rootCmd.SetArgs(args)
-		_ = rootCmd.Execute()
-	})
-	if !strings.Contains(out, "Added") {
-		t.Errorf("expected Added in output, got: %s", out)
+	tok := e.dryRun("issue", "comment", "create", "acme/web#3", "--body", "Fixed in !5.")
+	r := e.confirm(tok, "issue", "comment", "create", "acme/web#3", "--body-file", path)
+	res, _ := r.data()["result"].(map[string]any)
+	if r.exit != 0 || res["body"] != "Fixed in !5." || res["issue"] != "acme/web#3" || res["author"] != "@carol" {
+		t.Fatalf("a comment from a file: %s", r.out)
+	}
+	if obs := r.receipt()["observed"].(map[string]any); obs["ref"] != res["ref"] || r.outcome()["verification"] != "passed" {
+		t.Fatalf("the new comment's ref is observed (CLI-059): %s", r.out)
+	}
+	if err := os.WriteFile(path, []byte("Fixed in !6.\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	e.stdin = "Fixed in !6.\n"
+	args := []string{"issue", "comment", "create", "acme/web#3", "--body-file", "-"}
+	r = e.confirm(e.dryRun(args...), args...)
+	if r.exit != 0 || r.data()["result"].(map[string]any)["body"] != "Fixed in !6." {
+		t.Fatalf("a comment from stdin: %s", r.out)
 	}
 }
 
-func TestIssueComment_Add_BodyFileError(t *testing.T) {
-	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origExit := lastExit
-	origDR := dryRun
-	defer func() { lastExit = origExit; dryRun = origDR }()
-	lastExit = 0
-	dryRun = false
-	rootCmd.SetArgs([]string{"issue", "comment", "add", "1", "--project", "foo/bar", "--body-file", "/no/such/file.txt"})
-	_ = rootCmd.Execute()
-	if lastExit != ExitBadArgs {
-		t.Errorf("exit code = %d, want %d", lastExit, ExitBadArgs)
+// TestIssueCommentLostReply: GitLab's reply to the comment is lost. The outcome
+// stays unknown, the issue is blocked until the agent looks it up and resolves the
+// operation, and nothing is sent twice (CLI-015, CLI-060; the eval's T13).
+func TestIssueCommentLostReply(t *testing.T) {
+	e := newTestEnv(t)
+	args := []string{"issue", "comment", "create", "acme/web#3", "--body", "Drafting the design now."}
+	tok := e.dryRun(args...)
+	e.gl.fail(fakeFault{Method: "WRITE", Reset: true, Times: 1})
+	r := e.confirm(tok, args...)
+	id, _ := r.details()["operation_id"].(string)
+	if r.code() != "E_OUTCOME_UNKNOWN" || id == "" || !strings.Contains(r.details()["next_action"].(string), "issue comment list acme/web#3") {
+		t.Fatalf("a lost reply: %s", r.out)
+	}
+	if again := e.run(append(args, "--dry-run")...); again.details()["conflict"] != "unresolved_operation" {
+		t.Fatalf("the issue is blocked until the outcome is resolved: %s", again.out)
+	}
+	if list := e.run("issue", "comment", "list", "acme/web#3"); len(list.items()) != 0 {
+		t.Fatalf("the fake dropped the request: %s", list.out)
+	}
+	if res := e.run("operation", "resolve", "--id", id, "--outcome", "not_applied", "--evidence", "issue comment list shows no comment"); res.exit != 0 {
+		t.Fatalf("resolve: %s", res.out)
+	}
+	r = e.confirm(e.dryRun(args...), args...)
+	if r.exit != 0 || e.gl.Writes() != 2 {
+		t.Fatalf("after the lookup the comment is sent once more: %s (writes %d)", r.out, e.gl.Writes())
 	}
 }
 
-func TestIssueComment_Add_MissingAuth(t *testing.T) {
-	isolateConfigHome(t)
-	t.Setenv("GITLAB_CLI_HOST", "")
-	t.Setenv("GITLAB_CLI_TOKEN", "")
-	origExit := lastExit
-	origDR := dryRun
-	defer func() {
-		lastExit = origExit
-		dryRun = origDR
-		_ = issueCommentAddCmd.Flags().Set("body-file", "")
-		_ = issueCommentAddCmd.Flags().Set("body", "")
-	}()
-	lastExit = 0
-	dryRun = false
-	_ = issueCommentAddCmd.Flags().Set("body-file", "")
-	_ = issueCommentAddCmd.Flags().Set("body", "")
-	args := []string{"issue", "comment", "add", "1", "--project", "foo/bar", "--body", "hi"}
-	args = append(args, confirmArgsForTest(t, "add comment", map[string]any{"project": "foo/bar", "iid": 1, "body": "hi"})...)
-	rootCmd.SetArgs(args)
-	_ = rootCmd.Execute()
-	if lastExit != ExitAuth {
-		t.Errorf("exit code = %d, want %d", lastExit, ExitAuth)
+func TestIssueCommentDeleteChecksTheComment(t *testing.T) {
+	e := newTestEnv(t)
+	r := e.run("issue", "comment", "delete", "acme/web#1/notes/8101", "--dry-run")
+	if r.code() != "E_CONFIRMATION_REQUIRED" || r.details()["problem"] != "dangerous_flag_required" {
+		t.Fatalf("delete needs --dangerous (CLI-056): %s", r.out)
 	}
-}
-
-func TestIssueComment_Add_APIError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = w.Write([]byte(`{"message":"500"}`))
-	}))
-	defer srv.Close()
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origDR := dryRun
-	origExit := lastExit
-	defer func() { dryRun = origDR; lastExit = origExit }()
-	dryRun = false
-	lastExit = 0
-	args := []string{"issue", "comment", "add", "1", "--project", "foo/bar", "--body", "hi"}
-	args = append(args, confirmArgsForTest(t, "add comment", map[string]any{"project": "foo/bar", "iid": 1, "body": "hi"})...)
-	rootCmd.SetArgs(args)
-	_ = rootCmd.Execute()
-	if lastExit == ExitOK {
-		t.Errorf("expected non-zero exit for API error, got %d", lastExit)
+	r = e.run("issue", "comment", "delete", "acme/web#2/notes/8201", "--dangerous", "--dry-run")
+	if r.exit != 0 || r.preview()["can_apply"] != false || r.token() != "" {
+		t.Fatalf("a system note cannot be deleted: %s", r.out)
 	}
-}
-
-func TestIssueComment_List_InvalidIID(t *testing.T) {
-	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origExit := lastExit
-	defer func() { lastExit = origExit }()
-	lastExit = 0
-	rootCmd.SetArgs([]string{"issue", "comment", "list", "--project", "foo/bar", "x"})
-	_ = rootCmd.Execute()
-	if lastExit != ExitBadArgs {
-		t.Errorf("exit code = %d, want %d", lastExit, ExitBadArgs)
+	r = e.run("issue", "comment", "delete", "acme/web#1/notes/999", "--dangerous", "--dry-run")
+	if r.code() != "E_NOT_FOUND" || !strings.Contains(r.details()["next_action"].(string), "issue comment list acme/web#1") {
+		t.Fatalf("a missing comment is E_NOT_FOUND at the dry-run (CLI-029): %s", r.out)
 	}
-}
-
-func TestIssueComment_List_InvalidLimit(t *testing.T) {
-	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origExit := lastExit
-	defer func() { lastExit = origExit; _ = issueCommentListCmd.Flags().Set("limit", "20") }()
-	lastExit = 0
-	_ = issueCommentListCmd.Flags().Set("limit", "0")
-	rootCmd.SetArgs([]string{"issue", "comment", "list", "--project", "foo/bar", "1"})
-	_ = rootCmd.Execute()
-	if lastExit != ExitBadArgs {
-		t.Errorf("exit code = %d, want %d", lastExit, ExitBadArgs)
+	r = e.run("issue", "comment", "delete", "acme/web#1/notes/8101", "--dangerous", "--dry-run")
+	ch := r.preview()["changes"].([]any)[0].(map[string]any)
+	if ch["before"] != "Reproduced on Safari 17." || !strings.Contains(ch["note"].(string), "@carol") ||
+		!hasString(stringsOf(r.doc["meta"].(map[string]any)["untrusted"]), "data.preview.changes[].before") {
+		t.Fatalf("the preview shows the comment as untrusted text: %s", r.out)
 	}
-}
-
-func TestIssueComment_List_MissingAuth(t *testing.T) {
-	isolateConfigHome(t)
-	t.Setenv("GITLAB_CLI_HOST", "")
-	t.Setenv("GITLAB_CLI_TOKEN", "")
-	origExit := lastExit
-	defer func() { lastExit = origExit }()
-	lastExit = 0
-	rootCmd.SetArgs([]string{"issue", "comment", "list", "--project", "foo/bar", "1"})
-	_ = rootCmd.Execute()
-	if lastExit != ExitAuth {
-		t.Errorf("exit code = %d, want %d", lastExit, ExitAuth)
-	}
-}
-
-func TestIssueComment_List_APIError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = w.Write([]byte(`{"message":"500"}`))
-	}))
-	defer srv.Close()
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origExit := lastExit
-	defer func() { lastExit = origExit }()
-	lastExit = 0
-	rootCmd.SetArgs([]string{"issue", "comment", "list", "--project", "foo/bar", "1"})
-	_ = rootCmd.Execute()
-	if lastExit == ExitOK {
-		t.Errorf("expected non-zero exit for API error, got %d", lastExit)
-	}
-}
-
-func TestIssueComment_List_Empty(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`[]`))
-	}))
-	defer srv.Close()
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origJM := jsonMode
-	defer func() { jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
-	setTextFormatForTest(t)
-	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"issue", "comment", "list", "--project", "foo/bar", "1"})
-		_ = rootCmd.Execute()
-	})
-	if !strings.Contains(out, "No comments") {
-		t.Errorf("expected No comments in output, got: %s", out)
-	}
-}
-
-func TestIssueComment_List_SkipsSystemNotes(t *testing.T) {
-	longBody := strings.Repeat("x", 100)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`[
-			{"id":1,"body":"` + longBody + `","system":false,"author":{"username":"alice"},"created_at":"2024-01-01"},
-			{"id":2,"body":"system","system":true,"author":{"username":"gitlab"},"created_at":"2024-01-01"}
-		]`))
-	}))
-	defer srv.Close()
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origJM := jsonMode
-	defer func() { jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
-	setTextFormatForTest(t)
-	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"issue", "comment", "list", "--project", "foo/bar", "1"})
-		_ = rootCmd.Execute()
-	})
-	if !strings.Contains(out, "...") {
-		t.Errorf("expected truncated body in output, got: %s", out)
-	}
-	if strings.Contains(out, "system") {
-		t.Errorf("system note should be skipped, got: %s", out)
-	}
-}
-
-func TestIssueComment_List_JSON_SkipsSystem(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`[
-			{"id":1,"body":"hello","system":false,"author":{"username":"alice"},"created_at":"2024-01-01"},
-			{"id":2,"body":"system","system":true,"author":{"username":"gitlab"},"created_at":"2024-01-01"}
-		]`))
-	}))
-	defer srv.Close()
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"issue", "comment", "list", "--project", "foo/bar", "1", "--json"})
-		_ = rootCmd.Execute()
-	})
-	if !strings.Contains(out, `"hello"`) {
-		t.Errorf("expected user comment in JSON, got: %s", out)
-	}
-	if strings.Contains(out, `"system"`) {
-		t.Errorf("system note should be skipped in JSON, got: %s", out)
-	}
-}
-
-func TestIssueComment_Delete_MissingProject(t *testing.T) {
-	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origExit := lastExit
-	origDR := dryRun
-	defer func() { lastExit = origExit; dryRun = origDR; _ = issueCommentDeleteCmd.Flags().Set("project", "") }()
-	lastExit = 0
-	dryRun = false
-	_ = issueCommentDeleteCmd.Flags().Set("project", "")
-	rootCmd.SetArgs([]string{"issue", "comment", "delete", "1", "--note-id", "5"})
-	_ = rootCmd.Execute()
-	if lastExit != ExitBadArgs {
-		t.Errorf("exit code = %d, want %d", lastExit, ExitBadArgs)
-	}
-}
-
-func TestIssueComment_Delete_InvalidIID(t *testing.T) {
-	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origExit := lastExit
-	origDR := dryRun
-	defer func() { lastExit = origExit; dryRun = origDR }()
-	lastExit = 0
-	dryRun = false
-	rootCmd.SetArgs([]string{"issue", "comment", "delete", "x", "--project", "foo/bar", "--note-id", "5"})
-	_ = rootCmd.Execute()
-	if lastExit != ExitBadArgs {
-		t.Errorf("exit code = %d, want %d", lastExit, ExitBadArgs)
-	}
-}
-
-func TestIssueComment_Delete_MissingAuth(t *testing.T) {
-	isolateConfigHome(t)
-	t.Setenv("GITLAB_CLI_HOST", "")
-	t.Setenv("GITLAB_CLI_TOKEN", "")
-	origExit := lastExit
-	origDR := dryRun
-	defer func() { lastExit = origExit; dryRun = origDR }()
-	lastExit = 0
-	dryRun = false
-	args := []string{"issue", "comment", "delete", "1", "--project", "foo/bar", "--note-id", "5"}
-	args = append(args, confirmArgsForTest(t, "delete comment", map[string]any{"project": "foo/bar", "iid": 1, "noteId": 5})...)
-	rootCmd.SetArgs(args)
-	_ = rootCmd.Execute()
-	if lastExit != ExitAuth {
-		t.Errorf("exit code = %d, want %d", lastExit, ExitAuth)
-	}
-}
-
-func TestIssueComment_Delete_ConfirmCancelled(t *testing.T) {
-	t.Setenv("GITLAB_CLI_AGENT_SAFE", "0")
-	withNonInteractiveStdin(t)
-	resetRootPersistentFlags(t)
-	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origExit := lastExit
-	origDR := dryRun
-	defer func() { lastExit = origExit; dryRun = origDR; resetRootPersistentFlags(t) }()
-	lastExit = 0
-	dryRun = false
-	rootCmd.SetArgs([]string{"issue", "comment", "delete", "1", "--project", "foo/bar", "--note-id", "5"})
-	_ = rootCmd.Execute()
-	if lastExit != ExitCancelled {
-		t.Errorf("exit code = %d, want %d", lastExit, ExitCancelled)
-	}
-}
-
-func TestIssueComment_Delete_APIError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = w.Write([]byte(`{"message":"500"}`))
-	}))
-	defer srv.Close()
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origDR := dryRun
-	origExit := lastExit
-	defer func() { dryRun = origDR; lastExit = origExit }()
-	dryRun = false
-	lastExit = 0
-	args := []string{"issue", "comment", "delete", "1", "--project", "foo/bar", "--note-id", "5"}
-	args = append(args, confirmArgsForTest(t, "delete comment", map[string]any{"project": "foo/bar", "iid": 1, "noteId": 5})...)
-	rootCmd.SetArgs(args)
-	_ = rootCmd.Execute()
-	if lastExit == ExitOK {
-		t.Errorf("expected non-zero exit for API error, got %d", lastExit)
+	if r.preview()["base"].(map[string]any)["source"] != "updated_at" {
+		t.Fatalf("an edited comment is drift: %s", r.out)
 	}
 }

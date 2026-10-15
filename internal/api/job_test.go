@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -18,70 +19,19 @@ func TestJob_Get(t *testing.T) {
 		if r.URL.Path != "/api/v4/projects/42/jobs/99" {
 			t.Errorf("path = %q", r.URL.Path)
 		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"id":99,"name":"build","status":"success"}`))
+		_, _ = w.Write([]byte(`{"id":99,"name":"build","status":"failed","failure_reason":"script_failure","allow_failure":true,
+			"duration":12.5,"pipeline":{"id":7,"status":"failed"},"artifacts_file":{"filename":"artifacts.zip","size":120},
+			"artifacts":[{"file_type":"archive","size":120,"filename":"artifacts.zip","file_format":"zip"}]}`))
 	}))
 	defer srv.Close()
 
-	c := newTestClient(srv.URL)
-	j, err := c.Jobs.Get(testCtx, "42", 99)
+	j, err := newTestClient(srv.URL).Jobs.Get(testCtx, "42", 99)
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if j.ID != 99 || j.Name != "build" {
+	if j.ID != 99 || j.FailureReason != "script_failure" || !j.AllowFailure || *j.Duration != 12.5 || j.Pipeline.ID != 7 ||
+		j.ArtifactsFile.Size != 120 || len(j.Artifacts) != 1 || j.Artifacts[0].FileType != "archive" {
 		t.Errorf("unexpected job: %+v", j)
-	}
-}
-
-func TestJob_ArtifactsTo(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v4/projects/42/jobs/99/artifacts" {
-			t.Errorf("path = %q", r.URL.Path)
-		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("artifact-bytes"))
-	}))
-	defer srv.Close()
-
-	c := newTestClient(srv.URL)
-	var buf bytes.Buffer
-	if err := c.Jobs.ArtifactsTo(testCtx, "42", 99, &buf); err != nil {
-		t.Fatalf("ArtifactsTo: %v", err)
-	}
-	if buf.String() != "artifact-bytes" {
-		t.Errorf("got %q, want artifact-bytes", buf.String())
-	}
-}
-
-func TestJob_LogStream_ManualTerminal(t *testing.T) {
-	var statusChecks atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case strings.HasSuffix(r.URL.Path, "/trace"):
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte("manual job log\n"))
-		case strings.HasSuffix(r.URL.Path, "/jobs/99"):
-			statusChecks.Add(1)
-			w.WriteHeader(http.StatusOK)
-			_, _ = fmt.Fprint(w, `{"id":99,"name":"deploy","status":"manual"}`)
-		default:
-			t.Errorf("unexpected path: %s", r.URL.Path)
-			http.NotFound(w, r)
-		}
-	}))
-	defer srv.Close()
-
-	c := newTestClient(srv.URL)
-	var buf bytes.Buffer
-	err := c.Jobs.LogStream(testCtx, "42", 99, &buf, time.Millisecond)
-	if err != nil {
-		t.Fatalf("LogStream: %v", err)
-	}
-	if got := buf.String(); got != "manual job log\n" {
-		t.Errorf("log = %q, want %q", got, "manual job log\n")
-	}
-	if statusChecks.Load() != 1 {
-		t.Errorf("status checks = %d, want 1 (should not poll after manual terminal state)", statusChecks.Load())
 	}
 }
 
@@ -90,135 +40,71 @@ func TestJob_Log(t *testing.T) {
 		if r.URL.Path != "/api/v4/projects/42/jobs/99/trace" {
 			t.Errorf("path = %q", r.URL.Path)
 		}
-		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("trace line\n"))
 	}))
 	defer srv.Close()
 
-	c := newTestClient(srv.URL)
-	data, err := c.Jobs.Log(testCtx, "42", 99)
-	if err != nil {
-		t.Fatalf("Log: %v", err)
-	}
-	if string(data) != "trace line\n" {
-		t.Errorf("log = %q", string(data))
+	data, err := newTestClient(srv.URL).Jobs.Log(testCtx, "42", 99)
+	if err != nil || string(data) != "trace line\n" {
+		t.Fatalf("Log: %q %v", data, err)
 	}
 }
 
-func TestJob_Log_NotFound(t *testing.T) {
+func TestJob_TraceFrom(t *testing.T) {
+	cases := []struct {
+		status int
+		body   string
+		offset int
+		want   string
+	}{
+		{http.StatusPartialContent, "new\n", 4, "new\n"},     // GitLab honoured the range
+		{http.StatusOK, "old\nnew\n", 4, "new\n"},            // the whole trace: the bytes past offset
+		{http.StatusOK, "old\n", 4, ""},                      // nothing new
+		{http.StatusRequestedRangeNotSatisfiable, "", 4, ""}, // nothing new yet
+		{http.StatusOK, "", 0, ""},                           // an empty trace
+		{http.StatusPartialContent, "first\n", 0, "first\n"}, // from the start
+		{http.StatusOK, "line\nmore\n", 0, "line\nmore\n"},   // from the start, whole
+		{http.StatusOK, "short", 10, ""},                     // the trace shrank (erased)
+		{http.StatusPartialContent, "", 3, ""},               // an empty range
+		{http.StatusOK, "abc", 3, ""},                        // exactly at the end
+		{http.StatusOK, "abcdef", 3, "def"},                  // a partial line
+		{http.StatusPartialContent, "x", 100, "x"},           // trust the 206
+		{http.StatusOK, strings.Repeat("a", 5), 2, "aaa"},    // ASCII run
+		{http.StatusOK, "日本語", 3, "本語"},                      // byte offsets, not runes
+		{http.StatusRequestedRangeNotSatisfiable, "ignored", 0, ""},
+	}
+	for _, c := range cases {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if want := fmt.Sprintf("bytes=%d-", c.offset); r.Header.Get("Range") != want {
+				t.Errorf("Range = %q, want %q", r.Header.Get("Range"), want)
+			}
+			w.WriteHeader(c.status)
+			_, _ = w.Write([]byte(c.body))
+		}))
+		got, err := newTestClient(srv.URL).Jobs.TraceFrom(testCtx, "42", 99, c.offset)
+		srv.Close()
+		if err != nil || string(got) != c.want {
+			t.Errorf("%d %q from %d: got %q %v, want %q", c.status, c.body, c.offset, got, err, c.want)
+		}
+	}
+}
+
+func TestJob_TraceFrom_NotFound(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		_, _ = w.Write([]byte(`{"message":"404"}`))
+		_, _ = w.Write([]byte(`{"message":"404 Not found"}`))
 	}))
 	defer srv.Close()
-
-	c := newTestClient(srv.URL)
-	_, err := c.Jobs.Log(testCtx, "42", 99)
-	if err == nil {
-		t.Fatal("expected error")
+	_, err := newTestClient(srv.URL).Jobs.TraceFrom(testCtx, "42", 99, 0)
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != 404 {
+		t.Fatalf("want a 404 APIError, got %v", err)
 	}
 }
 
-func TestJob_Retry(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || !strings.HasSuffix(r.URL.Path, "/retry") {
-			t.Errorf("unexpected: %s %s", r.Method, r.URL.Path)
-		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"id":99,"name":"build","status":"pending"}`))
-	}))
-	defer srv.Close()
-
-	c := newTestClient(srv.URL)
-	j, err := c.Jobs.Retry(testCtx, "42", 99)
-	if err != nil {
-		t.Fatalf("Retry: %v", err)
-	}
-	if j.Status != "pending" {
-		t.Errorf("status = %q", j.Status)
-	}
-}
-
-func TestJob_Retry_ParseError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`not-json`))
-	}))
-	defer srv.Close()
-
-	c := newTestClient(srv.URL)
-	_, err := c.Jobs.Retry(testCtx, "42", 99)
-	if err == nil || !strings.Contains(err.Error(), "parsing job") {
-		t.Fatalf("expected parse error, got %v", err)
-	}
-}
-
-func TestJob_Cancel(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || !strings.HasSuffix(r.URL.Path, "/cancel") {
-			t.Errorf("unexpected: %s %s", r.Method, r.URL.Path)
-		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"id":99,"name":"build","status":"canceled"}`))
-	}))
-	defer srv.Close()
-
-	c := newTestClient(srv.URL)
-	j, err := c.Jobs.Cancel(testCtx, "42", 99)
-	if err != nil {
-		t.Fatalf("Cancel: %v", err)
-	}
-	if j.Status != "canceled" {
-		t.Errorf("status = %q", j.Status)
-	}
-}
-
-func TestJob_Cancel_APIError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusForbidden)
-		_, _ = w.Write([]byte(`{"message":"forbidden"}`))
-	}))
-	defer srv.Close()
-
-	c := newTestClient(srv.URL)
-	_, err := c.Jobs.Cancel(testCtx, "42", 99)
-	if err == nil {
-		t.Fatal("expected error")
-	}
-}
-
-func TestJob_Artifacts(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("zip-bytes"))
-	}))
-	defer srv.Close()
-
-	c := newTestClient(srv.URL)
-	data, err := c.Jobs.Artifacts(testCtx, "42", 99)
-	if err != nil {
-		t.Fatalf("Artifacts: %v", err)
-	}
-	if string(data) != "zip-bytes" {
-		t.Errorf("artifacts = %q", string(data))
-	}
-}
-
-func TestJob_Get_ParseError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{bad`))
-	}))
-	defer srv.Close()
-
-	c := newTestClient(srv.URL)
-	_, err := c.Jobs.Get(testCtx, "42", 99)
-	if err == nil || !strings.Contains(err.Error(), "parsing job") {
-		t.Fatalf("expected parse error, got %v", err)
-	}
-}
-
-func TestJob_LogStream_PartialContentAndSuccess(t *testing.T) {
+// TestJob_LogStream_FollowsUntilFinal: the whole trace (200) is cut at the offset,
+// so nothing is written twice; the stream ends at a final status.
+func TestJob_LogStream_FollowsUntilFinal(t *testing.T) {
 	var polls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -228,14 +114,11 @@ func TestJob_LogStream_PartialContentAndSuccess(t *testing.T) {
 				_, _ = w.Write([]byte("chunk1\n"))
 				return
 			}
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte("chunk2\n"))
+			_, _ = w.Write([]byte("chunk1\nchunk2\n"))
 		case strings.HasSuffix(r.URL.Path, "/jobs/99"):
-			n := polls.Add(1)
-			w.WriteHeader(http.StatusOK)
 			status := "running"
-			if n >= 2 {
-				status = "success"
+			if polls.Add(1) >= 2 {
+				status = "manual"
 			}
 			_, _ = fmt.Fprintf(w, `{"id":99,"status":%q}`, status)
 		default:
@@ -244,187 +127,126 @@ func TestJob_LogStream_PartialContentAndSuccess(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := newTestClient(srv.URL)
 	var buf bytes.Buffer
-	if err := c.Jobs.LogStream(testCtx, "42", 99, &buf, time.Millisecond); err != nil {
+	if err := newTestClient(srv.URL).Jobs.LogStream(testCtx, "42", 99, &buf, time.Millisecond); err != nil {
 		t.Fatalf("LogStream: %v", err)
 	}
-	if got := buf.String(); got != "chunk1\nchunk2\n" {
-		t.Errorf("log = %q", got)
+	if got := buf.String(); got != "chunk1\nchunk2\n" || polls.Load() != 2 {
+		t.Errorf("log = %q after %d polls", got, polls.Load())
 	}
 }
 
-func TestJob_LogStream_RangeNotSatisfiable(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case strings.HasSuffix(r.URL.Path, "/trace"):
-			w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
-		case strings.HasSuffix(r.URL.Path, "/jobs/99"):
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"id":99,"status":"skipped"}`))
-		default:
-			http.NotFound(w, r)
+func TestJob_LogStream_Failures(t *testing.T) {
+	handler := func(status string) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case strings.HasSuffix(r.URL.Path, "/trace"):
+				_, _ = w.Write([]byte("log\n"))
+			case status == "404":
+				w.WriteHeader(http.StatusNotFound)
+				_, _ = w.Write([]byte(`{"message":"missing"}`))
+			default:
+				_, _ = w.Write([]byte(status))
+			}
 		}
-	}))
-	defer srv.Close()
-
-	c := newTestClient(srv.URL)
-	var buf bytes.Buffer
-	if err := c.Jobs.LogStream(testCtx, "42", 99, &buf, time.Millisecond); err != nil {
-		t.Fatalf("LogStream: %v", err)
 	}
-}
-
-func TestJob_LogStream_WriteError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case strings.HasSuffix(r.URL.Path, "/trace"):
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte("log\n"))
-		case strings.HasSuffix(r.URL.Path, "/jobs/99"):
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"id":99,"status":"running"}`))
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer srv.Close()
-
-	c := newTestClient(srv.URL)
-	err := c.Jobs.LogStream(testCtx, "42", 99, failWriter{}, time.Millisecond)
+	srv := httptest.NewServer(handler(`{"id":99,"status":"running"}`))
+	err := newTestClient(srv.URL).Jobs.LogStream(testCtx, "42", 99, failWriter{}, time.Millisecond)
+	srv.Close()
 	if err == nil || !strings.Contains(err.Error(), "write failed") {
-		t.Fatalf("expected write error, got %v", err)
+		t.Errorf("a failing writer: %v", err)
 	}
-}
-
-func TestJob_LogStream_StatusGetError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case strings.HasSuffix(r.URL.Path, "/trace"):
-			w.WriteHeader(http.StatusOK)
-		case strings.HasSuffix(r.URL.Path, "/jobs/99"):
-			w.WriteHeader(http.StatusNotFound)
-			_, _ = w.Write([]byte(`{"message":"missing"}`))
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer srv.Close()
-
-	c := newTestClient(srv.URL)
-	err := c.Jobs.LogStream(testCtx, "42", 99, &bytes.Buffer{}, time.Millisecond)
+	srv = httptest.NewServer(handler("404"))
+	err = newTestClient(srv.URL).Jobs.LogStream(testCtx, "42", 99, &bytes.Buffer{}, time.Millisecond)
+	srv.Close()
 	if err == nil {
-		t.Fatal("expected error")
+		t.Error("a missing job must fail the stream")
 	}
-}
-
-func TestJob_LogStream_StatusParseError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case strings.HasSuffix(r.URL.Path, "/trace"):
-			w.WriteHeader(http.StatusOK)
-		case strings.HasSuffix(r.URL.Path, "/jobs/99"):
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`not-json`))
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer srv.Close()
-
-	c := newTestClient(srv.URL)
-	err := c.Jobs.LogStream(testCtx, "42", 99, &bytes.Buffer{}, time.Millisecond)
+	srv = httptest.NewServer(handler("not-json"))
+	err = newTestClient(srv.URL).Jobs.LogStream(testCtx, "42", 99, &bytes.Buffer{}, time.Millisecond)
+	srv.Close()
 	if err == nil || !strings.Contains(err.Error(), "parsing job status") {
-		t.Fatalf("expected parse error, got %v", err)
+		t.Errorf("a bad status answer: %v", err)
 	}
-}
-
-func TestJob_LogStream_ContextCancelledAtStart(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	c := newTestClient("http://example.com")
-	err := c.Jobs.LogStream(ctx, "42", 99, &bytes.Buffer{}, time.Second)
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("expected context.Canceled, got %v", err)
+	if err := newTestClient("http://example.com").Jobs.LogStream(ctx, "42", 99, &bytes.Buffer{}, time.Second); !errors.Is(err, context.Canceled) {
+		t.Errorf("a cancelled context: %v", err)
 	}
 }
 
-func TestJob_LogStream_ContextCancelledWhileWaiting(t *testing.T) {
+func TestJob_Actions(t *testing.T) {
+	var bodies []map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case strings.HasSuffix(r.URL.Path, "/trace"):
-			w.WriteHeader(http.StatusOK)
-		case strings.HasSuffix(r.URL.Path, "/jobs/99"):
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"id":99,"status":"running"}`))
-		default:
-			http.NotFound(w, r)
+		if r.Method != http.MethodPost {
+			t.Errorf("method = %s", r.Method)
 		}
-	}))
-	defer srv.Close()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	go func() {
-		time.Sleep(20 * time.Millisecond)
-		cancel()
-	}()
-
-	c := newTestClient(srv.URL)
-	err := c.Jobs.LogStream(ctx, "42", 99, &bytes.Buffer{}, 100*time.Millisecond)
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("expected context.Canceled, got %v", err)
-	}
-}
-
-func TestJob_LogStream_DefaultInterval(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var b map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&b)
+		bodies = append(bodies, b)
 		switch {
-		case strings.HasSuffix(r.URL.Path, "/trace"):
-			w.WriteHeader(http.StatusOK)
-		case strings.HasSuffix(r.URL.Path, "/jobs/99"):
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"id":99,"status":"failed"}`))
+		case strings.HasSuffix(r.URL.Path, "/jobs/99/retry"):
+			_, _ = w.Write([]byte(`{"id":100,"status":"pending"}`))
+		case strings.HasSuffix(r.URL.Path, "/jobs/99/cancel"):
+			_, _ = w.Write([]byte(`{"id":99,"status":"canceled"}`))
+		case strings.HasSuffix(r.URL.Path, "/jobs/99/play"):
+			_, _ = w.Write([]byte(`{"id":99,"status":"pending"}`))
 		default:
-			http.NotFound(w, r)
+			t.Errorf("path = %s", r.URL.Path)
 		}
 	}))
 	defer srv.Close()
 
 	c := newTestClient(srv.URL)
-	if err := c.Jobs.LogStream(testCtx, "42", 99, &bytes.Buffer{}, 0); err != nil {
-		t.Fatalf("LogStream: %v", err)
+	if j, err := c.Jobs.Retry(testCtx, "42", 99); err != nil || j.ID != 100 {
+		t.Fatalf("Retry: %+v %v", j, err)
+	}
+	if j, err := c.Jobs.Cancel(testCtx, "42", 99); err != nil || j.Status != "canceled" {
+		t.Fatalf("Cancel: %+v %v", j, err)
+	}
+	if j, err := c.Jobs.Play(testCtx, "42", 99, nil); err != nil || j.Status != "pending" {
+		t.Fatalf("Play: %+v %v", j, err)
+	}
+	if _, err := c.Jobs.Play(testCtx, "42", 99, []JobVariable{{Key: "A", Value: "1"}}); err != nil {
+		t.Fatal(err)
+	}
+	if bodies[2] != nil {
+		t.Errorf("a play without variables sends no body: %v", bodies[2])
+	}
+	if vars, _ := bodies[3]["job_variables_attributes"].([]any); len(vars) != 1 {
+		t.Errorf("play variables: %v", bodies[3])
 	}
 }
 
-func TestJob_LogStreamStatus(t *testing.T) {
-	var polls atomic.Int32
+func TestJob_ArtifactsTo(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case strings.HasSuffix(r.URL.Path, "/trace"):
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte("line\n"))
-		case strings.HasSuffix(r.URL.Path, "/jobs/99"):
-			polls.Add(1)
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"id":99,"status":"success"}`))
-		default:
-			http.NotFound(w, r)
+		if r.URL.Path != "/api/v4/projects/42/jobs/99/artifacts" {
+			t.Errorf("path = %q", r.URL.Path)
 		}
+		_, _ = w.Write([]byte("artifact-bytes"))
 	}))
 	defer srv.Close()
-	c := newTestClient(srv.URL)
-	var chunks int
-	status, err := c.Jobs.LogStreamStatus(context.Background(), "g/p", 99, time.Millisecond, func(b []byte, offset int) error {
-		chunks++
-		if offset != 0 || string(b) != "line\n" {
-			t.Errorf("unexpected chunk offset=%d body=%q", offset, b)
-		}
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("LogStreamStatus: %v", err)
+
+	var buf bytes.Buffer
+	if err := newTestClient(srv.URL).Jobs.ArtifactsTo(testCtx, "42", 99, &buf); err != nil || buf.String() != "artifact-bytes" {
+		t.Fatalf("ArtifactsTo: %q %v", buf.String(), err)
 	}
-	if status != "success" || chunks != 1 {
-		t.Errorf("status=%q chunks=%d", status, chunks)
+}
+
+func TestJob_ParseErrors(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{bad`))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	if _, err := c.Jobs.Get(testCtx, "42", 99); err == nil || !strings.Contains(err.Error(), "parsing job") {
+		t.Errorf("Get: %v", err)
+	}
+	if _, err := c.Jobs.Retry(testCtx, "42", 99); err == nil || !strings.Contains(err.Error(), "parsing job") {
+		t.Errorf("Retry: %v", err)
+	}
+	if _, err := c.Jobs.Play(testCtx, "42", 99, nil); err == nil || !strings.Contains(err.Error(), "parsing job") {
+		t.Errorf("Play: %v", err)
 	}
 }

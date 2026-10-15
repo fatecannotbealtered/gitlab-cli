@@ -1,839 +1,362 @@
 package cmd
 
 import (
-	"bytes"
 	"net/http"
-	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/spf13/cobra"
 )
 
-func TestReleaseCmd_Help(t *testing.T) {
-	buf := new(bytes.Buffer)
-	rootCmd.SetOut(buf)
-	rootCmd.SetArgs([]string{"release", "--help"})
-	_ = rootCmd.Execute()
-	rootCmd.SetOut(os.Stdout)
-	out := buf.String()
-	for _, want := range []string{"list", "get", "create", "update", "delete"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("release --help missing %q, got:\n%s", want, out)
-		}
-	}
-}
+// ---------------------------------------------------------------- fake GitLab
 
-func TestReleaseList_JSON(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`[{"tag_name":"v1.0","name":"Release 1.0","released_at":"2024-01-01T00:00:00Z"}]`))
-	}))
-	defer srv.Close()
-
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "test-token")
-
-	origJM := jsonMode
-	defer func() { jsonMode = origJM }()
-	jsonMode = true
-
-	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"release", "list", "--project", "1", "--json"})
-		_ = rootCmd.Execute()
-	})
-	// ReleaseToMap uses camelCase keys
-	if !strings.Contains(out, `"tagName"`) || !strings.Contains(out, "v1.0") {
-		t.Errorf("expected JSON with tagName, got:\n%s", out)
-	}
-}
-
-func TestReleaseGet_JSON(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"tag_name":"v1.0","name":"Release 1.0","description":"First"}`))
-	}))
-	defer srv.Close()
-
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "test-token")
-
-	origJM := jsonMode
-	defer func() { jsonMode = origJM }()
-	jsonMode = true
-
-	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"release", "get", "--project", "1", "--tag", "v1.0", "--json"})
-		_ = rootCmd.Execute()
-	})
-	// ToFlatRelease uses FlatRelease struct JSON tags (camelCase)
-	if !strings.Contains(out, "v1.0") {
-		t.Errorf("expected JSON with v1.0, got:\n%s", out)
-	}
-}
-
-func TestReleaseCreate_DryRun_JSON(t *testing.T) {
-	origDR := dryRun
-	origJM := jsonMode
-	defer func() { dryRun = origDR; jsonMode = origJM }()
-	dryRun = true
-	jsonMode = true
-
-	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
-	t.Setenv("GITLAB_CLI_TOKEN", "test-token")
-
-	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{
-			"release", "create",
-			"--project", "1", "--tag", "v2.0", "--name", "Release 2.0",
-			"--dry-run", "--json",
-		})
-		_ = rootCmd.Execute()
-	})
-	for _, want := range []string{`"confirm_token"`, `"action": "release create"`} {
-		if !strings.Contains(out, want) {
-			t.Errorf("missing %q in dry-run output, got:\n%s", want, out)
-		}
-	}
-}
-
-func TestReleaseUpdate_DryRun_JSON(t *testing.T) {
-	origDR := dryRun
-	origJM := jsonMode
-	defer func() { dryRun = origDR; jsonMode = origJM }()
-	dryRun = true
-	jsonMode = true
-
-	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
-	t.Setenv("GITLAB_CLI_TOKEN", "test-token")
-
-	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{
-			"release", "update",
-			"--project", "1", "--tag", "v1.0", "--name", "Updated",
-			"--dry-run", "--json",
-		})
-		_ = rootCmd.Execute()
-	})
-	for _, want := range []string{`"confirm_token"`, `"action": "release update"`} {
-		if !strings.Contains(out, want) {
-			t.Errorf("missing %q in dry-run output, got:\n%s", want, out)
-		}
-	}
-}
-
-func TestReleaseDelete_DryRun_JSON(t *testing.T) {
-	origDR := dryRun
-	origJM := jsonMode
-	defer func() { dryRun = origDR; jsonMode = origJM }()
-	dryRun = true
-	jsonMode = true
-
-	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
-	t.Setenv("GITLAB_CLI_TOKEN", "test-token")
-
-	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{
-			"release", "delete",
-			"--project", "1", "--tag", "v1.0",
-			"--dry-run", "--dangerous", "--json",
-		})
-		_ = rootCmd.Execute()
-	})
-	for _, want := range []string{`"confirm_token"`, `"action": "release delete"`} {
-		if !strings.Contains(out, want) {
-			t.Errorf("missing %q in dry-run output, got:\n%s", want, out)
-		}
-	}
-}
-
-func TestReleaseCreate_MissingRequired(t *testing.T) {
-	lastExit = 0
-	defer func() { lastExit = 0 }()
-
-	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
-	t.Setenv("GITLAB_CLI_TOKEN", "test-token")
-
-	// Pass --name "" explicitly to override any stale cobra flag value from previous tests.
-	rootCmd.SetArgs([]string{"release", "create", "--project", "1", "--tag", "v1.0", "--name", ""})
-	_ = rootCmd.Execute()
-	if LastExitCode() != ExitBadArgs {
-		t.Errorf("exit code = %d, want %d (ExitBadArgs)", LastExitCode(), ExitBadArgs)
-	}
-	lastExit = 0
-}
-
-func TestParseMilestones(t *testing.T) {
-	cases := []struct {
-		input string
-		want  []string
-	}{
-		{"", nil},
-		{"v1.0", []string{"v1.0"}},
-		{"v1.0,v2.0", []string{"v1.0", "v2.0"}},
-		{"v1.0, v2.0 , v3.0", []string{"v1.0", "v2.0", "v3.0"}},
-		{" , ", nil},
-		{",,", nil},
-	}
-	for _, tc := range cases {
-		got := parseMilestones(tc.input)
-		if len(got) != len(tc.want) {
-			t.Errorf("parseMilestones(%q) = %v, want %v", tc.input, got, tc.want)
-			continue
-		}
-		for i := range got {
-			if got[i] != tc.want[i] {
-				t.Errorf("parseMilestones(%q)[%d] = %q, want %q", tc.input, i, got[i], tc.want[i])
+func init() {
+	addFakeRoutes(
+		fakeRoute{"GET /api/v4/projects/{project}/releases", func(gl *fakeGitLab, w http.ResponseWriter, r *http.Request) {
+			p, rp := gl.repoOf(w, r)
+			if p == nil {
+				return
 			}
+			out := []map[string]any{}
+			for _, rel := range rp.Releases {
+				out = append(out, rp.releaseJSON(gl, p.Path, rel))
+			}
+			fakePage(w, r, out)
+		}},
+		fakeRoute{"GET /api/v4/projects/{project}/releases/{tag}", func(gl *fakeGitLab, w http.ResponseWriter, r *http.Request) {
+			if p, rp, rel := gl.repoRelease(w, r); rel != nil {
+				fakeJSON(w, 200, rp.releaseJSON(gl, p.Path, rel))
+			}
+		}},
+		fakeRoute{"POST /api/v4/projects/{project}/releases", func(gl *fakeGitLab, w http.ResponseWriter, r *http.Request) {
+			p, rp := gl.repoOf(w, r)
+			if p == nil {
+				return
+			}
+			b := fakeBody(r)
+			tag, _ := b["tag_name"].(string)
+			for _, rel := range rp.Releases {
+				if rel.Tag == tag {
+					fakeJSON(w, 409, map[string]any{"message": "Release already exists"})
+					return
+				}
+			}
+			if _, ok := rp.Tags[tag]; !ok {
+				ref, _ := b["ref"].(string)
+				c := rp.resolve(ref)
+				if ref == "" || c == nil {
+					fakeJSON(w, 422, map[string]any{"message": "Ref is not specified or invalid"})
+					return
+				}
+				rp.Tags[tag] = c.ID
+			}
+			rel := &fakeRepoRelease{Tag: tag, Author: gl.repoUser(r).Username, ReleasedAt: gl.now()}
+			rel.Name, _ = b["name"].(string)
+			if rel.Name == "" {
+				rel.Name = tag
+			}
+			rel.Description, _ = b["description"].(string)
+			if !gl.repoReleaseMilestones(w, p.Path, b, rel) {
+				return
+			}
+			rp.Releases = append([]*fakeRepoRelease{rel}, rp.Releases...)
+			fakeJSON(w, 201, rp.releaseJSON(gl, p.Path, rel))
+		}},
+		fakeRoute{"PUT /api/v4/projects/{project}/releases/{tag}", func(gl *fakeGitLab, w http.ResponseWriter, r *http.Request) {
+			p, rp, rel := gl.repoRelease(w, r)
+			if rel == nil {
+				return
+			}
+			b := fakeBody(r)
+			if v, ok := b["name"].(string); ok {
+				rel.Name = v
+			}
+			if v, ok := b["description"].(string); ok {
+				rel.Description = v
+			}
+			if !gl.repoReleaseMilestones(w, p.Path, b, rel) {
+				return
+			}
+			fakeJSON(w, 200, rp.releaseJSON(gl, p.Path, rel))
+		}},
+		fakeRoute{"DELETE /api/v4/projects/{project}/releases/{tag}", func(gl *fakeGitLab, w http.ResponseWriter, r *http.Request) {
+			p, rp, rel := gl.repoRelease(w, r)
+			if rel == nil {
+				return
+			}
+			kept := rp.Releases[:0]
+			for _, x := range rp.Releases {
+				if x != rel {
+					kept = append(kept, x)
+				}
+			}
+			rp.Releases = kept
+			fakeJSON(w, 200, rp.releaseJSON(gl, p.Path, rel))
+		}},
+	)
+	addConformanceSamples(map[string][]string{
+		"release create": {"v1.1", "--project", "acme/web", "--name", "Version 1.1", "--description", "Bug fixes"},
+		"release update": {"v1.0", "--project", "acme/web", "--name", "Version 1.0.0"},
+		"release delete": {"v0.9", "--project", "acme/web"},
+	})
+}
+
+// repoRelease finds the {tag} release; it answers 404 itself when there is none.
+func (gl *fakeGitLab) repoRelease(w http.ResponseWriter, r *http.Request) (*fakeProject, *fakeRepo, *fakeRepoRelease) {
+	p, rp := gl.repoOf(w, r)
+	if p == nil {
+		return nil, nil, nil
+	}
+	for _, rel := range rp.Releases {
+		if rel.Tag == r.PathValue("tag") {
+			return p, rp, rel
 		}
 	}
+	fakeJSON(w, 404, map[string]any{"message": "404 Not Found"})
+	return nil, nil, nil
 }
 
-func TestRelease_Help_ListsSubcommands(t *testing.T) {
-	buf := new(bytes.Buffer)
-	rootCmd.SetOut(buf)
-	rootCmd.SetArgs([]string{"release", "--help"})
-	_ = rootCmd.Execute()
-	rootCmd.SetOut(os.Stdout)
-	out := buf.String()
-	for _, want := range []string{"list", "get", "create", "update", "delete"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("release --help missing subcommand %q\noutput:\n%s", want, out)
+// repoReleaseMilestones sets the body's milestones on rel; GitLab refuses titles the
+// project has no milestone for.
+func (gl *fakeGitLab) repoReleaseMilestones(w http.ResponseWriter, project string, b map[string]any, rel *fakeRepoRelease) bool {
+	raw, has := b["milestones"].([]any)
+	if !has {
+		return true
+	}
+	rel.Milestones = nil
+	for _, t := range raw {
+		title, _ := t.(string)
+		found := false
+		for _, m := range fakeMilestones(gl)[project] {
+			found = found || m.Title == title
+		}
+		if !found {
+			fakeJSON(w, 400, map[string]any{"message": "Milestone(s) not found: " + title})
+			return false
+		}
+		rel.Milestones = append(rel.Milestones, title)
+	}
+	return true
+}
+
+func (rp *fakeRepo) releaseJSON(gl *fakeGitLab, project string, rel *fakeRepoRelease) map[string]any {
+	ms := []map[string]any{}
+	for i, t := range rel.Milestones {
+		ms = append(ms, map[string]any{"id": 900 + i, "iid": i + 1, "title": t})
+	}
+	author := map[string]any{"username": rel.Author, "name": rel.Author}
+	for _, u := range gl.people {
+		if u.Username == rel.Author {
+			author["name"] = u.Name
 		}
 	}
+	return map[string]any{"tag_name": rel.Tag, "name": rel.Name, "description": rel.Description, "created_at": rel.ReleasedAt,
+		"released_at": rel.ReleasedAt, "upcoming_release": false, "author": author,
+		"commit": rp.Commits[rp.Tags[rel.Tag]].json(gl, project, false), "milestones": ms,
+		"commit_path": "/" + project + "/-/commit/" + rp.Tags[rel.Tag], "tag_path": "/" + project + "/-/tags/" + rel.Tag,
+		"assets": map[string]any{"count": 2, "sources": []any{}},
+		"_links": map[string]any{"self": gl.URL + "/" + project + "/-/releases/" + rel.Tag}}
 }
 
-func TestRelease_List_MissingProject(t *testing.T) {
-	origExit := lastExit
-	defer func() { lastExit = origExit }()
-	lastExit = 0
+// ---------------------------------------------------------------- behaviour matrix
 
-	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
-	t.Setenv("GITLAB_CLI_TOKEN", "test-token")
-
-	_ = releaseListCmd.Flags().Set("project", "")
-
-	rootCmd.SetArgs([]string{"release", "list"})
-	_ = rootCmd.Execute()
-	if lastExit != ExitBadArgs {
-		t.Errorf("exit code = %d, want %d (ExitBadArgs)", lastExit, ExitBadArgs)
+func TestReleaseMatrix(t *testing.T) {
+	cases := []matrixCase{
+		{Path: "release list", Args: []string{"--project", "acme/web"}, EmptyArgs: []string{"--project", "acme/empty"},
+			Invalid: []invalidCase{
+				{[]string{}, "E_USAGE", "missing_parameter", "--project"},
+				{[]string{"--project", "acme/web", "--limit", "0"}, "E_USAGE", "invalid_value", "--limit"},
+			}},
+		{Path: "release get", Args: []string{"v1.0", "--project", "acme/web"},
+			Invalid: []invalidCase{
+				{[]string{"--project", "acme/web"}, "E_USAGE", "missing_parameter", "--tag"},
+				{[]string{"v1 0", "--project", "acme/web"}, "E_VALIDATION", "invalid_value", "--tag"},
+				{[]string{"v1.0"}, "E_USAGE", "missing_parameter", "--project"},
+			}},
+		{Path: "release create", Args: []string{"v1.1", "--project", "acme/web", "--name", "Version 1.1", "--description", "Bug fixes"},
+			Role: "developer", PreviewReads: 2,
+			RequestFields: map[string]string{"name": "name", "description": "description", "tag_name": "tag_name"},
+			Invalid: []invalidCase{
+				{[]string{"--project", "acme/web"}, "E_USAGE", "missing_parameter", "--tag"},
+				{[]string{"v1..1", "--project", "acme/web"}, "E_VALIDATION", "invalid_value", "--tag"},
+				{[]string{"v1.1", "--project", "acme/web", "--name", " "}, "E_VALIDATION", "invalid_value", "--name"},
+				{[]string{"v1.1", "--project", "acme/web", "--description", "x", "--description-file", "notes.md"}, "E_USAGE", "conflicting_flags", "--description-file"},
+			}},
+		{Path: "release update", Args: []string{"v1.0", "--project", "acme/web", "--name", "Version 1.0.0", "--description", "Stable."},
+			Role: "developer", PreviewReads: 1,
+			RequestFields: map[string]string{"name": "name", "description": "description"},
+			Invalid: []invalidCase{
+				{[]string{"v1.0", "--project", "acme/web"}, "E_USAGE", "missing_parameter", "--name"},
+				{[]string{"--project", "acme/web", "--name", "x"}, "E_USAGE", "missing_parameter", "--tag"},
+			}},
+		{Path: "release delete", Args: []string{"v0.9", "--project", "acme/web"}, Role: "developer", PreviewReads: 1,
+			Invalid: []invalidCase{
+				{[]string{"--project", "acme/web", "--dangerous"}, "E_USAGE", "missing_parameter", "--tag"},
+			}},
+	}
+	for _, c := range cases {
+		t.Run(c.Path, func(t *testing.T) { runMatrix(t, c) })
 	}
 }
 
-func TestRelease_List_JSON(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`[{"tag_name":"v1.0","name":"Release 1.0","description":"desc","created_at":"2024-01-01","released_at":"2024-01-01","commit":{"id":"abc"},"assets":{"count":0}}]`))
-	}))
-	defer srv.Close()
+// ---------------------------------------------------------------- focused tests
 
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-
-	origJM := jsonMode
-	defer func() { jsonMode = origJM }()
-
-	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"release", "list", "--project", "group/proj", "--json"})
-		_ = rootCmd.Execute()
-	})
-	if !strings.Contains(out, `"tagName": "v1.0"`) {
-		t.Errorf("expected JSON with tagName v1.0, got:\n%s", out)
-	}
-}
-
-func TestRelease_Get_JSON(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"tag_name":"v1.0","name":"Release 1.0","description":"desc","created_at":"2024-01-01","released_at":"2024-01-01"}`))
-	}))
-	defer srv.Close()
-
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-
-	origJM := jsonMode
-	defer func() { jsonMode = origJM }()
-
-	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"release", "get", "--project", "group/proj", "--tag", "v1.0", "--json"})
-		_ = rootCmd.Execute()
-	})
-	if !strings.Contains(out, "v1.0") {
-		t.Errorf("expected JSON with v1.0, got:\n%s", out)
-	}
-}
-
-func TestRelease_Create_DryRun_JSON(t *testing.T) {
-	origDR := dryRun
-	origJM := jsonMode
-	defer func() { dryRun = origDR; jsonMode = origJM }()
-
-	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{
-			"release", "create",
-			"--project", "group/proj", "--tag", "v2.0", "--name", "Release 2.0",
-			"--dry-run", "--json",
-		})
-		_ = rootCmd.Execute()
-	})
-	for _, want := range []string{`"confirm_token"`, `"action": "release create"`} {
-		if !strings.Contains(out, want) {
-			t.Errorf("missing %q in dry-run output, got:\n%s", want, out)
-		}
-	}
-}
-
-func TestRelease_Update_DryRun_JSON(t *testing.T) {
-	origDR := dryRun
-	origJM := jsonMode
-	defer func() { dryRun = origDR; jsonMode = origJM }()
-
-	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{
-			"release", "update",
-			"--project", "group/proj", "--tag", "v1.0", "--name", "Updated",
-			"--dry-run", "--json",
-		})
-		_ = rootCmd.Execute()
-	})
-	for _, want := range []string{`"confirm_token"`, `"action": "release update"`} {
-		if !strings.Contains(out, want) {
-			t.Errorf("missing %q in dry-run output, got:\n%s", want, out)
-		}
-	}
-}
-
-func TestRelease_Delete_DryRun_JSON(t *testing.T) {
-	origDR := dryRun
-	origJM := jsonMode
-	defer func() { dryRun = origDR; jsonMode = origJM }()
-
-	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{
-			"release", "delete",
-			"--project", "group/proj", "--tag", "v1.0",
-			"--dry-run", "--dangerous", "--json",
-		})
-		_ = rootCmd.Execute()
-	})
-	for _, want := range []string{`"confirm_token"`, `"action": "release delete"`} {
-		if !strings.Contains(out, want) {
-			t.Errorf("missing %q in dry-run output, got:\n%s", want, out)
-		}
-	}
-}
-
-func TestRelease_Create_JSON(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/releases") {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusCreated)
-			_, _ = w.Write([]byte(`{"tag_name":"v1.0","name":"Release 1.0","description":"desc","created_at":"2024-01-01","released_at":"2024-01-01","commit":{"id":"abc"},"assets":{"count":0}}`))
-			return
-		}
-		http.NotFound(w, r)
-	}))
-	defer srv.Close()
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origDR := dryRun
-	origJM := jsonMode
-	defer func() { dryRun = origDR; jsonMode = origJM }()
-	dryRun = false
-	out := captureStdout(t, func() {
-		rootCmd.SetArgs(withConfirmForTest(t, []string{"release", "create", "--project", "foo/bar", "--tag", "v1.0", "--name", "Release 1.0", "--json"}))
-		_ = rootCmd.Execute()
-	})
-	if !strings.Contains(out, `"tagName": "v1.0"`) {
-		t.Errorf("expected tagName in output, got: %s", out)
-	}
-}
-
-func TestRelease_Update_JSON(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"tag_name":"v1.0","name":"Updated","description":"desc","created_at":"2024-01-01","released_at":"2024-01-01"}`))
-	}))
-	defer srv.Close()
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origDR := dryRun
-	origJM := jsonMode
-	defer func() { dryRun = origDR; jsonMode = origJM }()
-	dryRun = false
-	out := captureStdout(t, func() {
-		rootCmd.SetArgs(withConfirmForTest(t, []string{"release", "update", "--project", "foo/bar", "--tag", "v1.0", "--name", "Updated", "--json"}))
-		_ = rootCmd.Execute()
-	})
-	if !strings.Contains(out, `"tagName": "v1.0"`) {
-		t.Errorf("expected tagName in output, got: %s", out)
-	}
-}
-
-func TestRelease_Delete_JSON(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodDelete {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"tag_name":"v1.0","name":"Release 1.0"}`))
-			return
-		}
-		http.NotFound(w, r)
-	}))
-	defer srv.Close()
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origDR := dryRun
-	origJM := jsonMode
-	origExit := lastExit
-	defer func() { dryRun = origDR; jsonMode = origJM; lastExit = origExit }()
-	dryRun = false
-	lastExit = 0
-	captureStdout(t, func() {
-		args := []string{"release", "delete", "--project", "foo/bar", "--tag", "v1.0", "--json", "--dangerous"}
-		args = append(args, confirmArgsForTest(t, "release delete", map[string]any{"project": "foo/bar", "tag": "v1.0"})...)
-		rootCmd.SetArgs(args)
-		_ = rootCmd.Execute()
-	})
-	if lastExit != ExitOK {
-		t.Errorf("expected exit 0, got %d", lastExit)
-	}
-}
-
-func TestRelease_List_PlainText(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`[{"tag_name":"v1.0","name":"Release 1.0","description":"desc","created_at":"2024-01-01","released_at":"2024-01-01"}]`))
-	}))
-	defer srv.Close()
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origJM := jsonMode
-	defer func() { jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
-	setTextFormatForTest(t)
-	_ = rootCmd.PersistentFlags().Set("json", "false")
-	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"release", "list", "--project", "group/proj"})
-		_ = rootCmd.Execute()
-	})
-	if !strings.Contains(out, "v1.0") {
-		t.Errorf("expected tag name in plain text output:\n%s", out)
-	}
-}
-
-func TestRelease_Get_PlainText(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"tag_name":"v1.0","name":"Release 1.0","description":"desc","created_at":"2024-01-01","released_at":"2024-01-01"}`))
-	}))
-	defer srv.Close()
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origJM := jsonMode
-	defer func() { jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
-	setTextFormatForTest(t)
-	_ = rootCmd.PersistentFlags().Set("json", "false")
-	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"release", "get", "--project", "group/proj", "--tag", "v1.0"})
-		_ = rootCmd.Execute()
-	})
-	if !strings.Contains(out, "v1.0") {
-		t.Errorf("expected tag name in plain text output:\n%s", out)
-	}
-}
-
-func TestRelease_Create_PlainText(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`{"tag_name":"v1.0","name":"Release 1.0","description":"desc","created_at":"2024-01-01","released_at":"2024-01-01"}`))
-	}))
-	defer srv.Close()
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origDR := dryRun
-	origJM := jsonMode
-	defer func() { dryRun = origDR; jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
-	dryRun = false
-	setTextFormatForTest(t)
-	_ = rootCmd.PersistentFlags().Set("json", "false")
-	out := captureStdout(t, func() {
-		rootCmd.SetArgs(withConfirmForTest(t, []string{"release", "create", "--project", "foo/bar", "--tag", "v1.0", "--name", "Release 1.0"}))
-		_ = rootCmd.Execute()
-	})
-	if !strings.Contains(out, "Created") {
-		t.Errorf("expected 'Created' in output, got: %s", out)
-	}
-}
-
-func TestRelease_Update_PlainText(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"tag_name":"v1.0","name":"Updated","description":"desc","created_at":"2024-01-01","released_at":"2024-01-01"}`))
-	}))
-	defer srv.Close()
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origDR := dryRun
-	origJM := jsonMode
-	defer func() { dryRun = origDR; jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
-	dryRun = false
-	setTextFormatForTest(t)
-	_ = rootCmd.PersistentFlags().Set("json", "false")
-	out := captureStdout(t, func() {
-		rootCmd.SetArgs(withConfirmForTest(t, []string{"release", "update", "--project", "foo/bar", "--tag", "v1.0", "--name", "Updated"}))
-		_ = rootCmd.Execute()
-	})
-	if !strings.Contains(out, "Updated") {
-		t.Errorf("expected 'Updated' in output, got: %s", out)
-	}
-}
-
-func TestRelease_List_APIError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusUnauthorized)
-		_, _ = w.Write([]byte(`{"message":"401 Unauthorized"}`))
-	}))
-	defer srv.Close()
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "bad-token")
-	origExit := lastExit
-	origJM := jsonMode
-	defer func() { lastExit = origExit; jsonMode = origJM }()
-	lastExit = 0
-	setTextFormatForTest(t)
-	_ = rootCmd.PersistentFlags().Set("json", "false")
-	rootCmd.SetArgs([]string{"release", "list", "--project", "foo/bar"})
-	_ = rootCmd.Execute()
-	if lastExit == ExitOK {
-		t.Errorf("expected non-zero exit for API error, got %d", lastExit)
-	}
-}
-
-func TestRelease_List_Empty(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`[]`))
-	}))
-	defer srv.Close()
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origJM := jsonMode
-	defer func() { jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
-	setTextFormatForTest(t)
-	_ = rootCmd.PersistentFlags().Set("json", "false")
-	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"release", "list", "--project", "foo/bar"})
-		_ = rootCmd.Execute()
-	})
-	if !strings.Contains(out, "No releases") {
-		t.Errorf("expected 'No releases' in output, got: %s", out)
-	}
-}
-
-func releaseNoAuth(t *testing.T) {
-	t.Helper()
-	resetReleaseCmdFlags(t)
-	isolateConfigHome(t)
-	t.Setenv("GITLAB_CLI_HOST", "")
-	t.Setenv("GITLAB_CLI_TOKEN", "")
-	t.Setenv("GITLAB_HOST", "")
-	t.Setenv("GITLAB_TOKEN", "")
-}
-
-func resetReleaseCmdFlags(t *testing.T) {
-	t.Helper()
-	resetRootPersistentFlags(t)
-	for _, kv := range []struct {
-		cmd   *cobra.Command
-		name  string
-		value string
-	}{
-		{releaseListCmd, "project", ""},
-		{releaseListCmd, "limit", "20"},
-		{releaseGetCmd, "project", ""},
-		{releaseGetCmd, "tag", ""},
-		{releaseCreateCmd, "project", ""},
-		{releaseCreateCmd, "tag", ""},
-		{releaseCreateCmd, "name", ""},
-		{releaseUpdateCmd, "project", ""},
-		{releaseUpdateCmd, "tag", ""},
-		{releaseDeleteCmd, "project", ""},
-		{releaseDeleteCmd, "tag", ""},
+// TestReleaseFormsAreOneTarget: the tag, the release ref, the tag's ref and the web
+// URLs read the same release and bind as one request (CLI-048, CLI-054).
+func TestReleaseFormsAreOneTarget(t *testing.T) {
+	e := newTestEnv(t)
+	for _, args := range [][]string{
+		{"release", "get", "v1.0", "--project", "acme/web"},
+		{"release", "get", "acme/web/-/releases/v1.0"},
+		{"release", "get", "acme/web/-/tags/v1.0"},
+		{"release", "get", e.gl.URL + "/acme/web/-/releases/v1.0"},
+		{"release", "get", "--tag", "v1.0", "--project", "1"},
 	} {
-		if err := kv.cmd.Flags().Set(kv.name, kv.value); err != nil {
-			t.Fatalf("reset release flag %s.%s: %v", kv.cmd.Name(), kv.name, err)
+		r := e.run(args...)
+		if r.exit != 0 || r.data()["ref"] != "acme/web/-/releases/v1.0" || r.data()["commit_sha"] != repoSeedSHA(2) {
+			t.Fatalf("%v: %s", args, r.out)
 		}
 	}
-}
-
-func TestRelease_List_NewClientError(t *testing.T) {
-	releaseNoAuth(t)
-	origExit := lastExit
-	defer func() { lastExit = origExit }()
-	lastExit = 0
-	rootCmd.SetArgs([]string{"release", "list", "--project", "g/p"})
-	_ = rootCmd.Execute()
-	if lastExit != ExitAuth {
-		t.Errorf("exit = %d, want %d", lastExit, ExitAuth)
+	r := e.run("release", "get", "v1.0", "-p", "acme/web")
+	d := r.data()
+	if d["author"] != "@carol" || repoJSON(d["milestones"]) != `["v1.0"]` || d["asset_count"] != repoNumber(2) ||
+		d["description"] != "First stable release." || d["description_truncated"] != false {
+		t.Fatalf("release get: %s", r.out)
+	}
+	untrusted := stringsOf(r.doc["meta"].(map[string]any)["untrusted"])
+	for _, p := range []string{"data.description", "data.name", "data.tag_name", "data.ref"} {
+		if !hasString(untrusted, p) {
+			t.Fatalf("%s is untrusted: %v", p, untrusted)
+		}
+	}
+	tok := e.dryRun("release", "update", "acme/web/-/releases/v1.0", "--name", "One")
+	if r := e.confirm(tok, "release", "update", "v1.0", "--project", "acme/web", "--name", "One"); r.exit != 0 {
+		t.Fatalf("the tag and the ref must bind alike: %s", r.out)
 	}
 }
 
-func TestRelease_List_InvalidLimit(t *testing.T) {
-	resetReleaseCmdFlags(t)
-	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origExit := lastExit
-	defer func() { lastExit = origExit }()
-	lastExit = 0
-	rootCmd.SetArgs([]string{"release", "list", "--project", "g/p", "--limit", "0"})
-	_ = rootCmd.Execute()
-	if lastExit != ExitBadArgs {
-		t.Errorf("exit = %d, want %d", lastExit, ExitBadArgs)
+// TestReleaseListCarriesNoNotes: release lists leave the notes out (CLI-043) and are
+// ordered newest release first.
+func TestReleaseListCarriesNoNotes(t *testing.T) {
+	e := newTestEnv(t)
+	r := e.run("release", "list", "--project", "acme/web", "--fields", "all")
+	if r.exit != 0 || len(r.items()) != 2 || r.items()[0]["tag_name"] != "v1.0" || r.data()["sort"] != "released_at_desc" {
+		t.Fatalf("list: %s", r.out)
+	}
+	if _, has := r.items()[0]["description"]; has {
+		t.Fatalf("no notes in a list: %s", r.out)
+	}
+	if r := e.run("release", "list", "--project", "acme/web", "--fields", "description"); r.details()["problem"] != "invalid_value" {
+		t.Fatalf("description is not a list field: %s", r.out)
 	}
 }
 
-func TestRelease_List_WithAuthor_PlainText(t *testing.T) {
-	setTextFormatForTest(t)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`[{"tag_name":"v1.0","name":"Release 1.0","released_at":"2024-01-01","author":{"username":"alice"}}]`))
-	}))
-	defer srv.Close()
-	resetReleaseCmdFlags(t)
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	out := captureCombinedOutput(t, func() {
-		rootCmd.SetArgs([]string{"release", "list", "--project", "g/p"})
-		_ = rootCmd.Execute()
-	})
-	if !strings.Contains(out, "alice") {
-		t.Errorf("expected author in output, got:\n%s", out)
+// TestReleaseCreateTagHandling: an existing tag is used as it is; a missing one is
+// created from --ref at the commit the preview showed; without --ref the plan is
+// blocked; an existing release blocks too.
+func TestReleaseCreateTagHandling(t *testing.T) {
+	e := newTestEnv(t)
+	r := e.run("release", "create", "v1.1", "--project", "acme/web", "--dry-run")
+	changes := r.preview()["changes"].([]any)
+	if r.exit != 0 || changes[0].(map[string]any)["field"] != "commit_sha" || changes[0].(map[string]any)["after"] != repoSeedSHA(3) {
+		t.Fatalf("the existing tag's commit: %s", r.out)
+	}
+	r = e.run("release", "create", "v2.0", "--project", "acme/web", "--dry-run")
+	if r.exit != 0 || r.preview()["can_apply"] != false || r.token() != "" ||
+		r.preview()["blocked_by"].([]any)[0].(map[string]any)["kind"] != "tag_missing" {
+		t.Fatalf("a missing tag without --ref: %s", r.out)
+	}
+	r = e.run("release", "create", "v1.0", "--project", "acme/web", "--dry-run")
+	if r.preview()["can_apply"] != false || r.preview()["blocked_by"].([]any)[0].(map[string]any)["kind"] != "already_exists" {
+		t.Fatalf("an existing release: %s", r.out)
+	}
+	if r := e.run("release", "create", "v2.0", "--project", "acme/web", "--ref", "nowhere", "--dry-run"); r.code() != "E_NOT_FOUND" ||
+		r.details()["parameter"] != "--ref" {
+		t.Fatalf("a missing --ref: %s", r.out)
+	}
+	args := []string{"release", "create", "v2.0", "--project", "acme/web", "--ref", "develop", "--name", "Two", "--idempotency-key", "rel-2"}
+	tok := e.dryRun(args...)
+	e.repoPush("acme/web", "develop", "x.txt", "moved on") // develop moves on; the tag starts where the preview said
+	r = e.confirm(tok, args...)
+	if r.code() != "E_CONFLICT" || r.details()["conflict"] != "state_drift" || e.gl.Writes() != 0 {
+		t.Fatalf("a --ref that moved after the dry-run is state_drift: %s", r.out)
+	}
+	r = e.confirm(e.dryRun(args...), args...)
+	res := r.data()["result"].(map[string]any)
+	if r.exit != 0 || res["ref"] != "acme/web/-/releases/v2.0" || res["commit_sha"] != e.repoBranchHead("acme/web", "develop") ||
+		r.outcome()["verification"] != "passed" {
+		t.Fatalf("create with a new tag: %s", r.out)
+	}
+	if again := e.run(append(args, "--dry-run")...); again.receipt()["replayed"] != true || e.gl.Writes() != 1 {
+		t.Fatalf("a repeat with the same key is a replay: %s", again.out)
 	}
 }
 
-func TestRelease_Get_NewClientError(t *testing.T) {
-	releaseNoAuth(t)
-	origExit := lastExit
-	defer func() { lastExit = origExit }()
-	lastExit = 0
-	rootCmd.SetArgs([]string{"release", "get", "--project", "g/p", "--tag", "v1.0"})
-	_ = rootCmd.Execute()
-	if lastExit != ExitAuth {
-		t.Errorf("exit = %d, want %d", lastExit, ExitAuth)
+// TestReleaseMilestonesAndClearing: milestone titles are checked before anything is
+// sent; an empty --milestone or --description clears them (CLI-029); the notes
+// from a file bind like the same text given inline (CLI-054).
+func TestReleaseMilestonesAndClearing(t *testing.T) {
+	e := newTestEnv(t)
+	r := e.run("release", "update", "v1.0", "--project", "acme/web", "--milestone", "v9.9", "--dry-run")
+	if r.code() != "E_NOT_FOUND" || r.details()["parameter"] != "--milestone" {
+		t.Fatalf("an unknown milestone: %s", r.out)
+	}
+	args := []string{"release", "update", "v1.0", "--project", "acme/web", "--milestone", "v1.1,v1.0"}
+	r = e.confirm(e.dryRun(args...), args...)
+	if r.exit != 0 || repoJSON(r.receipt()["observed"].(map[string]any)["milestones"]) != `["v1.0","v1.1"]` {
+		t.Fatalf("milestones: %s", r.out)
+	}
+	args = []string{"release", "update", "v1.0", "--project", "acme/web", "--milestone", "", "--description", ""}
+	dry := e.run(append(args, "--dry-run")...)
+	if !hasString(stringsOf(dry.doc["meta"].(map[string]any)["untrusted"]), "data.preview.changes[].before") {
+		t.Fatalf("the current values are untrusted: %s", dry.out)
+	}
+	r = e.confirm(dry.token(), args...)
+	if res := r.data()["result"].(map[string]any); r.exit != 0 || res["description"] != "" || repoJSON(res["milestones"]) != "[]" {
+		t.Fatalf("clearing: %s", r.out)
+	}
+	notes := filepath.Join(e.dir, "notes.md")
+	if err := os.WriteFile(notes, []byte("Shiny."), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tok := e.dryRun("release", "update", "v1.0", "--project", "acme/web", "--description-file", notes)
+	if r := e.confirm(tok, "release", "update", "v1.0", "--project", "acme/web", "--description", "Shiny."); r.exit != 0 {
+		t.Fatalf("--description-file and the same --description are one request: %s", r.out)
 	}
 }
 
-func TestRelease_Get_MissingTag(t *testing.T) {
-	resetReleaseCmdFlags(t)
-	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origExit := lastExit
-	defer func() { lastExit = origExit }()
-	lastExit = 0
-	rootCmd.SetArgs([]string{"release", "get", "--project", "g/p", "--tag", ""})
-	_ = rootCmd.Execute()
-	if lastExit != ExitBadArgs {
-		t.Errorf("exit = %d, want %d", lastExit, ExitBadArgs)
+// TestReleaseGetLongNotes: notes longer than one response carries are cut, flagged
+// and named in a notice; --format raw prints them whole (CLI-042).
+func TestReleaseGetLongNotes(t *testing.T) {
+	e := newTestEnv(t)
+	long := strings.Repeat("A line of release notes.\n", 400)
+	e.gl.locked(func() { fakeRepos(e.gl)["acme/web"].Releases[0].Description = long })
+	r := e.run("release", "get", "v1.0", "--project", "acme/web")
+	notices, _ := r.doc["meta"].(map[string]any)["notices"].([]any)
+	if r.exit != 0 || r.data()["description_truncated"] != true || len(r.out) > 8000 || len(notices) != 1 {
+		t.Fatalf("long notes: %d %s", len(r.out), r.out[:300])
+	}
+	if raw := e.run("release", "get", "v1.0", "--project", "acme/web", "--format", "raw"); raw.exit != 0 || raw.out != long {
+		t.Fatalf("raw notes: %q", raw.out[:80])
 	}
 }
 
-func TestRelease_Get_APIError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-		_, _ = w.Write([]byte(`{"message":"404 Not Found"}`))
-	}))
-	defer srv.Close()
-	resetReleaseCmdFlags(t)
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origExit := lastExit
-	defer func() { lastExit = origExit }()
-	lastExit = 0
-	rootCmd.SetArgs([]string{"release", "get", "--project", "g/p", "--tag", "v1.0"})
-	_ = rootCmd.Execute()
-	if lastExit == ExitOK {
-		t.Errorf("expected non-zero exit, got %d", lastExit)
+// TestReleaseDeleteKeepsTheTag: a missing release is E_NOT_FOUND at the dry-run;
+// delete needs --dangerous; the tag survives the release.
+func TestReleaseDeleteKeepsTheTag(t *testing.T) {
+	e := newTestEnv(t)
+	if r := e.run("release", "delete", "v1.1", "--project", "acme/web", "--dangerous", "--dry-run"); r.code() != "E_NOT_FOUND" {
+		t.Fatalf("a missing release: %s", r.out)
 	}
-}
-
-func TestRelease_Get_WithAuthor_PlainText(t *testing.T) {
-	setTextFormatForTest(t)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"tag_name":"v1.0","name":"Release 1.0","description":"desc","released_at":"2024-01-01","author":{"username":"alice"}}`))
-	}))
-	defer srv.Close()
-	resetReleaseCmdFlags(t)
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	out := captureCombinedOutput(t, func() {
-		rootCmd.SetArgs([]string{"release", "get", "--project", "g/p", "--tag", "v1.0"})
-		_ = rootCmd.Execute()
-	})
-	if !strings.Contains(out, "alice") {
-		t.Errorf("expected author in output, got:\n%s", out)
+	if r := e.run("release", "delete", "v0.9", "--project", "acme/web", "--dry-run"); r.details()["problem"] != "dangerous_flag_required" {
+		t.Fatalf("delete needs --dangerous: %s", r.out)
 	}
-}
-
-func TestRelease_Create_NewClientError(t *testing.T) {
-	releaseNoAuth(t)
-	origExit := lastExit
-	defer func() { lastExit = origExit }()
-	lastExit = 0
-	rootCmd.SetArgs(withConfirmForTest(t, []string{"release", "create", "--project", "g/p", "--tag", "v1.0", "--name", "R1"}))
-	_ = rootCmd.Execute()
-	if lastExit != ExitAuth {
-		t.Errorf("exit = %d, want %d", lastExit, ExitAuth)
+	args := []string{"release", "delete", "v0.9", "--project", "acme/web", "--dangerous"}
+	r := e.confirm(e.dryRun(args...), args...)
+	if r.exit != 0 || r.outcome()["verification"] != "passed" || r.data()["result"].(map[string]any)["deleted"] != true {
+		t.Fatalf("delete: %s", r.out)
 	}
-}
-
-func TestRelease_Create_APIError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte(`{"message":"400 Bad Request"}`))
-	}))
-	defer srv.Close()
-	resetReleaseCmdFlags(t)
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origExit := lastExit
-	defer func() { lastExit = origExit }()
-	lastExit = 0
-	rootCmd.SetArgs(withConfirmForTest(t, []string{"release", "create", "--project", "g/p", "--tag", "v1.0", "--name", "R1"}))
-	_ = rootCmd.Execute()
-	if lastExit == ExitOK {
-		t.Errorf("expected non-zero exit, got %d", lastExit)
-	}
-}
-
-func TestRelease_Update_NewClientError(t *testing.T) {
-	releaseNoAuth(t)
-	origExit := lastExit
-	defer func() { lastExit = origExit }()
-	lastExit = 0
-	rootCmd.SetArgs(withConfirmForTest(t, []string{"release", "update", "--project", "g/p", "--tag", "v1.0", "--name", "Updated"}))
-	_ = rootCmd.Execute()
-	if lastExit != ExitAuth {
-		t.Errorf("exit = %d, want %d", lastExit, ExitAuth)
-	}
-}
-
-func TestRelease_Update_APIError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte(`{"message":"400 Bad Request"}`))
-	}))
-	defer srv.Close()
-	resetReleaseCmdFlags(t)
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origExit := lastExit
-	defer func() { lastExit = origExit }()
-	lastExit = 0
-	rootCmd.SetArgs(withConfirmForTest(t, []string{"release", "update", "--project", "g/p", "--tag", "v1.0", "--name", "Updated"}))
-	_ = rootCmd.Execute()
-	if lastExit == ExitOK {
-		t.Errorf("expected non-zero exit, got %d", lastExit)
-	}
-}
-
-func TestRelease_Delete_PlainText(t *testing.T) {
-	setTextFormatForTest(t)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNoContent)
-	}))
-	defer srv.Close()
-	resetReleaseCmdFlags(t)
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	out := captureCombinedOutput(t, func() {
-		args := []string{"release", "delete", "--project", "g/p", "--tag", "v1.0", "--dangerous"}
-		args = append(args, confirmArgsForTest(t, "release delete", map[string]any{"project": "g/p", "tag": "v1.0"})...)
-		rootCmd.SetArgs(args)
-		_ = rootCmd.Execute()
-	})
-	if !strings.Contains(out, "Deleted release") {
-		t.Errorf("expected Deleted release in output, got:\n%s", out)
-	}
-}
-
-func TestRelease_Delete_NewClientError(t *testing.T) {
-	releaseNoAuth(t)
-	origExit := lastExit
-	defer func() { lastExit = origExit }()
-	lastExit = 0
-	args := []string{"release", "delete", "--project", "g/p", "--tag", "v1.0", "--dangerous"}
-	args = append(args, confirmArgsForTest(t, "release delete", map[string]any{"project": "g/p", "tag": "v1.0"})...)
-	rootCmd.SetArgs(args)
-	_ = rootCmd.Execute()
-	if lastExit != ExitAuth {
-		t.Errorf("exit = %d, want %d", lastExit, ExitAuth)
-	}
-}
-
-func TestRelease_Delete_APIError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-		_, _ = w.Write([]byte(`{"message":"404 Not Found"}`))
-	}))
-	defer srv.Close()
-	resetReleaseCmdFlags(t)
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origExit := lastExit
-	defer func() { lastExit = origExit }()
-	lastExit = 0
-	args := []string{"release", "delete", "--project", "g/p", "--tag", "v1.0", "--dangerous"}
-	args = append(args, confirmArgsForTest(t, "release delete", map[string]any{"project": "g/p", "tag": "v1.0"})...)
-	rootCmd.SetArgs(args)
-	_ = rootCmd.Execute()
-	if lastExit == ExitOK {
-		t.Errorf("expected non-zero exit, got %d", lastExit)
-	}
-}
-
-func TestRelease_Update_MissingTag(t *testing.T) {
-	resetReleaseCmdFlags(t)
-	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origExit := lastExit
-	defer func() { lastExit = origExit }()
-	lastExit = 0
-	rootCmd.SetArgs([]string{"release", "update", "--project", "g/p"})
-	_ = rootCmd.Execute()
-	if lastExit != ExitBadArgs {
-		t.Errorf("exit = %d, want %d", lastExit, ExitBadArgs)
-	}
-}
-
-func TestRelease_Delete_MissingTag(t *testing.T) {
-	resetReleaseCmdFlags(t)
-	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origExit := lastExit
-	defer func() { lastExit = origExit }()
-	lastExit = 0
-	rootCmd.SetArgs([]string{"release", "delete", "--project", "g/p"})
-	_ = rootCmd.Execute()
-	if lastExit != ExitBadArgs {
-		t.Errorf("exit = %d, want %d", lastExit, ExitBadArgs)
-	}
-}
-
-func TestRelease_Delete_ConfirmRejected(t *testing.T) {
-	withNonInteractiveStdin(t)
-	resetReleaseCmdFlags(t)
-	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origExit := lastExit
-	defer func() { lastExit = origExit }()
-	lastExit = 0
-	rootCmd.SetArgs([]string{"release", "delete", "--project", "g/p", "--tag", "v1.0", "--dangerous", "--confirm", "wrong"})
-	_ = rootCmd.Execute()
-	if lastExit != ExitConflict {
-		t.Errorf("exit = %d, want %d", lastExit, ExitConflict)
+	if t2 := e.run("repo", "commit", "get", "v0.9", "--project", "acme/web"); t2.exit != 0 || t2.data()["sha"] != repoSeedSHA(1) {
+		t.Fatalf("the tag stays: %s", t2.out)
 	}
 }

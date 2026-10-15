@@ -1,998 +1,306 @@
 package cmd
 
 import (
-	"bytes"
-	"fmt"
-	"net/http"
-	"net/http/httptest"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
 
-func TestVariable_Help_ListsSubcommands(t *testing.T) {
-	buf := new(bytes.Buffer)
-	rootCmd.SetOut(buf)
-	rootCmd.SetArgs([]string{"variable", "--help"})
-	_ = rootCmd.Execute()
-	rootCmd.SetOut(nil)
+// ---------------------------------------------------------------- behaviour matrix
 
-	out := buf.String()
-	for _, want := range []string{"list", "get", "create", "update", "delete"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("variable --help missing subcommand %q\noutput:\n%s", want, out)
-		}
+func TestVariableMatrix(t *testing.T) {
+	valueFile := filepath.Join(t.TempDir(), "value.txt")
+	if err := os.WriteFile(valueFile, []byte("from-a-file"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cases := []matrixCase{
+		{Path: "variable list", Args: []string{"--project", "acme/web"}, EmptyArgs: []string{"--project", "acme/empty"},
+			Invalid: []invalidCase{
+				{[]string{}, "E_USAGE", "missing_parameter", "--project"},
+				{[]string{"--project", "acme/web", "--offset", "3"}, "E_USAGE", "invalid_value", "--offset"},
+			}},
+		{Path: "variable get", Args: []string{"DEPLOY_ENV", "--project", "acme/web"},
+			Invalid: []invalidCase{
+				{[]string{"--project", "acme/web"}, "E_USAGE", "missing_parameter", "--key"},
+				{[]string{"DEPLOY-ENV", "--project", "acme/web"}, "E_VALIDATION", "invalid_value", "--key"},
+				{[]string{"DATABASE_URL:production", "--project", "acme/web", "--env-scope", "staging"}, "E_USAGE", "conflicting_flags", "--env-scope"},
+				{[]string{"DEPLOY_ENV", "--project", "acme/web", "--env-scope", "../prod"}, "E_VALIDATION", "invalid_value", "--env-scope"},
+				{[]string{"DEPLOY_ENV", "--project", "acme/web", "--env-scope", "*", "--filter", "env_scope=*"}, "E_USAGE", "conflicting_flags", "--filter"},
+			}},
+		{Path: "variable create", Args: []string{"--project", "acme/web", "--key", "NEW_KEY", "--value", "new-value-123", "--description", "New"},
+			Role: "maintainer", RefusedStatus: 400, PreviewReads: 2, // the variable, then the project
+			RequestFields: map[string]string{"key": "key", "environment_scope": "environment_scope", "variable_type": "variable_type",
+				"protected": "protected", "masked": "masked", "raw": "raw", "description": "description"},
+			Invalid: []invalidCase{
+				{[]string{"--project", "acme/web", "--key", "A"}, "E_USAGE", "missing_parameter", "--value"},
+				{[]string{"--project", "acme/web", "--key", "bad key", "--value", "x"}, "E_VALIDATION", "invalid_value", "--key"},
+				{[]string{"--project", "acme/web", "--key", "A", "--value", "short", "--masked"}, "E_VALIDATION", "invalid_value", "--value"},
+				{[]string{"--project", "acme/web", "--key", "A", "--value", "has space in it", "--masked"}, "E_VALIDATION", "invalid_value", "--value"},
+				{[]string{"--project", "acme/web", "--key", "A", "--value", "x", "--type", "yaml"}, "E_USAGE", "invalid_value", "--type"},
+				{[]string{"--project", "acme/web", "--key", "A", "--value", "x", "--value-file", valueFile}, "E_USAGE", "conflicting_flags", "--value-file"},
+				{[]string{"--project", "acme/web", "--key", "A", "--value", "x", "--env-scope", ""}, "E_VALIDATION", "invalid_value", "--env-scope"},
+			}},
+		// Without --env-scope the confirm reads the variable once to name the target,
+		// then once more in its Preview.
+		{Path: "variable update", Args: []string{"DEPLOY_ENV", "--project", "acme/web", "--value", "staging-1", "--description", "Where main deploys now"},
+			Role: "maintainer", PreviewReads: 2, RefusedStatus: 400,
+			RequestFields: map[string]string{"description": "description", "protected": "protected", "masked": "masked", "raw": "raw",
+				"variable_type": "variable_type"},
+			Invalid: []invalidCase{
+				{[]string{"DEPLOY_ENV", "--project", "acme/web"}, "E_USAGE", "missing_parameter", "--value"},
+				{[]string{"DEPLOY_ENV", "--project", "acme/web", "--protected", "yes"}, "E_USAGE", "invalid_value", "--protected"},
+				{[]string{"--project", "acme/web", "--value", "x"}, "E_USAGE", "missing_parameter", "--key"},
+			}},
+		{Path: "variable delete", Args: []string{"OLD_TOKEN", "--project", "acme/web"}, Role: "maintainer", PreviewReads: 2,
+			Invalid: []invalidCase{
+				{[]string{"--project", "acme/web", "--dangerous"}, "E_USAGE", "missing_parameter", "--key"},
+				{[]string{"acme/web/-/variables/", "--dangerous"}, "E_VALIDATION", "invalid_value", "--key"},
+			}},
+	}
+	for _, c := range cases {
+		t.Run(c.Path, func(t *testing.T) { runMatrix(t, c) })
 	}
 }
 
-func TestVariable_List_MissingProject(t *testing.T) {
-	resetVariableFlags(t)
-	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
-	t.Setenv("GITLAB_CLI_TOKEN", "test-token")
+// ---------------------------------------------------------------- focused tests
 
-	origExit := lastExit
-	defer func() { lastExit = origExit }()
-	lastExit = 0
-
-	rootCmd.SetArgs([]string{"variable", "list"})
-	_ = rootCmd.Execute()
-
-	if lastExit != ExitBadArgs {
-		t.Errorf("exit code = %d, want %d (ExitBadArgs)", lastExit, ExitBadArgs)
-	}
-}
-
-func TestVariable_Get_MissingKey(t *testing.T) {
-	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
-	t.Setenv("GITLAB_CLI_TOKEN", "test-token")
-
-	origExit := lastExit
-	defer func() { lastExit = origExit }()
-	lastExit = 0
-
-	rootCmd.SetArgs([]string{"variable", "get", "--project", "group/proj"})
-	_ = rootCmd.Execute()
-
-	if lastExit != ExitBadArgs {
-		t.Errorf("exit code = %d, want %d (ExitBadArgs)", lastExit, ExitBadArgs)
-	}
-}
-
-func TestVariable_List_JSON(t *testing.T) {
-	resetVariableFlags(t)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `[{"key":"FOO","value":"secret","variable_type":"env_var","protected":false,"masked":false,"environment_scope":"*"}]`)
-	}))
-	defer srv.Close()
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-
-	origJM := jsonMode
-	defer func() { jsonMode = origJM }()
-
-	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"variable", "list", "--project", "foo/bar", "--json"})
-		_ = rootCmd.Execute()
-	})
-	if !strings.Contains(out, `"key": "FOO"`) {
-		t.Errorf("expected key in output, got: %s", out)
-	}
-	if strings.Contains(out, `"value"`) {
-		t.Errorf("value should be redacted by default, got: %s", out)
-	}
-}
-
-func TestVariable_List_ShowValues(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `[{"key":"FOO","value":"secret","variable_type":"env_var","protected":false,"masked":false,"environment_scope":"*"}]`)
-	}))
-	defer srv.Close()
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-
-	origJM := jsonMode
-	defer func() {
-		jsonMode = origJM
-		_ = variableCmd.PersistentFlags().Set("show-values", "false")
-	}()
-
-	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"variable", "list", "--project", "foo/bar", "--json", "--show-values"})
-		_ = rootCmd.Execute()
-	})
-	if !strings.Contains(out, `"value"`) {
-		t.Errorf("expected value field with --show-values, got: %s", out)
-	}
-}
-
-func TestVariable_Get_JSON(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"key":"FOO","value":"secret","variable_type":"env_var","protected":false,"masked":false,"environment_scope":"*"}`)
-	}))
-	defer srv.Close()
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-
-	origJM := jsonMode
-	defer func() { jsonMode = origJM }()
-
-	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"variable", "get", "--project", "foo/bar", "--key", "FOO", "--json"})
-		_ = rootCmd.Execute()
-	})
-	if !strings.Contains(out, `"key": "FOO"`) {
-		t.Errorf("expected key in output, got: %s", out)
-	}
-	if strings.Contains(out, `"value"`) {
-		t.Errorf("value should be redacted by default, got: %s", out)
-	}
-}
-
-func TestVariable_Create_DryRun_JSON(t *testing.T) {
-	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
-	t.Setenv("GITLAB_CLI_TOKEN", "test-token")
-
-	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{
-			"variable", "create",
-			"--dry-run", "--dangerous", "--json",
-			"--project", "group/proj",
-			"--key", "MY_SECRET",
-			"--value", "supersecret",
-		})
-		_ = rootCmd.Execute()
-	})
-
-	for _, want := range []string{`"confirm_token"`, `"action"`, `"key": "MY_SECRET"`} {
-		if !strings.Contains(out, want) {
-			t.Errorf("dry-run JSON missing %q\noutput:\n%s", want, out)
-		}
-	}
-	if strings.Contains(out, "supersecret") {
-		t.Errorf("secret value should not appear in dry-run output:\n%s", out)
-	}
-}
-
-func TestVariable_Update_DryRun_JSON(t *testing.T) {
-	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
-	t.Setenv("GITLAB_CLI_TOKEN", "test-token")
-
-	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{
-			"variable", "update",
-			"--dry-run", "--dangerous", "--json",
-			"--project", "group/proj",
-			"--key", "MY_SECRET",
-			"--value", "newval",
-		})
-		_ = rootCmd.Execute()
-	})
-
-	for _, want := range []string{`"confirm_token"`, `"key": "MY_SECRET"`} {
-		if !strings.Contains(out, want) {
-			t.Errorf("dry-run JSON missing %q\noutput:\n%s", want, out)
-		}
-	}
-}
-
-func TestVariable_Delete_DryRun_JSON(t *testing.T) {
-	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
-	t.Setenv("GITLAB_CLI_TOKEN", "test-token")
-
-	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{
-			"variable", "delete",
-			"--dry-run", "--dangerous", "--json",
-			"--project", "group/proj",
-			"--key", "MY_SECRET",
-		})
-		_ = rootCmd.Execute()
-	})
-
-	for _, want := range []string{`"confirm_token"`, `"key": "MY_SECRET"`} {
-		if !strings.Contains(out, want) {
-			t.Errorf("dry-run JSON missing %q\noutput:\n%s", want, out)
-		}
-	}
-}
-
-func TestVariable_Create_JSON(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/variables") {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusCreated)
-			fmt.Fprint(w, `{"key":"FOO","value":"secret","variable_type":"env_var","protected":false,"masked":false,"environment_scope":"*"}`)
-			return
-		}
-		http.NotFound(w, r)
-	}))
-	defer srv.Close()
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origDR := dryRun
-	origJM := jsonMode
-	defer func() { dryRun = origDR; jsonMode = origJM }()
-	dryRun = false
-	out := captureStdout(t, func() {
-		args := []string{"variable", "create", "--project", "foo/bar", "--key", "FOO", "--value", "secret", "--json", "--dangerous"}
-		args = append(args, confirmArgsForTest(t, "create variable", map[string]any{"project": "foo/bar", "key": "FOO", "type": "env_var", "envScope": "*"})...)
-		rootCmd.SetArgs(args)
-		_ = rootCmd.Execute()
-	})
-	if !strings.Contains(out, `"key": "FOO"`) {
-		t.Errorf("expected key in output, got: %s", out)
-	}
-	if strings.Contains(out, `"value"`) {
-		t.Errorf("value should be redacted by default, got: %s", out)
-	}
-}
-
-func TestVariable_Update_JSON(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"key":"FOO","value":"newval","variable_type":"env_var","protected":false,"masked":false,"environment_scope":"*"}`)
-	}))
-	defer srv.Close()
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origDR := dryRun
-	origJM := jsonMode
-	defer func() { dryRun = origDR; jsonMode = origJM }()
-	dryRun = false
-	out := captureStdout(t, func() {
-		args := []string{"variable", "update", "--project", "foo/bar", "--key", "FOO", "--value", "newval", "--json", "--dangerous"}
-		args = append(args, confirmArgsForTest(t, "update variable", map[string]any{"project": "foo/bar", "key": "FOO", "envScope": ""})...)
-		rootCmd.SetArgs(args)
-		_ = rootCmd.Execute()
-	})
-	if !strings.Contains(out, `"key": "FOO"`) {
-		t.Errorf("expected key in output, got: %s", out)
-	}
-}
-
-func TestVariable_Delete_JSON(t *testing.T) {
-	resetVariableFlags(t)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodDelete {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		http.NotFound(w, r)
-	}))
-	defer srv.Close()
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origDR := dryRun
-	origJM := jsonMode
-	origExit := lastExit
-	defer func() { dryRun = origDR; jsonMode = origJM; lastExit = origExit }()
-	dryRun = false
-	lastExit = 0
-	captureStdout(t, func() {
-		args := []string{"variable", "delete", "--project", "foo/bar", "--key", "FOO", "--json", "--dangerous"}
-		args = append(args, confirmArgsForTest(t, "delete variable", map[string]any{"project": "foo/bar", "key": "FOO", "envScope": ""})...)
-		rootCmd.SetArgs(args)
-		_ = rootCmd.Execute()
-	})
-	if lastExit != ExitOK {
-		t.Errorf("expected exit 0, got %d", lastExit)
-	}
-}
-
-func TestParseEnvScopeFilter(t *testing.T) {
-	cases := []struct {
-		input string
-		want  string
+// TestVariableFormsAreOneTarget: KEY, KEY:scope, --env-scope, the ref and 1.x's
+// --filter read the same variable, and the ref and KEY --env-scope bind as one
+// request (CLI-048, CLI-054).
+func TestVariableFormsAreOneTarget(t *testing.T) {
+	e := newTestEnv(t)
+	for _, c := range []struct {
+		args []string
+		ref  string
 	}{
-		{"env_scope=production", "production"},
-		{"production", "production"},
-		{"", ""},
-	}
-	for _, tc := range cases {
-		cmd := variableGetCmd
-		_ = cmd.Flags().Set("filter", tc.input)
-		got := parseEnvScopeFilter(cmd)
-		if got != tc.want {
-			t.Errorf("parseEnvScopeFilter(%q) = %q, want %q", tc.input, got, tc.want)
+		{[]string{"variable", "get", "DEPLOY_ENV", "--project", "acme/web"}, "acme/web/-/variables/DEPLOY_ENV"},
+		{[]string{"variable", "get", "acme/web/-/variables/DEPLOY_ENV"}, "acme/web/-/variables/DEPLOY_ENV"},
+		{[]string{"variables", "show", "DEPLOY_ENV", "-p", "acme/web", "--env-scope", "*"}, "acme/web/-/variables/DEPLOY_ENV"},
+		{[]string{"var", "view", "--key", "DATABASE_URL:production", "--repo", "acme/web"}, "acme/web/-/variables/DATABASE_URL:production"},
+		{[]string{"variable", "get", "DATABASE_URL", "--project", "acme/web", "--env-scope", "staging"}, "acme/web/-/variables/DATABASE_URL:staging"},
+		{[]string{"variable", "get", "acme/web/-/variables/DATABASE_URL:production"}, "acme/web/-/variables/DATABASE_URL:production"},
+	} {
+		r := e.run(c.args...)
+		if r.exit != 0 || r.data()["ref"] != c.ref {
+			t.Fatalf("%v: %s", c.args, r.out)
 		}
-		_ = cmd.Flags().Set("filter", "")
+	}
+	r := e.run("variable", "get", "DATABASE_URL", "--project", "acme/web", "--filter", "env_scope=production")
+	if r.data()["ref"] != "acme/web/-/variables/DATABASE_URL:production" || !hasString(ciNotices(r), "deprecated") {
+		t.Fatalf("1.x's --filter: %s", r.out)
+	}
+	tok := e.dryRun("variable", "update", "acme/web/-/variables/DATABASE_URL:staging", "--description", "Staging DB", "--dangerous")
+	r = e.confirm(tok, "variable", "update", "DATABASE_URL", "--project", "acme/web", "--env-scope", "staging", "--description", "Staging DB",
+		"--dangerous")
+	if r.exit != 0 || r.data()["result"].(map[string]any)["description"] != "Staging DB" {
+		t.Fatalf("the ref and KEY --env-scope must bind alike: %s", r.out)
 	}
 }
 
-func TestVariable_List_PlainText(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `[{"key":"FOO","value":"secret","variable_type":"env_var","protected":false,"masked":false,"environment_scope":"*"}]`)
-	}))
-	defer srv.Close()
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origJM := jsonMode
-	defer func() { jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
-	setTextFormatForTest(t)
-	_ = rootCmd.PersistentFlags().Set("json", "false")
-	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"variable", "list", "--project", "foo/bar"})
-		_ = rootCmd.Execute()
-	})
-	if !strings.Contains(out, "FOO") {
-		t.Errorf("expected key name in plain text output:\n%s", out)
-	}
-}
-
-func TestVariable_Create_PlainText(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusCreated)
-		fmt.Fprint(w, `{"key":"FOO","value":"secret","variable_type":"env_var","protected":false,"masked":false,"environment_scope":"*"}`)
-	}))
-	defer srv.Close()
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origDR := dryRun
-	origJM := jsonMode
-	defer func() { dryRun = origDR; jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
-	dryRun = false
-	setTextFormatForTest(t)
-	_ = rootCmd.PersistentFlags().Set("json", "false")
-	out := captureStdout(t, func() {
-		args := []string{"variable", "create", "--project", "foo/bar", "--key", "FOO", "--value", "secret", "--dangerous"}
-		args = append(args, confirmArgsForTest(t, "create variable", map[string]any{"project": "foo/bar", "key": "FOO", "type": "env_var", "envScope": "*"})...)
-		rootCmd.SetArgs(args)
-		_ = rootCmd.Execute()
-	})
-	if !strings.Contains(out, "FOO") {
-		t.Errorf("expected key name in plain text output:\n%s", out)
-	}
-}
-
-func TestVariable_Get_PlainText(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"key":"FOO","value":"secret","variable_type":"env_var","protected":false,"masked":false,"environment_scope":"*"}`)
-	}))
-	defer srv.Close()
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origJM := jsonMode
-	defer func() { jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
-	setTextFormatForTest(t)
-	_ = rootCmd.PersistentFlags().Set("json", "false")
-	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"variable", "get", "--project", "foo/bar", "--key", "FOO"})
-		_ = rootCmd.Execute()
-	})
-	if !strings.Contains(out, "FOO") {
-		t.Errorf("expected key in plain text output:\n%s", out)
-	}
-}
-
-func TestVariable_Update_PlainText(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"key":"FOO","value":"newval","variable_type":"env_var","protected":false,"masked":false,"environment_scope":"*"}`)
-	}))
-	defer srv.Close()
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origDR := dryRun
-	origJM := jsonMode
-	defer func() { dryRun = origDR; jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
-	dryRun = false
-	setTextFormatForTest(t)
-	_ = rootCmd.PersistentFlags().Set("json", "false")
-	out := captureStdout(t, func() {
-		args := []string{"variable", "update", "--project", "foo/bar", "--key", "FOO", "--value", "newval", "--dangerous"}
-		args = append(args, confirmArgsForTest(t, "update variable", map[string]any{"project": "foo/bar", "key": "FOO", "envScope": ""})...)
-		rootCmd.SetArgs(args)
-		_ = rootCmd.Execute()
-	})
-	if !strings.Contains(out, "FOO") {
-		t.Errorf("expected key in plain text output:\n%s", out)
-	}
-}
-
-func TestVariable_List_Empty(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `[]`)
-	}))
-	defer srv.Close()
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origJM := jsonMode
-	defer func() { jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
-	setTextFormatForTest(t)
-	_ = rootCmd.PersistentFlags().Set("json", "false")
-	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"variable", "list", "--project", "foo/bar"})
-		_ = rootCmd.Execute()
-	})
-	if !strings.Contains(out, "No variables") {
-		t.Errorf("expected 'No variables' in output, got: %s", out)
-	}
-}
-
-func TestVariable_List_APIError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusUnauthorized)
-		_, _ = w.Write([]byte(`{"message":"401 Unauthorized"}`))
-	}))
-	defer srv.Close()
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "bad-token")
-	origExit := lastExit
-	origJM := jsonMode
-	defer func() { lastExit = origExit; jsonMode = origJM }()
-	lastExit = 0
-	setTextFormatForTest(t)
-	_ = rootCmd.PersistentFlags().Set("json", "false")
-	rootCmd.SetArgs([]string{"variable", "list", "--project", "foo/bar"})
-	_ = rootCmd.Execute()
-	if lastExit == ExitOK {
-		t.Errorf("expected non-zero exit for API error, got %d", lastExit)
-	}
-}
-
-func TestVariable_List_MissingAuth(t *testing.T) {
-	resetVariableFlags(t)
-	isolateConfigHome(t)
-	t.Setenv("GITLAB_CLI_HOST", "")
-	t.Setenv("GITLAB_CLI_TOKEN", "")
-	origExit := lastExit
-	defer func() { lastExit = origExit }()
-	lastExit = 0
-	rootCmd.SetArgs([]string{"variable", "list", "--project", "foo/bar"})
-	_ = rootCmd.Execute()
-	if lastExit != ExitAuth {
-		t.Errorf("exit code = %d, want %d", lastExit, ExitAuth)
-	}
-}
-
-func TestVariable_List_InvalidLimit(t *testing.T) {
-	resetVariableFlags(t)
-	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origExit := lastExit
-	defer func() { lastExit = origExit; _ = variableListCmd.Flags().Set("limit", "20") }()
-	lastExit = 0
-	_ = variableListCmd.Flags().Set("limit", "0")
-	rootCmd.SetArgs([]string{"variable", "list", "--project", "foo/bar"})
-	_ = rootCmd.Execute()
-	if lastExit != ExitBadArgs {
-		t.Errorf("exit code = %d, want %d", lastExit, ExitBadArgs)
-	}
-}
-
-func TestVariable_List_ShowValuesBlocked(t *testing.T) {
-	withAgentSafe(t)
-	resetVariableFlags(t)
-	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origExit := lastExit
-	defer func() {
-		lastExit = origExit
-		_ = variableCmd.PersistentFlags().Set("show-values", "false")
-	}()
-	lastExit = 0
-	rootCmd.SetArgs([]string{"variable", "list", "--project", "foo/bar", "--show-values"})
-	_ = rootCmd.Execute()
-	if lastExit != ExitBadArgs {
-		t.Errorf("exit code = %d, want %d", lastExit, ExitBadArgs)
-	}
-}
-
-func TestVariable_Get_ShowValuesBlocked(t *testing.T) {
-	withAgentSafe(t)
-	resetVariableFlags(t)
-	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origExit := lastExit
-	defer func() {
-		lastExit = origExit
-		_ = variableCmd.PersistentFlags().Set("show-values", "false")
-	}()
-	lastExit = 0
-	rootCmd.SetArgs([]string{"variable", "get", "--project", "foo/bar", "--key", "FOO", "--show-values"})
-	_ = rootCmd.Execute()
-	if lastExit != ExitBadArgs {
-		t.Errorf("exit code = %d, want %d", lastExit, ExitBadArgs)
-	}
-}
-
-func TestVariable_Get_MissingProject(t *testing.T) {
-	resetVariableFlags(t)
-	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origExit := lastExit
-	defer func() { lastExit = origExit; _ = variableGetCmd.Flags().Set("project", "") }()
-	lastExit = 0
-	_ = variableGetCmd.Flags().Set("project", "")
-	rootCmd.SetArgs([]string{"variable", "get", "--key", "FOO"})
-	_ = rootCmd.Execute()
-	if lastExit != ExitBadArgs {
-		t.Errorf("exit code = %d, want %d", lastExit, ExitBadArgs)
-	}
-}
-
-func TestVariable_Get_MissingAuth(t *testing.T) {
-	resetVariableFlags(t)
-	isolateConfigHome(t)
-	t.Setenv("GITLAB_CLI_HOST", "")
-	t.Setenv("GITLAB_CLI_TOKEN", "")
-	origExit := lastExit
-	defer func() { lastExit = origExit }()
-	lastExit = 0
-	rootCmd.SetArgs([]string{"variable", "get", "--project", "foo/bar", "--key", "FOO"})
-	_ = rootCmd.Execute()
-	if lastExit != ExitAuth {
-		t.Errorf("exit code = %d, want %d", lastExit, ExitAuth)
-	}
-}
-
-func TestVariable_Get_ShowValues_JSON(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"key":"FOO","value":"secret","variable_type":"env_var","protected":false,"masked":false,"environment_scope":"*"}`)
-	}))
-	defer srv.Close()
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"variable", "get", "--project", "foo/bar", "--key", "FOO", "--json", "--show-values"})
-		_ = rootCmd.Execute()
-	})
-	if !strings.Contains(out, `"value"`) {
-		t.Errorf("expected value with --show-values, got: %s", out)
-	}
-	_ = variableCmd.PersistentFlags().Set("show-values", "false")
-}
-
-func TestVariable_Get_APIError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-		_, _ = w.Write([]byte(`{"message":"404"}`))
-	}))
-	defer srv.Close()
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origExit := lastExit
-	defer func() { lastExit = origExit }()
-	lastExit = 0
-	rootCmd.SetArgs([]string{"variable", "get", "--project", "foo/bar", "--key", "FOO"})
-	_ = rootCmd.Execute()
-	if lastExit == ExitOK {
-		t.Errorf("expected non-zero exit for API error, got %d", lastExit)
-	}
-}
-
-func TestVariable_Create_MissingProject(t *testing.T) {
-	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origExit := lastExit
-	origDR := dryRun
-	defer func() { lastExit = origExit; dryRun = origDR; _ = variableCreateCmd.Flags().Set("project", "") }()
-	lastExit = 0
-	dryRun = false
-	_ = variableCreateCmd.Flags().Set("project", "")
-	rootCmd.SetArgs([]string{"variable", "create", "--key", "FOO", "--value", "secret"})
-	_ = rootCmd.Execute()
-	if lastExit != ExitBadArgs {
-		t.Errorf("exit code = %d, want %d", lastExit, ExitBadArgs)
-	}
-}
-
-func TestVariable_Create_MissingKey(t *testing.T) {
-	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origExit := lastExit
-	origDR := dryRun
-	defer func() { lastExit = origExit; dryRun = origDR; _ = variableCreateCmd.Flags().Set("key", "") }()
-	lastExit = 0
-	dryRun = false
-	_ = variableCreateCmd.Flags().Set("key", "")
-	rootCmd.SetArgs([]string{"variable", "create", "--project", "foo/bar", "--value", "secret"})
-	_ = rootCmd.Execute()
-	if lastExit != ExitBadArgs {
-		t.Errorf("exit code = %d, want %d", lastExit, ExitBadArgs)
-	}
-}
-
-func TestVariable_Create_MissingValue(t *testing.T) {
-	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origExit := lastExit
-	origDR := dryRun
-	defer func() { lastExit = origExit; dryRun = origDR; _ = variableCreateCmd.Flags().Set("value", "") }()
-	lastExit = 0
-	dryRun = false
-	_ = variableCreateCmd.Flags().Set("value", "")
-	rootCmd.SetArgs([]string{"variable", "create", "--project", "foo/bar", "--key", "FOO"})
-	_ = rootCmd.Execute()
-	if lastExit != ExitBadArgs {
-		t.Errorf("exit code = %d, want %d", lastExit, ExitBadArgs)
-	}
-}
-
-func TestVariable_Create_MissingAuth(t *testing.T) {
-	isolateConfigHome(t)
-	t.Setenv("GITLAB_CLI_HOST", "")
-	t.Setenv("GITLAB_CLI_TOKEN", "")
-	origExit := lastExit
-	origDR := dryRun
-	defer func() { lastExit = origExit; dryRun = origDR }()
-	lastExit = 0
-	dryRun = false
-	args := []string{"variable", "create", "--project", "foo/bar", "--key", "FOO", "--value", "secret", "--dangerous"}
-	args = append(args, confirmArgsForTest(t, "create variable", map[string]any{"project": "foo/bar", "key": "FOO", "type": "env_var", "envScope": "*"})...)
-	rootCmd.SetArgs(args)
-	_ = rootCmd.Execute()
-	if lastExit != ExitAuth {
-		t.Errorf("exit code = %d, want %d", lastExit, ExitAuth)
-	}
-}
-
-func TestVariable_Create_ShowValues_JSON(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusCreated)
-		fmt.Fprint(w, `{"key":"FOO","value":"secret","variable_type":"env_var","protected":false,"masked":false,"environment_scope":"*"}`)
-	}))
-	defer srv.Close()
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origDR := dryRun
-	defer func() { dryRun = origDR; _ = variableCmd.PersistentFlags().Set("show-values", "false") }()
-	dryRun = false
-	out := captureStdout(t, func() {
-		args := []string{"variable", "create", "--project", "foo/bar", "--key", "FOO", "--value", "secret", "--json", "--show-values", "--dangerous"}
-		args = append(args, confirmArgsForTest(t, "create variable", map[string]any{"project": "foo/bar", "key": "FOO", "type": "env_var", "envScope": "*"})...)
-		rootCmd.SetArgs(args)
-		_ = rootCmd.Execute()
-	})
-	if !strings.Contains(out, `"value"`) {
-		t.Errorf("expected value in JSON output, got: %s", out)
-	}
-}
-
-func TestVariable_Create_APIError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = w.Write([]byte(`{"message":"500"}`))
-	}))
-	defer srv.Close()
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origDR := dryRun
-	origExit := lastExit
-	defer func() { dryRun = origDR; lastExit = origExit }()
-	dryRun = false
-	lastExit = 0
-	args := []string{"variable", "create", "--project", "foo/bar", "--key", "FOO", "--value", "secret", "--dangerous"}
-	args = append(args, confirmArgsForTest(t, "create variable", map[string]any{"project": "foo/bar", "key": "FOO", "type": "env_var", "envScope": "*"})...)
-	rootCmd.SetArgs(args)
-	_ = rootCmd.Execute()
-	if lastExit == ExitOK {
-		t.Errorf("expected non-zero exit for API error, got %d", lastExit)
-	}
-}
-
-func TestVariable_Update_MissingProject(t *testing.T) {
-	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origExit := lastExit
-	origDR := dryRun
-	defer func() { lastExit = origExit; dryRun = origDR; _ = variableUpdateCmd.Flags().Set("project", "") }()
-	lastExit = 0
-	dryRun = false
-	_ = variableUpdateCmd.Flags().Set("project", "")
-	rootCmd.SetArgs([]string{"variable", "update", "--key", "FOO", "--value", "new"})
-	_ = rootCmd.Execute()
-	if lastExit != ExitBadArgs {
-		t.Errorf("exit code = %d, want %d", lastExit, ExitBadArgs)
-	}
-}
-
-func TestVariable_Update_MissingKey(t *testing.T) {
-	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origExit := lastExit
-	origDR := dryRun
-	defer func() { lastExit = origExit; dryRun = origDR; _ = variableUpdateCmd.Flags().Set("key", "") }()
-	lastExit = 0
-	dryRun = false
-	_ = variableUpdateCmd.Flags().Set("key", "")
-	rootCmd.SetArgs([]string{"variable", "update", "--project", "foo/bar", "--value", "new"})
-	_ = rootCmd.Execute()
-	if lastExit != ExitBadArgs {
-		t.Errorf("exit code = %d, want %d", lastExit, ExitBadArgs)
-	}
-}
-
-func TestVariable_Update_AllFlags(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"key":"FOO","value":"new","variable_type":"file","protected":true,"masked":true,"raw":true,"environment_scope":"prod","description":"desc"}`)
-	}))
-	defer srv.Close()
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origDR := dryRun
-	origJM := jsonMode
-	defer func() {
-		dryRun = origDR
-		jsonMode = origJM
-		_ = rootCmd.PersistentFlags().Set("json", "false")
-	}()
-	dryRun = false
-	setTextFormatForTest(t)
-	out := captureStdout(t, func() {
-		args := []string{
-			"variable", "update",
-			"--project", "foo/bar",
-			"--key", "FOO",
-			"--value", "new",
-			"--type", "file",
-			"--protected", "true",
-			"--masked", "true",
-			"--raw", "true",
-			"--env-scope", "prod",
-			"--description", "desc",
-			"--dangerous",
+// TestVariableAmbiguousKey: a key in several scopes is E_AMBIGUOUS with each
+// scope's ref, for reads and writes alike, and nothing is written (CLI-048).
+func TestVariableAmbiguousKey(t *testing.T) {
+	e := newTestEnv(t)
+	for _, args := range [][]string{
+		{"variable", "get", "DATABASE_URL", "--project", "acme/web"},
+		{"variable", "delete", "DATABASE_URL", "--project", "acme/web", "--dangerous", "--dry-run"},
+		{"variable", "update", "DATABASE_URL", "--project", "acme/web", "--protected", "false", "--dangerous", "--dry-run"},
+	} {
+		r := e.run(args...)
+		cands, _ := r.details()["candidates"].([]any)
+		if r.code() != "E_AMBIGUOUS" || len(cands) != 2 || cands[0].(map[string]any)["ref"] != "acme/web/-/variables/DATABASE_URL:production" ||
+			!hasString(ciUntrusted(r), "error.details.candidates[].label") {
+			t.Fatalf("%v: %s", args, r.out)
 		}
-		args = append(args, confirmArgsForTest(t, "update variable", map[string]any{"project": "foo/bar", "key": "FOO", "envScope": "prod"})...)
-		rootCmd.SetArgs(args)
-		_ = rootCmd.Execute()
-	})
-	if !strings.Contains(out, "FOO") {
-		t.Errorf("expected key in output, got: %s", out)
+	}
+	if e.gl.Writes() != 0 {
+		t.Fatal("an ambiguous key sent a write")
 	}
 }
 
-func TestVariable_Update_MissingAuth(t *testing.T) {
-	resetVariableFlags(t)
-	isolateConfigHome(t)
-	t.Setenv("GITLAB_CLI_HOST", "")
-	t.Setenv("GITLAB_CLI_TOKEN", "")
-	origExit := lastExit
-	origDR := dryRun
-	defer func() { lastExit = origExit; dryRun = origDR }()
-	lastExit = 0
-	dryRun = false
-	args := []string{"variable", "update", "--project", "foo/bar", "--key", "FOO", "--value", "new", "--dangerous"}
-	args = append(args, confirmArgsForTest(t, "update variable", map[string]any{"project": "foo/bar", "key": "FOO", "envScope": ""})...)
-	rootCmd.SetArgs(args)
-	_ = rootCmd.Execute()
-	if lastExit != ExitAuth {
-		t.Errorf("exit code = %d, want %d", lastExit, ExitAuth)
-	}
-}
-
-func TestVariable_Update_ShowValues_JSON(t *testing.T) {
-	resetVariableFlags(t)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"key":"FOO","value":"newval","variable_type":"env_var","protected":false,"masked":false,"environment_scope":"*"}`)
-	}))
-	defer srv.Close()
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origDR := dryRun
-	defer func() { dryRun = origDR; _ = variableCmd.PersistentFlags().Set("show-values", "false") }()
-	dryRun = false
-	out := captureStdout(t, func() {
-		args := []string{"variable", "update", "--project", "foo/bar", "--key", "FOO", "--value", "newval", "--json", "--show-values", "--dangerous"}
-		args = append(args, confirmArgsForTest(t, "update variable", map[string]any{"project": "foo/bar", "key": "FOO", "envScope": ""})...)
-		rootCmd.SetArgs(args)
-		_ = rootCmd.Execute()
-	})
-	if !strings.Contains(out, `"value"`) {
-		t.Errorf("expected value in JSON output, got: %s", out)
-	}
-}
-
-func TestVariable_Update_APIError(t *testing.T) {
-	resetVariableFlags(t)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = w.Write([]byte(`{"message":"500"}`))
-	}))
-	defer srv.Close()
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origDR := dryRun
-	origExit := lastExit
-	defer func() { dryRun = origDR; lastExit = origExit }()
-	dryRun = false
-	lastExit = 0
-	args := []string{"variable", "update", "--project", "foo/bar", "--key", "FOO", "--value", "new", "--dangerous"}
-	args = append(args, confirmArgsForTest(t, "update variable", map[string]any{"project": "foo/bar", "key": "FOO", "envScope": ""})...)
-	rootCmd.SetArgs(args)
-	_ = rootCmd.Execute()
-	if lastExit == ExitOK {
-		t.Errorf("expected non-zero exit for API error, got %d", lastExit)
-	}
-}
-
-func TestVariable_Delete_MissingProject(t *testing.T) {
-	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origExit := lastExit
-	origDR := dryRun
-	defer func() { lastExit = origExit; dryRun = origDR; _ = variableDeleteCmd.Flags().Set("project", "") }()
-	lastExit = 0
-	dryRun = false
-	_ = variableDeleteCmd.Flags().Set("project", "")
-	rootCmd.SetArgs([]string{"variable", "delete", "--key", "FOO"})
-	_ = rootCmd.Execute()
-	if lastExit != ExitBadArgs {
-		t.Errorf("exit code = %d, want %d", lastExit, ExitBadArgs)
-	}
-}
-
-func TestVariable_Delete_MissingKey(t *testing.T) {
-	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origExit := lastExit
-	origDR := dryRun
-	defer func() { lastExit = origExit; dryRun = origDR; _ = variableDeleteCmd.Flags().Set("key", "") }()
-	lastExit = 0
-	dryRun = false
-	_ = variableDeleteCmd.Flags().Set("key", "")
-	rootCmd.SetArgs([]string{"variable", "delete", "--project", "foo/bar"})
-	_ = rootCmd.Execute()
-	if lastExit != ExitBadArgs {
-		t.Errorf("exit code = %d, want %d", lastExit, ExitBadArgs)
-	}
-}
-
-func TestVariable_Delete_MissingAuth(t *testing.T) {
-	resetVariableFlags(t)
-	isolateConfigHome(t)
-	t.Setenv("GITLAB_CLI_HOST", "")
-	t.Setenv("GITLAB_CLI_TOKEN", "")
-	origExit := lastExit
-	origDR := dryRun
-	defer func() { lastExit = origExit; dryRun = origDR }()
-	lastExit = 0
-	dryRun = false
-	args := []string{"variable", "delete", "--project", "foo/bar", "--key", "FOO", "--dangerous"}
-	args = append(args, confirmArgsForTest(t, "delete variable", map[string]any{"project": "foo/bar", "key": "FOO", "envScope": ""})...)
-	rootCmd.SetArgs(args)
-	_ = rootCmd.Execute()
-	if lastExit != ExitAuth {
-		t.Errorf("exit code = %d, want %d", lastExit, ExitAuth)
-	}
-}
-
-func TestVariable_Delete_ConfirmCancelled(t *testing.T) {
-	t.Setenv("GITLAB_CLI_AGENT_SAFE", "0")
-	withNonInteractiveStdin(t)
-	resetRootPersistentFlags(t)
-	resetVariableFlags(t)
-	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origExit := lastExit
-	origDR := dryRun
-	defer func() { lastExit = origExit; dryRun = origDR; resetRootPersistentFlags(t) }()
-	lastExit = 0
-	dryRun = false
-	rootCmd.SetArgs([]string{"variable", "delete", "--project", "foo/bar", "--key", "FOO"})
-	_ = rootCmd.Execute()
-	if lastExit != ExitCancelled {
-		t.Errorf("exit code = %d, want %d", lastExit, ExitCancelled)
-	}
-}
-
-func TestVariable_Delete_WithFilter(t *testing.T) {
-	resetVariableFlags(t)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodDelete {
-			w.WriteHeader(http.StatusNoContent)
-			return
+// TestVariableValuesNeverAppear: no read returns a value, and a written value
+// reaches GitLab but appears in no output and no state file (SEC-021); the receipt
+// shows that it was read back, as ***.
+func TestVariableValuesNeverAppear(t *testing.T) {
+	e := newTestEnv(t)
+	var outs []string
+	for _, args := range [][]string{
+		{"variable", "list", "--project", "acme/web", "--fields", "all"},
+		{"variable", "get", "DATABASE_URL:production", "--project", "acme/web"},
+		{"variable", "get", "API_KEY", "--project", "acme/web"},
+	} {
+		r := e.run(args...)
+		if r.exit != 0 || strings.Contains(r.out, `"value"`) {
+			t.Fatalf("%v shows a value: %s", args, r.out)
 		}
-		http.NotFound(w, r)
-	}))
-	defer srv.Close()
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origDR := dryRun
-	origExit := lastExit
-	defer func() { dryRun = origDR; lastExit = origExit }()
-	dryRun = false
-	lastExit = 0
-	captureStdout(t, func() {
-		args := []string{"variable", "delete", "--project", "foo/bar", "--key", "FOO", "--filter", "env_scope=production", "--dangerous"}
-		args = append(args, confirmArgsForTest(t, "delete variable", map[string]any{"project": "foo/bar", "key": "FOO", "envScope": "production"})...)
-		rootCmd.SetArgs(args)
-		_ = rootCmd.Execute()
-	})
-	if lastExit != ExitOK {
-		t.Errorf("expected exit 0, got %d", lastExit)
+		outs = append(outs, r.out)
 	}
-}
-
-func TestVariable_Delete_APIError(t *testing.T) {
-	resetVariableFlags(t)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = w.Write([]byte(`{"message":"500"}`))
-	}))
-	defer srv.Close()
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origDR := dryRun
-	origExit := lastExit
-	defer func() { dryRun = origDR; lastExit = origExit }()
-	dryRun = false
-	lastExit = 0
-	args := []string{"variable", "delete", "--project", "foo/bar", "--key", "FOO", "--dangerous"}
-	args = append(args, confirmArgsForTest(t, "delete variable", map[string]any{"project": "foo/bar", "key": "FOO", "envScope": ""})...)
-	rootCmd.SetArgs(args)
-	_ = rootCmd.Execute()
-	if lastExit == ExitOK {
-		t.Errorf("expected non-zero exit for API error, got %d", lastExit)
-	}
-}
-
-func TestVariable_Delete_PlainText(t *testing.T) {
-	resetVariableFlags(t)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodDelete {
-			w.WriteHeader(http.StatusNoContent)
-			return
+	for _, seeded := range []string{"postgres://prod-db-secret-1", "hidden-api-key-secret-4", "old-token-secret-3"} {
+		for _, out := range outs {
+			if strings.Contains(out, seeded) {
+				t.Fatalf("a seeded value leaked: %s", out)
+			}
 		}
-		http.NotFound(w, r)
-	}))
-	defer srv.Close()
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origDR := dryRun
-	origJM := jsonMode
-	origExit := lastExit
-	defer func() {
-		dryRun = origDR
-		jsonMode = origJM
-		lastExit = origExit
-		_ = rootCmd.PersistentFlags().Set("json", "false")
-	}()
-	dryRun = false
-	setTextFormatForTest(t)
-	lastExit = 0
-	out := captureStdout(t, func() {
-		args := []string{"variable", "delete", "--project", "foo/bar", "--key", "FOO", "--dangerous"}
-		args = append(args, confirmArgsForTest(t, "delete variable", map[string]any{"project": "foo/bar", "key": "FOO", "envScope": ""})...)
-		rootCmd.SetArgs(args)
-		_ = rootCmd.Execute()
+	}
+	const secret = "sentinel-variable-secret-16180"
+	args := []string{"variable", "create", "--project", "acme/web", "--key", "DEPLOY_TOKEN", "--value", secret, "--masked", "--protected",
+		"--dangerous"}
+	dry := e.run(append(args, "--dry-run")...)
+	if dry.preview()["inputs"].(map[string]any)["value"] != "***" {
+		t.Fatalf("inputs show the value as ***: %s", dry.out)
+	}
+	r := e.confirm(dry.token(), args...)
+	obs := r.receipt()["observed"].(map[string]any)
+	if r.exit != 0 || obs["value"] != "***" || obs["masked"] != true || r.outcome()["verification"] != "passed" ||
+		r.data()["result"].(map[string]any)["ref"] != "acme/web/-/variables/DEPLOY_TOKEN" {
+		t.Fatalf("create: %s", r.out)
+	}
+	var stored string
+	e.gl.locked(func() {
+		vs := fakeCIState(e.gl).variables["acme/web"]
+		stored = vs[len(vs)-1].Value
 	})
-	if !strings.Contains(out, "deleted") {
-		t.Errorf("expected deleted message in output, got: %s", out)
+	if stored != secret {
+		t.Fatalf("GitLab got %q", stored)
+	}
+	ciAssertNoSecret(t, e, secret, dry.out, dry.errOut, r.out, r.errOut, e.run("operation", "list").out)
+}
+
+// TestVariableValueMismatchIsReported: a value GitLab stored differently from the
+// request (here with a newline added) is E_VERIFY_FAILED naming value, and still
+// not quoted (CLI-059, SEC-021).
+func TestVariableValueMismatchIsReported(t *testing.T) {
+	e := newTestEnv(t)
+	args := []string{"variable", "update", "DEPLOY_ENV", "--project", "acme/web", "--value", "staging-mangled", "--dangerous"}
+	tok := e.dryRun(args...)
+	e.gl.locked(func() { fakeCIState(e.gl).mangle = true })
+	r := e.confirm(tok, args...)
+	if r.code() != "E_VERIFY_FAILED" || !hasString(stringsOf(r.receipt()["mismatched"]), "value") ||
+		r.receipt()["observed"].(map[string]any)["value"] != "***" || strings.Contains(r.out, "staging-mangled") {
+		t.Fatalf("a value stored differently: %s", r.out)
 	}
 }
 
-func TestVariable_Update_PlainTextSuccess(t *testing.T) {
-	resetVariableFlags(t)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"key":"FOO","value":"new","variable_type":"env_var","protected":false,"masked":false,"environment_scope":"*"}`)
-	}))
-	defer srv.Close()
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origDR := dryRun
-	origJM := jsonMode
-	defer func() { dryRun = origDR; jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
-	dryRun = false
-	setTextFormatForTest(t)
-	out := captureStdout(t, func() {
-		args := []string{"variable", "update", "--project", "foo/bar", "--key", "FOO", "--value", "new", "--dangerous"}
-		args = append(args, confirmArgsForTest(t, "update variable", map[string]any{"project": "foo/bar", "key": "FOO", "envScope": ""})...)
-		rootCmd.SetArgs(args)
-		_ = rootCmd.Execute()
-	})
-	if !strings.Contains(out, "updated") {
-		t.Errorf("expected updated message in output, got: %s", out)
+// TestVariableCreateWithoutGrantIsRefusedLocally is the eval's no-permission task:
+// creating a CI/CD variable is configure, dangerous by default, and without a scope
+// that grants both the tool refuses before anything is sent (SEC-010, CLI-014).
+func TestVariableCreateWithoutGrantIsRefusedLocally(t *testing.T) {
+	e := newTestEnv(t)
+	args := []string{"variable", "create", "--project", "acme/web", "--key", "DEPLOY_TOKEN", "--value", "tok-12345678"}
+	r := e.run(append(args, "--dry-run")...)
+	if r.code() != "E_CONFIRMATION_REQUIRED" || r.details()["problem"] != "dangerous_flag_required" {
+		t.Fatalf("configure is dangerous: %s", r.out)
+	}
+	e.setScope(nil)
+	r = e.run(append(args, "--dangerous", "--dry-run")...)
+	scope, _ := r.details()["scope"].(map[string]any)
+	missing, _ := scope["missing"].(map[string]any)
+	if r.code() != "E_FORBIDDEN" || r.exit != 4 || scope["status"] != "missing" || !hasString(stringsOf(missing["effects"]), "configure") ||
+		missing["dangerous"] != true || missing["target"] != "acme/web/-/variables/DEPLOY_TOKEN" {
+		t.Fatalf("no scope: %s", r.out)
+	}
+	only := fullScope()
+	only["effects"], only["dangerous"] = []string{"change"}, false
+	e.setScope(only)
+	if r = e.run(append(args, "--dangerous", "--dry-run")...); r.code() != "E_FORBIDDEN" || r.details()["scope"].(map[string]any)["status"] != "insufficient" {
+		t.Fatalf("a change-only scope: %s", r.out)
+	}
+	if e.gl.Writes() != 0 {
+		t.Fatal("a refused write reached GitLab")
+	}
+}
+
+func TestVariableCreateIsBlockedWhenTheKeyExists(t *testing.T) {
+	e := newTestEnv(t)
+	r := e.run("variable", "create", "--project", "acme/web", "--key", "DEPLOY_ENV", "--value", "x", "--dangerous", "--dry-run")
+	if r.exit != 0 || r.preview()["can_apply"] != false || r.preview()["blocked_by"].([]any)[0].(map[string]any)["kind"] != "already_exists" {
+		t.Fatalf("an existing key and scope: %s", r.out)
+	}
+	args := []string{"variable", "create", "--project", "acme/web", "--key", "DEPLOY_ENV", "--value", "review", "--env-scope", "review/*",
+		"--dangerous", "--idempotency-key", "k-1"}
+	r = e.confirm(e.dryRun(args...), args...)
+	if r.exit != 0 || r.data()["result"].(map[string]any)["ref"] != "acme/web/-/variables/DEPLOY_ENV:review/*" {
+		t.Fatalf("the same key in another scope: %s", r.out)
+	}
+	if again := e.run(append(args, "--dry-run")...); again.receipt()["replayed"] != true || e.gl.Writes() != 1 {
+		t.Fatalf("a repeat with the key is a replay: %s", again.out)
+	}
+	if r := e.run("variable", "create", "--project", "acme/nowhere", "--key", "X", "--value", "x", "--dangerous", "--dry-run"); r.code() != "E_NOT_FOUND" {
+		t.Fatalf("a missing project: %s", r.out)
+	}
+}
+
+// TestVariableUpdateChecksTheMaskedValue: a value that will be masked must be
+// maskable, whether it is new or the current one (checked in memory, never shown).
+func TestVariableUpdateChecksTheMaskedValue(t *testing.T) {
+	e := newTestEnv(t)
+	r := e.run("variable", "update", "DATABASE_URL:production", "--project", "acme/web", "--value", "short", "--dangerous", "--dry-run")
+	if r.code() != "E_VALIDATION" || r.details()["parameter"] != "--value" {
+		t.Fatalf("a short value for a masked variable: %s", r.out)
+	}
+	e.gl.locked(func() { fakeCIState(e.gl).variables["acme/web"][0].Value = "two words" })
+	r = e.run("variable", "update", "DEPLOY_ENV", "--project", "acme/web", "--masked", "true", "--dangerous", "--dry-run")
+	if r.code() != "E_VALIDATION" || strings.Contains(r.out, "two words") {
+		t.Fatalf("masking an unmaskable current value: %s", r.out)
+	}
+	args := []string{"variable", "update", "DATABASE_URL", "--env-scope", "staging", "--project", "acme/web", "--value-file", "-", "--dangerous"}
+	e.stdin = "postgres://staging-db-new"
+	r = e.confirm(e.dryRun(args...), args...)
+	var stored string
+	e.gl.locked(func() { stored = fakeCIState(e.gl).variables["acme/web"][2].Value })
+	if r.exit != 0 || stored != "postgres://staging-db-new" || r.receipt()["observed"].(map[string]any)["value"] != "***" {
+		t.Fatalf("--value-file - reads stdin: %s (stored %q)", r.out, stored)
+	}
+}
+
+func TestVariableDeleteReadsBack(t *testing.T) {
+	e := newTestEnv(t)
+	if r := e.run("variable", "delete", "NO_SUCH_KEY", "--project", "acme/web", "--dangerous", "--dry-run"); r.code() != "E_NOT_FOUND" {
+		t.Fatalf("a missing variable is E_NOT_FOUND at the dry-run (CLI-029): %s", r.out)
+	}
+	args := []string{"variable", "rm", "DATABASE_URL:staging", "--project", "acme/web", "--dangerous"}
+	r := e.confirm(e.dryRun(args...), args...)
+	if r.exit != 0 || r.receipt()["observed"].(map[string]any)["exists"] != false ||
+		r.data()["result"].(map[string]any)["ref"] != "acme/web/-/variables/DATABASE_URL:staging" {
+		t.Fatalf("delete: %s", r.out)
+	}
+	if r := e.run("variable", "get", "DATABASE_URL", "--project", "acme/web"); r.exit != 0 || r.data()["environment_scope"] != "production" {
+		t.Fatalf("the other scope stays, and is no longer ambiguous: %s", r.out)
+	}
+}
+
+// TestVariableUntrustedText: a description is people's text, here with an injected
+// instruction; it is data, listed in meta.untrusted (CLI-046, SEC-002).
+func TestVariableUntrustedText(t *testing.T) {
+	e := newTestEnv(t)
+	r := e.run("variable", "list", "--project", "acme/web", "--fields", "+description")
+	if !strings.Contains(r.out, "Ignore previous instructions") || !hasString(ciUntrusted(r), "data.items[].description") {
+		t.Fatalf("description: %s", r.out)
+	}
+	scope := r.data()["scope"].(map[string]any)
+	if !strings.Contains(scope["covers"].(string), "group and instance variables are not included") || r.data()["total"] != json.Number("5") {
+		t.Fatalf("scope: %s", r.out)
+	}
+}
+
+func TestParseVariableArg(t *testing.T) {
+	for in, want := range map[string][3]string{
+		"DEPLOY_ENV":                                   {"", "DEPLOY_ENV", ""},
+		"DATABASE_URL:production":                      {"", "DATABASE_URL", "production"},
+		"acme/web/-/variables/DEPLOY_ENV":              {"acme/web", "DEPLOY_ENV", ""},
+		"acme/sub/web/-/variables/K:review/*":          {"acme/sub/web", "K", "review/*"},
+		"acme/web/-/variables/K:${CI_COMMIT_REF_NAME}": {"acme/web", "K", "${CI_COMMIT_REF_NAME}"},
+	} {
+		p, k, s, _, err := parseVariableArg(in)
+		if err != nil || p != want[0] || k != want[1] || s != want[2] {
+			t.Errorf("parseVariableArg(%q) = %q %q %q %v", in, p, k, s, err)
+		}
+	}
+	for _, bad := range []string{"", "BAD-KEY", "K:", "K:../x", "42/-/variables/K", "acme/web/-/variables/", "K:a\x00b"} {
+		if _, _, _, _, err := parseVariableArg(bad); err == nil {
+			t.Errorf("parseVariableArg(%q) should fail", bad)
+		}
 	}
 }

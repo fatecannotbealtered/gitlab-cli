@@ -3,541 +3,846 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
-	"sort"
-	"strconv"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
 
-	"github.com/fatecannotbealtered/gitlab-cli/internal/api"
-	"github.com/fatecannotbealtered/gitlab-cli/internal/output"
 	"github.com/spf13/cobra"
+
+	"github.com/fatecannotbealtered/gitlab-cli/internal/aicli"
+	"github.com/fatecannotbealtered/gitlab-cli/internal/api"
 )
 
-// test hook for artifacts output file close
-var closeOutputFile = func(f *os.File) error { return f.Close() }
+// The job group: get (with --wait), log, retry, play, cancel, artifacts, and wait
+// (deprecated for get --wait). A job is named by its global ID, the number in its
+// web URL (/-/jobs/<id>).
 
-var jobCmd = &cobra.Command{
-	Use:   "job",
-	Short: "Manage CI/CD jobs",
+var (
+	jobFields = []string{"ref", "id", "name", "stage", "status", "finished", "failure_reason", "allow_failure", "ref_name",
+		"tag", "pipeline", "user", "created_at", "started_at", "finished_at", "duration_ms", "queued_duration_ms",
+		"coverage", "artifacts", "artifacts_expire_at", "web_url"}
+	jobDefaultFields = []string{"ref", "name", "stage", "status", "failure_reason", "allow_failure", "duration_ms", "web_url"}
+	// Job and stage names come from .gitlab-ci.yml, the branch name from people.
+	jobUntrusted = []string{"name", "stage", "ref_name"}
+	jobLogFields = []string{"ref", "status", "finished", "log", "lines", "total_lines", "matched_lines", "total_bytes",
+		"truncated", "truncated_reason"}
+)
+
+func registerJob(app *aicli.App) {
+	group := addGroup(app, "job", "Read CI/CD jobs and their logs; retry, start or cancel them; download their artifacts", "jobs")
+	app.Schema("job", aicli.SchemaDef{Shape: "object", Fields: jobFields, Untrusted: jobUntrusted})
+	app.Schema("job_page", aicli.SchemaDef{Shape: "page", Fields: jobFields, DefaultFields: jobDefaultFields, Untrusted: jobUntrusted})
+	app.Schema("job_log", aicli.SchemaDef{Shape: "object", Fields: jobLogFields, Untrusted: []string{"log"}})
+	app.Schema("job_artifacts", aicli.SchemaDef{Shape: "object", Fields: []string{"ref", "path", "bytes", "sha256"}})
+	addJobGet(app, group)
+	addJobLog(app, group)
+	addJobRetry(app, group)
+	addJobPlay(app, group)
+	addJobCancel(app, group)
+	addJobArtifacts(app, group)
+	addJobWait(app, group)
 }
 
-var jobGetCmd = &cobra.Command{
-	Use:   "get <job_id>",
-	Short: "Get a job by ID",
-	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		client, _, err := newClient()
+// jobOut is a job as every job command returns it. Artifacts are a bounded summary
+// (CLI-043): their kinds and sizes; job artifacts downloads the archive.
+func jobOut(project string, j api.Job) map[string]any {
+	artifacts := make([]map[string]any, 0, len(j.Artifacts))
+	for _, a := range j.Artifacts {
+		artifacts = append(artifacts, map[string]any{"file_type": a.FileType, "size_bytes": a.Size})
+	}
+	out := map[string]any{
+		"ref": jobRef(project, j.ID), "id": idString(j.ID), "name": j.Name, "stage": j.Stage, "status": j.Status,
+		"finished": ciFinished(j.Status), "failure_reason": optString(j.FailureReason), "allow_failure": j.AllowFailure,
+		"ref_name": j.Ref, "tag": j.Tag, "pipeline": nil, "user": ciUser(j.User), "created_at": utcTime(j.CreatedAt),
+		"started_at": utcTime(j.StartedAt), "finished_at": utcTime(j.FinishedAt), "duration_ms": ciMillis(j.Duration),
+		"queued_duration_ms": ciMillis(j.QueuedDuration), "coverage": nil, "artifacts": artifacts,
+		"artifacts_expire_at": utcTime(j.ArtifactsExpireAt), "web_url": j.WebURL,
+	}
+	if j.Pipeline != nil && j.Pipeline.ID > 0 {
+		out["pipeline"] = pipelineRef(project, j.Pipeline.ID)
+	}
+	if j.Coverage != nil {
+		out["coverage"] = *j.Coverage
+	}
+	return out
+}
+
+// jobNotFound is the 404 of a job read.
+func jobNotFound(project string) errOpt {
+	return onNotFound("The project has no job with that ID, or this account cannot see it.",
+		fmt.Sprintf("Run `gitlab-cli pipeline list --project %s`, then `gitlab-cli pipeline jobs <pipeline>`, to find the job.", project))
+}
+
+// jobTarget reads the job positional (or --job) and the project.
+func jobTarget(cmd *cobra.Command, gl *lazyClient) (ciTarget, error) {
+	return ciIDTarget(cmd, gl, "job", "jobs", "job", "gitlab-cli pipeline jobs <pipeline> --project <group/project>")
+}
+
+func addJobTargetFlags(c *cobra.Command) {
+	c.Flags().String("job", "", "Job ID, ref (acme/web/-/jobs/456) or web URL")
+	c.Flags().String("project", "", "Project path (acme/web), web URL or numeric ID; optional when the job is a ref or URL")
+}
+
+func addJobGet(app *aicli.App, parent *cobra.Command) {
+	c := &cobra.Command{Use: "get <job>", RunE: func(cmd *cobra.Command, _ []string) error {
+		wait, err := ciWaitFlag(cmd)
 		if err != nil {
 			return err
 		}
-		project, _ := cmd.Flags().GetString("project")
-		if project == "" {
-			return failArg("--project is required")
-		}
-		jobID, err := strconv.Atoi(args[0])
-		if err != nil {
-			return failArg("job_id must be an integer")
-		}
-		j, err := client.Jobs.Get(apiCtx(), project, jobID)
-		if err != nil {
-			return handleAPIError(err, jsonMode)
-		}
-		if jsonMode {
-			fields := getFieldsFlag(cmd)
-			output.PrintJSON(output.FilterMap(output.JobToMap(toFlatJob(j)), fields))
-			return nil
-		}
-		fmt.Printf("Job #%d: %s\n", j.ID, j.Name)
-		fmt.Printf("  Stage:  %s\n", j.Stage)
-		fmt.Printf("  Status: %s\n", output.StatusBadge(j.Status))
-		fmt.Printf("  Ref:    %s\n", j.Ref)
-		if j.WebURL != "" {
-			fmt.Printf("  URL:    %s\n", j.WebURL)
-		}
-		return nil
-	},
+		return jobShow(app, cmd, wait, ciPollEvery)
+	}}
+	addJobTargetFlags(c)
+	c.Flags().String("wait", "", "Wait until the job finishes, at most this long (up to 90s): 60s, 90s")
+	parent.AddCommand(c)
+	app.Register(c, aicli.Meta{Summary: "Show one job by ID, ref or URL; --wait waits up to 90s for it to finish",
+		Aliases: []string{"view", "show"}, Effects: []aicli.Effect{aicli.Observe}, Output: "job", Positional: "job",
+		Params:     map[string]aicli.ParamDoc{"wait": {Unit: "duration"}},
+		ErrorCodes: gitlabReadCodes, Maturity: aicli.Verified, Evidence: []string{jobEvidence, liveEvidence("job")},
+		Examples: []string{"gitlab-cli job get 456 --project acme/web",
+			"gitlab-cli job get acme/web/-/jobs/456 --wait 60s"}})
 }
 
-var jobLogCmd = &cobra.Command{
-	Use:   "log <job_id>",
-	Short: "Print the job trace log",
-	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		client, _, err := newClient()
+// jobRead reads a job; with wait, it reads it again until it finishes or the wait
+// ends, which a notice then says (CLI-049).
+func jobRead(ctx context.Context, app *aicli.App, client *api.Client, t ciTarget, wait, poll time.Duration) (*api.Job, error) {
+	read := func(ctx context.Context) (*api.Job, error) {
+		j, err := client.Jobs.Get(ctx, t.project, t.id)
 		if err != nil {
-			return err
+			return nil, readError(err, jobNotFound(t.project))
 		}
-		project, _ := cmd.Flags().GetString("project")
-		if project == "" {
-			return failArg("--project is required")
-		}
-		jobID, err := strconv.Atoi(args[0])
+		return j, nil
+	}
+	j, err := read(ctx)
+	if err != nil || wait <= 0 || ciFinished(j.Status) {
+		return j, err
+	}
+	finished, err := ciWait(ctx, wait, poll, func(ctx context.Context) (string, error) {
+		nj, err := read(ctx)
 		if err != nil {
-			return failArg("job_id must be an integer")
+			return "", err
 		}
-		follow, _ := cmd.Flags().GetBool("follow")
-		timeoutSec, _ := cmd.Flags().GetInt("timeout")
+		j = nj
+		return nj.Status, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if !finished {
+		ciWaitEnded(app, "job", wait)
+	}
+	return j, nil
+}
 
-		if !follow {
-			data, err := client.Jobs.Log(apiCtx(), project, jobID)
-			if err != nil {
-				return handleAPIError(err, jsonMode)
+func jobShow(app *aicli.App, cmd *cobra.Command, wait, poll time.Duration) error {
+	gl := gitlabFor(app)
+	t, err := jobTarget(cmd, gl)
+	if err != nil {
+		return err
+	}
+	client, err := gl.get()
+	if err != nil {
+		return err
+	}
+	j, err := jobRead(cmd.Context(), app, client, t, wait, poll)
+	if err != nil {
+		return err
+	}
+	return app.OK(cmd, jobOut(t.project, *j))
+}
+
+// ---------------------------------------------------------------- job log
+
+// jobLogBudget is the room, in JSON characters, for the log text of a JSON answer:
+// the whole envelope stays within the 8,000-character success budget (CLI-042).
+const jobLogBudget = 6000
+
+// GitLab traces carry terminal control sequences: colours and erase-line (ESC [ ...),
+// and collapsible-section markers ("section_start:1700000000:step_script\r\x1b[0K").
+// JSON output strips them; --format raw passes the trace through untouched.
+var (
+	jobLogSection = regexp.MustCompile(`section_(?:start|end):[0-9]+:[A-Za-z0-9_.\-]+(?:\[[^\]\r\n]*\])?\r?`)
+	jobLogANSI    = regexp.MustCompile(`\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_]`)
+)
+
+// logLine is one line of a trace: its bytes (without the newline) and its text
+// as JSON shows it.
+type logLine struct {
+	raw  []byte
+	text string
+}
+
+// jobLogText is a trace line as JSON shows it: no section markers, no escape
+// sequences or other control characters but tabs, and of a line a carriage return
+// overwrote on a terminal only what was shown last.
+func jobLogText(raw []byte) string {
+	s := strings.TrimSuffix(string(raw), "\r")
+	s = jobLogSection.ReplaceAllString(s, "")
+	s = jobLogANSI.ReplaceAllString(s, "")
+	if i := strings.LastIndex(s, "\r"); i >= 0 {
+		s = s[i+1:]
+	}
+	s = strings.Map(func(r rune) rune {
+		if (r < 0x20 && r != '\t') || r == 0x7f {
+			return -1
+		}
+		return r
+	}, s)
+	return strings.ToValidUTF8(s, "�")
+}
+
+// jobLogLines splits a trace into lines. With complete, a last line without a
+// newline is left out and its bytes returned as rest (a running job may still be
+// writing it).
+func jobLogLines(trace []byte, complete bool) (lines []logLine, rest []byte) {
+	if complete {
+		i := bytes.LastIndexByte(trace, '\n')
+		trace, rest = trace[:i+1], trace[i+1:]
+	}
+	if len(trace) == 0 {
+		return nil, rest
+	}
+	parts := bytes.Split(trace, []byte("\n"))
+	if len(parts[len(parts)-1]) == 0 {
+		parts = parts[:len(parts)-1]
+	}
+	for _, p := range parts {
+		lines = append(lines, logLine{raw: p, text: jobLogText(p)})
+	}
+	return lines, rest
+}
+
+// jobLogSel is what job log returns: the --tail, --grep and --max-bytes selection,
+// raw or JSON, and --follow with its --wait.
+type jobLogSel struct {
+	tail, maxBytes int
+	grep           *regexp.Regexp
+	raw, follow    bool
+	wait           time.Duration
+}
+
+// shown reports whether a line is shown at all: in JSON, a line that held only
+// markers and escape sequences is left out; --grep matches the text JSON shows.
+func (s jobLogSel) shown(l logLine) bool {
+	if !s.raw && len(l.raw) > 0 && l.text == "" {
+		return false
+	}
+	return s.grep == nil || s.grep.MatchString(l.text)
+}
+
+func readJobLogFlags(app *aicli.App, cmd *cobra.Command) (jobLogSel, error) {
+	var s jobLogSel
+	s.tail, _ = cmd.Flags().GetInt("tail")
+	if s.tail < 0 {
+		e := aicli.Usage("invalid_value", "--tail", "--tail must be 0 (every line) or more.")
+		e.Details["expected"] = "0 or more"
+		return s, e
+	}
+	s.maxBytes, _ = cmd.Flags().GetInt("max-bytes")
+	if s.maxBytes < 0 {
+		e := aicli.Usage("invalid_value", "--max-bytes", "--max-bytes must be 0 (no limit) or more.")
+		e.Details["expected"] = "0 or more"
+		return s, e
+	}
+	if pattern, _ := cmd.Flags().GetString("grep"); pattern != "" {
+		re, err := regexp.Compile(pattern)
+		if err != nil {
+			return s, aicli.Validation("--grep", "an RE2 regular expression, such as error|fail", "--grep is not a valid regular expression.")
+		}
+		s.grep = re
+	}
+	s.raw = aicli.OutputFormat(cmd) == "raw"
+	s.follow, _ = cmd.Flags().GetBool("follow")
+	wait, err := ciWaitFlag(cmd)
+	if err != nil {
+		return s, err
+	}
+	s.wait = wait
+	if cmd.Flags().Changed("timeout") && s.follow {
+		if cmd.Flags().Changed("wait") {
+			e := aicli.Usage("conflicting_flags", "--timeout", "Give the time to follow once, with --wait.")
+			e.Details["next_action"] = "Drop --timeout (deprecated) and keep --wait."
+			return s, e
+		}
+		s.wait, _ = ciDeprecatedWait(app, cmd)
+	}
+	if s.follow {
+		if s.wait == 0 {
+			s.wait = 60 * time.Second
+		}
+		for _, f := range []string{"fields", "max-bytes"} {
+			if cmd.Flags().Changed(f) {
+				e := aicli.Usage("conflicting_flags", "--"+f, fmt.Sprintf("--%s does not apply to --follow, which streams one line per item.", f))
+				e.Details["next_action"] = fmt.Sprintf("Drop --%s, or drop --follow.", f)
+				return s, e
 			}
-			tail, _ := cmd.Flags().GetInt("tail")
-			grep, _ := cmd.Flags().GetString("grep")
-			maxBytes, _ := cmd.Flags().GetInt("max-bytes")
-			filtered, meta, ferr := filterTrace(data, grep, tail, maxBytes)
-			if ferr != nil {
-				return ferr
+		}
+	}
+	return s, nil
+}
+
+func addJobLog(app *aicli.App, parent *cobra.Command) {
+	c := &cobra.Command{Use: "log <job>", RunE: func(cmd *cobra.Command, _ []string) error {
+		sel, err := readJobLogFlags(app, cmd)
+		if err != nil {
+			return err
+		}
+		gl := gitlabFor(app)
+		t, err := jobTarget(cmd, gl)
+		if err != nil {
+			return err
+		}
+		client, err := gl.get()
+		if err != nil {
+			return err
+		}
+		if sel.follow {
+			return jobLogFollow(app, cmd, client, t, sel)
+		}
+		// --wait without --follow waits for the job to finish, then shows its log.
+		j, err := jobRead(cmd.Context(), app, client, t, sel.wait, ciPollEvery)
+		if err != nil {
+			return err
+		}
+		trace, err := client.Jobs.Log(cmd.Context(), t.project, t.id)
+		if err != nil {
+			return readError(err, jobNotFound(t.project))
+		}
+		return jobLogReport(app, cmd, t, j, trace, sel)
+	}}
+	addJobTargetFlags(c)
+	c.Flags().Int("tail", 100, "Lines to return from the end of the log; 0 returns every line")
+	c.Flags().String("grep", "", "Only lines matching this regular expression (RE2), before --tail")
+	c.Flags().Int("max-bytes", 0, "Return at most this many bytes, from the end; 0 sets no byte limit")
+	c.Flags().Bool("follow", false, "Stream the log as NDJSON, one line per item, until the job finishes or --wait ends")
+	c.Flags().String("wait", "", "Wait until the job finishes, at most this long (up to 90s); with --follow the default is 60s")
+	c.Flags().Int("timeout", 0, "Seconds to follow")
+	parent.AddCommand(c)
+	app.Register(c, aicli.Meta{
+		Summary: "Show the end of a job's log, 100 lines by default; --grep filters, --format raw passes the bytes through, --follow streams NDJSON",
+		Aliases: []string{"logs", "trace"}, Effects: []aicli.Effect{aicli.Observe}, Output: "job_log", Positional: "job",
+		RawOutput: true,
+		Params: map[string]aicli.ParamDoc{"tail": {Unit: "lines"}, "max-bytes": {Unit: "bytes"}, "wait": {Unit: "duration"},
+			"timeout": {Unit: "seconds"}},
+		DeprecatedFlags: map[string]string{"timeout": "use --wait"},
+		ErrorCodes:      gitlabReadCodes, Maturity: aicli.Verified, Evidence: []string{jobEvidence, liveEvidence("job")},
+		Examples: []string{"gitlab-cli job log 456 --project acme/web",
+			"gitlab-cli job log acme/web/-/jobs/456 --grep 'error|fail' --tail 40",
+			"gitlab-cli job log 456 --project acme/web --format raw --tail 0",
+			"gitlab-cli job log 456 --project acme/web --follow --wait 60s"}})
+}
+
+// jobLogReport answers job log: --grep, then --tail, then --max-bytes; in JSON, the
+// lines that fit the response budget, from the end, where a CI log says what failed.
+// Whatever is left out is counted and said in truncated_reason.
+func jobLogReport(app *aicli.App, cmd *cobra.Command, t ciTarget, j *api.Job, trace []byte, sel jobLogSel) error {
+	all, _ := jobLogLines(trace, false)
+	var matched []logLine
+	for _, l := range all {
+		if sel.shown(l) {
+			matched = append(matched, l)
+		}
+	}
+	out, reason := matched, ""
+	if sel.tail > 0 && len(out) > sel.tail {
+		out = out[len(out)-sel.tail:]
+		reason = fmt.Sprintf("Only the last %d of %d lines are shown (--tail %d); raise --tail, or find a line with --grep.",
+			sel.tail, len(matched), sel.tail)
+	}
+	cut := false
+	if sel.maxBytes > 0 {
+		if out, cut = jobLogLastBytes(out, sel.maxBytes, sel.raw); cut {
+			reason = fmt.Sprintf("Only the last %d bytes are shown (--max-bytes %d).", sel.maxBytes, sel.maxBytes)
+		}
+	}
+	if sel.raw {
+		var b bytes.Buffer
+		for _, l := range out {
+			b.Write(l.raw)
+			b.WriteByte('\n')
+		}
+		return app.OK(cmd, b.Bytes())
+	}
+	var budgetCut bool
+	if out, budgetCut = jobLogFit(out, jobLogBudget); budgetCut {
+		cut = true
+		reason = fmt.Sprintf("Only the last %d lines fit the response size limit; use --format raw for more, or find a line with --grep.", len(out))
+	}
+	texts := make([]string, len(out))
+	for i, l := range out {
+		texts[i] = l.text
+	}
+	data := map[string]any{"ref": jobRef(t.project, t.id), "status": j.Status, "finished": ciFinished(j.Status),
+		"log": strings.Join(texts, "\n"), "lines": len(out), "total_lines": len(all), "total_bytes": len(trace),
+		"truncated": cut || len(out) < len(matched)}
+	if sel.grep != nil {
+		data["matched_lines"] = len(matched)
+	}
+	if data["truncated"] == true {
+		data["truncated_reason"] = reason
+	}
+	return app.OK(cmd, data)
+}
+
+// jobLogLastBytes keeps the last max bytes of lines (raw bytes, or the JSON text),
+// cutting the first kept line at a character boundary.
+func jobLogLastBytes(lines []logLine, max int, raw bool) ([]logLine, bool) {
+	size := func(l logLine) int {
+		if raw {
+			return len(l.raw) + 1
+		}
+		return len(l.text) + 1
+	}
+	total := 0
+	for i := len(lines) - 1; i >= 0; i-- {
+		n := size(lines[i])
+		if total+n <= max {
+			total += n
+			continue
+		}
+		room := max - total - 1
+		if room <= 0 {
+			return lines[i+1:], true
+		}
+		l := lines[i]
+		if raw {
+			b := l.raw[len(l.raw)-room:]
+			for len(b) > 0 && !utf8.RuneStart(b[0]) {
+				b = b[1:]
 			}
-			if jsonMode {
-				out := map[string]any{"jobId": output.ID(jobID), "log": string(filtered)}
-				if meta.filtered {
-					out["totalBytes"] = meta.totalBytes
-					out["returnedBytes"] = meta.returnedBytes
-					out["truncated"] = meta.truncated
-				}
-				output.PrintJSON(output.MarkUntrusted(out, "log"))
-				return nil
-			}
-			_, _ = os.Stdout.Write(filtered)
-			return nil
-		}
-
-		// --follow path
-		ctx := cmd.Context()
-		var cancel context.CancelFunc
-		if timeoutSec > 0 {
-			ctx, cancel = context.WithTimeout(ctx, time.Duration(timeoutSec)*time.Second)
-			defer cancel()
-		}
-
-		if jsonMode {
-			// NDJSON stream (CLI-SPEC §5): one {type:"chunk"} line per new trace
-			// range, then a final {type:"summary"} line. GitLab has no native
-			// trace streaming, so LogStreamStatus polls with a byte offset.
-			totalBytes := 0
-			chunks := 0
-			status, streamErr := client.Jobs.LogStreamStatus(ctx, project, jobID, 0, func(b []byte, offset int) error {
-				chunks++
-				totalBytes += len(b)
-				return output.PrintNDJSON("chunk", output.MarkUntrusted(map[string]any{
-					"jobId":  output.ID(jobID),
-					"offset": offset,
-					"bytes":  len(b),
-					"data":   string(b),
-				}, "data"))
-			})
-			if streamErr != nil {
-				return handleAPIError(streamErr, jsonMode)
-			}
-			return output.PrintNDJSON("summary", map[string]any{
-				"jobId":      output.ID(jobID),
-				"status":     status,
-				"chunks":     chunks,
-				"totalBytes": totalBytes,
-			})
-		}
-
-		return client.Jobs.LogStream(ctx, project, jobID, os.Stdout, 0)
-	},
-}
-
-var jobRetryCmd = &cobra.Command{
-	Use:   "retry <job_id>",
-	Short: "Retry a job",
-	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		project, _ := cmd.Flags().GetString("project")
-		if project == "" {
-			return failArg("--project is required")
-		}
-		jobID, err := strconv.Atoi(args[0])
-		if err != nil {
-			return failArg("job_id must be an integer")
-		}
-		client, _, err := newClient()
-		if err != nil {
-			return err
-		}
-		// A manual or scheduled (delayed) job is not retryable — it must be
-		// played/run, not retried. GitLab answers a raw retry with a 403 that
-		// reads like a permission error, so inspect the status first (in both the
-		// dry-run and confirm steps) and fail with an accurate hint pointing at
-		// `job play`, instead of leaking a misleading auth suggestion.
-		j, err := client.Jobs.Get(apiCtx(), project, jobID)
-		if err != nil {
-			return handleAPIError(err, jsonMode)
-		}
-		if j.Status == "manual" || j.Status == "scheduled" {
-			return failArgf("job #%d is a %s job and cannot be retried; start it with 'gitlab-cli job play %d' instead", jobID, j.Status, jobID)
-		}
-		if done, err := prepareWrite(cmd, "retry job", map[string]any{"project": project, "job_id": jobID}); done || err != nil {
-			return err
-		}
-		j, err = client.Jobs.Retry(apiCtx(), project, jobID)
-		if err != nil {
-			return handleAPIError(err, jsonMode)
-		}
-		if jsonMode {
-			output.PrintJSON(output.JobToMap(toFlatJob(j)))
-			return nil
-		}
-		output.Success(fmt.Sprintf("Job #%d retried (status: %s)", j.ID, j.Status))
-		return nil
-	},
-}
-
-var jobPlayCmd = &cobra.Command{
-	Use:   "play <job_id>",
-	Short: "Play (start) a manual job",
-	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		project, _ := cmd.Flags().GetString("project")
-		if project == "" {
-			return failArg("--project is required")
-		}
-		jobID, err := strconv.Atoi(args[0])
-		if err != nil {
-			return failArg("job_id must be an integer")
-		}
-		vars, err := parseJobVariables(cmd)
-		if err != nil {
-			return err
-		}
-		client, _, err := newClient()
-		if err != nil {
-			return err
-		}
-		// Only a manual or scheduled (delayed) job can be played — GitLab's play
-		// endpoint accepts both. Before a confirm token is issued (dry-run or a
-		// first bare call, i.e. no --confirm yet) reject a non-playable job with an
-		// accurate message. Once --confirm is supplied we skip this check and let
-		// the confirm-token comparison below surface any state drift: the token was
-		// only ever issued while the job was playable, so a mismatch means the job
-		// moved on and confirm fails closed with E_CONFLICT.
-		j, err := client.Jobs.Get(apiCtx(), project, jobID)
-		if err != nil {
-			return handleAPIError(err, jsonMode)
-		}
-		playable := j.Status == "manual" || j.Status == "scheduled"
-		if confirmFlag == "" && !playable {
-			return failArgf("job #%d is not startable (status: %s); only manual or scheduled jobs can be played", jobID, j.Status)
-		}
-		// Bind the confirm token to the job identity/state plus the SET of
-		// variable KEYS only — never the values, which would leak into the
-		// dry-run preview (see variable create). The caller supplies the same
-		// values again at confirm time, so binding keys is sufficient.
-		detail := map[string]any{
-			"project": project,
-			"job_id":  jobID,
-			"ref":     j.Ref,
-			"status":  j.Status,
-		}
-		if j.Pipeline != nil {
-			detail["pipeline_id"] = j.Pipeline.ID
-		}
-		if len(vars) > 0 {
-			detail["variables"] = variableKeys(vars)
-		}
-		if done, err := prepareWrite(cmd, "play job", detail); done || err != nil {
-			return err
-		}
-		j, err = client.Jobs.Play(apiCtx(), project, jobID, vars)
-		if err != nil {
-			return handleAPIError(err, jsonMode)
-		}
-		if jsonMode {
-			output.PrintJSON(output.JobToMap(toFlatJob(j)))
-			return nil
-		}
-		output.Success(fmt.Sprintf("Job #%d started (status: %s)", j.ID, j.Status))
-		return nil
-	},
-}
-
-var jobCancelCmd = &cobra.Command{
-	Use:   "cancel <job_id>",
-	Short: "Cancel a job",
-	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		project, _ := cmd.Flags().GetString("project")
-		if project == "" {
-			return failArg("--project is required")
-		}
-		jobID, err := strconv.Atoi(args[0])
-		if err != nil {
-			return failArg("job_id must be an integer")
-		}
-		if done, err := prepareWrite(cmd, "cancel job", map[string]any{"project": project, "job_id": jobID}); done || err != nil {
-			return err
-		}
-		client, _, err := newClient()
-		if err != nil {
-			return err
-		}
-		j, err := client.Jobs.Cancel(apiCtx(), project, jobID)
-		if err != nil {
-			return handleAPIError(err, jsonMode)
-		}
-		if jsonMode {
-			output.PrintJSON(output.JobToMap(toFlatJob(j)))
-			return nil
-		}
-		output.Success(fmt.Sprintf("Job #%d canceled (status: %s)", j.ID, j.Status))
-		return nil
-	},
-}
-
-var jobArtifactsCmd = &cobra.Command{
-	Use:   "artifacts <job_id>",
-	Short: "Download job artifacts to a file",
-	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		client, _, err := newClient()
-		if err != nil {
-			return err
-		}
-		project, _ := cmd.Flags().GetString("project")
-		if project == "" {
-			return failArg("--project is required")
-		}
-		outPath, _ := cmd.Flags().GetString("output")
-		if outPath == "" {
-			return failArg("--output is required")
-		}
-		jobID, err := strconv.Atoi(args[0])
-		if err != nil {
-			return failArg("job_id must be an integer")
-		}
-		if err := validateOutputPath(outPath); err != nil {
-			return failArg(err.Error())
-		}
-		f, err := os.OpenFile(outPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
-		if err != nil {
-			return failWithCode("creating output file: "+err.Error(), ExitNetwork, output.ErrNetwork)
-		}
-		if err := client.Jobs.ArtifactsTo(apiCtx(), project, jobID, f); err != nil {
-			_ = f.Close()
-			_ = os.Remove(outPath)
-			return handleAPIError(err, jsonMode)
-		}
-		if err := closeOutputFile(f); err != nil {
-			return failWithCode("closing output file: "+err.Error(), ExitNetwork, output.ErrNetwork)
-		}
-		fi, _ := os.Stat(outPath)
-		var nbytes int64
-		if fi != nil {
-			nbytes = fi.Size()
-		}
-		if !jsonMode {
-			output.Success(fmt.Sprintf("Artifacts saved to %s (%d bytes)", outPath, nbytes))
+			l.raw = b
 		} else {
-			output.PrintJSON(map[string]any{"path": outPath, "bytes": nbytes})
-		}
-		return nil
-	},
-}
-
-var jobWaitCmd = &cobra.Command{
-	Use:   "wait <job_id>",
-	Short: "Wait for a job to reach a terminal status",
-	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		project, _ := cmd.Flags().GetString("project")
-		if project == "" {
-			return failArg("--project is required")
-		}
-		jobID, err := strconv.Atoi(args[0])
-		if err != nil {
-			return failArg("job_id must be an integer")
-		}
-		timeoutSec, _ := cmd.Flags().GetInt("timeout")
-		intervalSec, _ := cmd.Flags().GetInt("interval")
-		interval := time.Duration(intervalSec) * time.Second
-
-		client, _, err := newClient()
-		if err != nil {
-			return err
-		}
-
-		start := time.Now()
-		for {
-			j, err := client.Jobs.Get(apiCtx(), project, jobID)
-			if err != nil {
-				return handleAPIError(err, jsonMode)
+			s := l.text[len(l.text)-room:]
+			for len(s) > 0 && !utf8.RuneStart(s[0]) {
+				s = s[1:]
 			}
-			elapsed := time.Since(start)
-			switch j.Status {
-			case "success", "failed", "canceled", "skipped", "manual":
-				if jsonMode {
-					output.PrintJSON(output.JobToMap(toFlatJob(j)))
-				} else {
-					fmt.Printf("Job #%d finished: %s\n", j.ID, output.StatusBadge(j.Status))
-				}
-				if j.Status != "success" {
-					setExitCode(ExitCIFailed)
-					return ErrSilent
-				}
-				return nil
-			}
-			if timeoutSec > 0 && elapsed >= time.Duration(timeoutSec)*time.Second {
-				return failWithCode(fmt.Sprintf("timed out waiting for job #%d", jobID), ExitTimeout, output.ErrTimeout)
-			}
-			if !jsonMode && !quietMode {
-				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Waiting... status=%s (%.0fs elapsed)\n", j.Status, elapsed.Seconds())
-			}
-			if err := sleepContext(cmd.Context(), interval); err != nil {
-				return failWithCode(err.Error(), ExitNetwork, output.ErrNetwork)
-			}
+			l.text = s
 		}
-	},
-}
-
-func init() {
-	rootCmd.AddCommand(jobCmd)
-
-	// get
-	jobGetCmd.Flags().String("project", "", "Project ID or path (required)")
-	jobGetCmd.Flags().String("fields", "", "Comma-separated fields to include in JSON output")
-	jobCmd.AddCommand(jobGetCmd)
-
-	// log
-	jobLogCmd.Flags().String("project", "", "Project ID or path (required)")
-	jobLogCmd.Flags().BoolP("follow", "f", false, "Stream log in real time until job completes")
-	jobLogCmd.Flags().Int("timeout", 0, "Timeout in seconds for --follow (0 = unlimited)")
-	jobLogCmd.Flags().Int("tail", 0, "Return only the last N lines of the trace")
-	jobLogCmd.Flags().String("grep", "", "Return only trace lines matching this regular expression")
-	jobLogCmd.Flags().Int("max-bytes", 0, "Cap the returned trace to at most N bytes (keeps the tail)")
-	jobCmd.AddCommand(jobLogCmd)
-	markOutputType(jobLogCmd, "json")
-	markOutputFormats(jobLogCmd, formatJSON, formatText, formatRaw)
-
-	// retry
-	jobRetryCmd.Flags().String("project", "", "Project ID or path (required)")
-	jobCmd.AddCommand(jobRetryCmd)
-	markWrite(jobRetryCmd)
-
-	// play
-	jobPlayCmd.Flags().String("project", "", "Project ID or path (required)")
-	jobPlayCmd.Flags().StringArray("variable", nil, "Job variable in KEY=VAL format (repeatable)")
-	jobCmd.AddCommand(jobPlayCmd)
-	markWrite(jobPlayCmd)
-
-	// cancel
-	jobCancelCmd.Flags().String("project", "", "Project ID or path (required)")
-	jobCmd.AddCommand(jobCancelCmd)
-	markWrite(jobCancelCmd)
-
-	// artifacts
-	jobArtifactsCmd.Flags().String("project", "", "Project ID or path (required)")
-	jobArtifactsCmd.Flags().String("output", "", "Output file path (required)")
-	jobCmd.AddCommand(jobArtifactsCmd)
-
-	// wait
-	jobWaitCmd.Flags().String("project", "", "Project ID or path (required)")
-	jobWaitCmd.Flags().Int("timeout", 0, "Timeout in seconds (0 = unlimited)")
-	jobWaitCmd.Flags().Int("interval", 5, "Poll interval in seconds")
-	jobCmd.AddCommand(jobWaitCmd)
-}
-
-// parseJobVariables parses repeatable --variable KEY=VAL flags for `job play`.
-func parseJobVariables(cmd *cobra.Command) ([]api.JobVariable, error) {
-	raw, _ := cmd.Flags().GetStringArray("variable")
-	out := make([]api.JobVariable, 0, len(raw))
-	for _, v := range raw {
-		parts := strings.SplitN(v, "=", 2)
-		if len(parts) != 2 || parts[0] == "" {
-			return nil, failArgf("invalid --variable %q: expected KEY=VALUE", v)
-		}
-		out = append(out, api.JobVariable{Key: parts[0], Value: parts[1]})
+		return append([]logLine{l}, lines[i+1:]...), true
 	}
-	return out, nil
+	return lines, false
 }
 
-// variableKeys returns the sorted variable keys, used to bind the confirm token
-// to the variable set without exposing the (possibly secret) values.
-func variableKeys(vars []api.JobVariable) []string {
-	keys := make([]string, 0, len(vars))
-	for _, v := range vars {
-		keys = append(keys, v.Key)
-	}
-	sort.Strings(keys)
-	return keys
-}
-
-// traceMeta describes how a job trace was filtered for token-efficient reads.
-type traceMeta struct {
-	filtered      bool
-	totalBytes    int
-	returnedBytes int
-	truncated     bool
-}
-
-// filterTrace applies the token-efficient read modes to a raw job trace: --grep
-// keeps matching lines, --tail keeps the last N lines, and --max-bytes caps the
-// payload to its final N bytes. Filters compose in that order (grep, then tail,
-// then max-bytes) and all keep the tail, where the actionable end of a CI log
-// usually is. With no filter flags the trace is returned unchanged.
-func filterTrace(data []byte, grep string, tail, maxBytes int) ([]byte, traceMeta, error) {
-	meta := traceMeta{totalBytes: len(data), returnedBytes: len(data)}
-	if grep == "" && tail <= 0 && maxBytes <= 0 {
-		return data, meta, nil
-	}
-	meta.filtered = true
-	out := data
-
-	if grep != "" {
-		re, err := regexp.Compile(grep)
-		if err != nil {
-			return nil, meta, failArgf("invalid --grep pattern: %v", err)
+// jobLogFit keeps the last lines whose JSON text fits budget characters; a single
+// line longer than the budget keeps its end.
+func jobLogFit(lines []logLine, budget int) ([]logLine, bool) {
+	used := 0
+	for i := len(lines) - 1; i >= 0; i-- {
+		n := jsonLen(lines[i].text) + 2 // the joining newline is \n in JSON
+		if used+n <= budget {
+			used += n
+			continue
 		}
-		var b []byte
-		for _, line := range bytes.SplitAfter(out, []byte("\n")) {
-			if len(line) == 0 {
+		if i == len(lines)-1 {
+			l := lines[i]
+			l.text = jsonTail(l.text, budget)
+			return []logLine{l}, true
+		}
+		return lines[i+1:], true
+	}
+	return lines, false
+}
+
+// jsonLen is the length of s as a JSON string, without the quotes.
+func jsonLen(s string) int {
+	b, _ := json.Marshal(s)
+	return len(b) - 2
+}
+
+// jsonTail is the end of s that fits budget JSON characters.
+func jsonTail(s string, budget int) string {
+	used, start := 0, len(s)
+	for start > 0 {
+		r, size := utf8.DecodeLastRuneInString(s[:start])
+		n := jsonLen(string(r))
+		if used+n > budget {
+			break
+		}
+		used += n
+		start -= size
+	}
+	return s[start:]
+}
+
+// jobLogFollow streams the log as NDJSON (CLI-006): the last --tail lines, then each
+// new line, until the job finishes or --wait ends; the summary line says which.
+func jobLogFollow(app *aicli.App, cmd *cobra.Command, client *api.Client, t ciTarget, sel jobLogSel) error {
+	ctx := cmd.Context()
+	j, err := client.Jobs.Get(ctx, t.project, t.id)
+	if err != nil {
+		return readError(err, jobNotFound(t.project))
+	}
+	trace, err := client.Jobs.Log(ctx, t.project, t.id)
+	if err != nil {
+		return readError(err, jobNotFound(t.project))
+	}
+	s, err := app.Stream(cmd)
+	if err != nil {
+		return err
+	}
+	count := 0
+	emit := func(lines []logLine) error {
+		for _, l := range lines {
+			if !sel.shown(l) {
 				continue
 			}
-			if re.Match(bytes.TrimRight(line, "\n")) {
-				b = append(b, line...)
+			count++
+			if sel.raw {
+				if err := s.Item(append(append([]byte{}, l.raw...), '\n')); err != nil {
+					return err
+				}
+				continue
+			}
+			if err := s.Item(map[string]any{"line": l.text}, "line"); err != nil {
+				return err
 			}
 		}
-		out = b
+		return nil
 	}
-
-	if tail > 0 {
-		out = lastNLines(out, tail)
-	}
-
-	if maxBytes > 0 && len(out) > maxBytes {
-		out = out[len(out)-maxBytes:]
-		// Byte-slicing can land inside a multi-byte UTF-8 rune; advance past any
-		// leading continuation bytes so we never emit a partial rune (drops ≤3
-		// bytes, still within the maxBytes budget).
-		for len(out) > 0 && !utf8.RuneStart(out[0]) {
-			out = out[1:]
+	lines, rest := jobLogLines(trace, true)
+	var start []logLine
+	for _, l := range lines {
+		if sel.shown(l) {
+			start = append(start, l)
 		}
 	}
-
-	meta.returnedBytes = len(out)
-	meta.truncated = len(out) < meta.totalBytes
-	return out, meta, nil
+	if sel.tail > 0 && len(start) > sel.tail {
+		start = start[len(start)-sel.tail:]
+	}
+	if err := emit(start); err != nil {
+		return err
+	}
+	offset := len(trace) - len(rest)
+	finished := ciFinished(j.Status)
+	deadline := time.Now().Add(sel.wait)
+	for !finished {
+		left := time.Until(deadline)
+		if left <= 0 {
+			break
+		}
+		if err := ciSleep(ctx, min(ciPollEvery, left)); err != nil {
+			return err
+		}
+		chunk, err := client.Jobs.TraceFrom(ctx, t.project, t.id, offset)
+		if err != nil {
+			return readError(err, jobNotFound(t.project))
+		}
+		lines, rest := jobLogLines(chunk, true)
+		if err := emit(lines); err != nil {
+			return err
+		}
+		offset += len(chunk) - len(rest)
+		if j, err = client.Jobs.Get(ctx, t.project, t.id); err != nil {
+			return readError(err, jobNotFound(t.project))
+		}
+		finished = ciFinished(j.Status)
+	}
+	if finished {
+		// The end of the log, a last line without a newline included.
+		chunk, err := client.Jobs.TraceFrom(ctx, t.project, t.id, offset)
+		if err != nil {
+			return readError(err, jobNotFound(t.project))
+		}
+		lines, _ := jobLogLines(chunk, false)
+		if err := emit(lines); err != nil {
+			return err
+		}
+	}
+	summary := map[string]any{"ref": jobRef(t.project, t.id), "status": j.Status, "finished": finished, "count": count,
+		"has_more": !finished}
+	if !finished {
+		summary["continuation_reason"] = fmt.Sprintf("The job was still running when the %s wait ended; run job log --follow again to keep following.", sel.wait)
+	}
+	s.Summary(summary)
+	return nil
 }
 
-// lastNLines returns the final n lines of data, preserving line endings.
-func lastNLines(data []byte, n int) []byte {
-	if n <= 0 || len(data) == 0 {
-		return data
+// ---------------------------------------------------------------- retry, play, cancel
+
+// jobAction is a retry, a play or a cancel: what blocks it for a status, the
+// statuses GitLab's answer shows when it worked, and the request.
+type jobAction struct {
+	verb, note string
+	blocks     func(status string) []aicli.Block
+	worked     []string
+	extra      []aicli.FieldChange
+	send       func(ctx context.Context, c *api.Client, project string, id int) (*api.Job, error)
+	newJob     bool // GitLab answers with a new job (retry)
+}
+
+// jobWrite runs a retry, play or cancel through the gate. The base version is the
+// status, as for pipelines.
+func jobWrite(app *aicli.App, cmd *cobra.Command, a jobAction) error {
+	gl := gitlabFor(app)
+	t, err := jobTarget(cmd, gl)
+	if err != nil {
+		return err
 	}
-	lines := bytes.SplitAfter(data, []byte("\n"))
-	if len(lines) > 0 && len(lines[len(lines)-1]) == 0 {
-		lines = lines[:len(lines)-1]
+	ref := jobRef(t.project, t.id)
+	return app.Write(cmd, aicli.WriteSpec{
+		Target:   aicli.Target{Key: ref, Kind: "job"},
+		ReadBack: "job get " + ref,
+		Preview: func(ctx context.Context) (aicli.Preview, error) {
+			client, err := gl.get()
+			if err != nil {
+				return aicli.Preview{}, err
+			}
+			cur, err := client.Jobs.Get(ctx, t.project, t.id)
+			if err != nil {
+				return aicli.Preview{}, readError(err, jobNotFound(t.project))
+			}
+			changes := append([]aicli.FieldChange{{Field: "status", Before: cur.Status, Note: a.note}}, a.extra...)
+			pv := aicli.Preview{Action: fmt.Sprintf("%s job %s", a.verb, ref), CanApply: true, Changes: changes,
+				BaseVersion: cur.Status, BaseSource: "status"}
+			if b := a.blocks(cur.Status); len(b) > 0 {
+				pv.CanApply, pv.BlockedBy = false, b
+			}
+			return pv, nil
+		},
+		Apply: func(ctx context.Context, op aicli.Op) (aicli.Result, error) {
+			client, err := gl.get()
+			if err != nil {
+				return aicli.Result{}, aicli.NotDispatched(err)
+			}
+			j, err := a.send(ctx, client, t.project, t.id)
+			if err != nil {
+				return aicli.Result{}, classifyWriteError(err, requiresRole("developer"), jobNotFound(t.project))
+			}
+			obs := map[string]any{"status": j.Status}
+			if a.newJob {
+				// The new job's ref is observed too, so `operation show` finds it after a
+				// lost reply (CLI-059).
+				obs["ref"] = jobRef(t.project, j.ID)
+			}
+			res := aicli.Result{Observed: obs, Data: jobOut(t.project, *j), Untrusted: jobUntrusted}
+			res.Outcome.Verification, res.Mismatched = ciVerifyStatus(j.Status, a.worked)
+			return res, nil
+		},
+	})
+}
+
+func addJobRetry(app *aicli.App, parent *cobra.Command) {
+	c := &cobra.Command{Use: "retry <job>", RunE: func(cmd *cobra.Command, _ []string) error {
+		return jobWrite(app, cmd, jobAction{verb: "Retry", newJob: true, worked: ciActiveStates,
+			note: "GitLab runs a new copy of the job; the result is the new job",
+			blocks: func(status string) []aicli.Block {
+				switch {
+				case status == "manual" || status == "scheduled":
+					return []aicli.Block{{Kind: "manual_job", Message: "A manual or scheduled job is started with `job play`, not retried."}}
+				case !slices.Contains([]string{"failed", "canceled", "success"}, status):
+					return []aicli.Block{{Kind: "not_finished", Message: "Only a failed, canceled or successful job can be retried."}}
+				}
+				return nil
+			},
+			send: func(ctx context.Context, c *api.Client, project string, id int) (*api.Job, error) {
+				return c.Jobs.Retry(ctx, project, id)
+			}})
+	}}
+	addJobTargetFlags(c)
+	parent.AddCommand(c)
+	app.Register(c, aicli.Meta{Summary: "Run a finished job again as a new job (a manual job is started with job play)",
+		Effects: []aicli.Effect{aicli.Change}, Output: "job", Positional: "job", ErrorCodes: gitlabWriteCodes,
+		Maturity: aicli.Verified, Evidence: []string{jobEvidence, liveEvidence("job")},
+		Examples: []string{"gitlab-cli job retry 456 --project acme/web --dry-run",
+			"gitlab-cli job retry 456 --project acme/web --confirm <confirm_token>"}})
+}
+
+func addJobPlay(app *aicli.App, parent *cobra.Command) {
+	c := &cobra.Command{Use: "play <job>", RunE: func(cmd *cobra.Command, _ []string) error {
+		keys, values, err := ciKeyValues(cmd, "variable")
+		if err != nil {
+			return err
+		}
+		vars := make([]api.JobVariable, len(keys))
+		for i := range keys {
+			vars[i] = api.JobVariable{Key: keys[i], Value: values[i]}
+		}
+		a := jobAction{verb: "Start", note: "the job starts", worked: ciActiveStates,
+			blocks: func(status string) []aicli.Block {
+				switch {
+				case status == "manual" || status == "scheduled":
+					return nil
+				case slices.Contains([]string{"failed", "canceled", "success"}, status):
+					return []aicli.Block{{Kind: "not_manual", Message: "Only a manual or scheduled job can be started; a finished job is run again with `job retry`."}}
+				}
+				return []aicli.Block{{Kind: "not_manual", Message: "Only a manual or scheduled job can be started; this job is already queued or running."}}
+			},
+			send: func(ctx context.Context, c *api.Client, project string, id int) (*api.Job, error) {
+				return c.Jobs.Play(ctx, project, id, vars)
+			}}
+		// Job variables may be secrets: the preview names the keys only (the flag is in
+		// Meta.Secrets, so the inputs show *** and bind a keyed digest).
+		if len(keys) > 0 {
+			a.extra = []aicli.FieldChange{{Field: "variables", After: ciSortedKeys(keys), Note: "the values are not shown"}}
+		}
+		return jobWrite(app, cmd, a)
+	}}
+	addJobTargetFlags(c)
+	c.Flags().StringArray("variable", nil, "Job variable KEY=VALUE, repeatable; values are secret: never shown or stored")
+	parent.AddCommand(c)
+	app.Register(c, aicli.Meta{Summary: "Start a manual or scheduled (delayed) job, optionally with job variables",
+		Aliases: []string{"start"}, Effects: []aicli.Effect{aicli.Change}, Output: "job", Positional: "job",
+		Secrets: []string{"variable"}, ErrorCodes: gitlabWriteCodes, Maturity: aicli.Experimental, Evidence: []string{jobEvidence},
+		Examples: []string{"gitlab-cli job play 456 --project acme/web --dry-run",
+			"gitlab-cli job play 456 --project acme/web --confirm <confirm_token>"}})
+}
+
+func addJobCancel(app *aicli.App, parent *cobra.Command) {
+	c := &cobra.Command{Use: "cancel <job>", RunE: func(cmd *cobra.Command, _ []string) error {
+		return jobWrite(app, cmd, jobAction{verb: "Cancel", note: "the job stops", worked: ciCanceledStates,
+			blocks: func(status string) []aicli.Block {
+				if slices.Contains(ciActiveStates, status) {
+					return nil
+				}
+				return []aicli.Block{{Kind: "not_cancelable", Message: "The job is not queued or running, so it cannot be canceled."}}
+			},
+			send: func(ctx context.Context, c *api.Client, project string, id int) (*api.Job, error) {
+				return c.Jobs.Cancel(ctx, project, id)
+			}})
+	}}
+	addJobTargetFlags(c)
+	parent.AddCommand(c)
+	app.Register(c, aicli.Meta{Summary: "Cancel a pending or running job (job retry runs it again)",
+		Effects: []aicli.Effect{aicli.Change}, Output: "job", Positional: "job", ErrorCodes: gitlabWriteCodes,
+		Maturity: aicli.Experimental, Evidence: []string{jobEvidence},
+		Examples: []string{"gitlab-cli job cancel 456 --project acme/web --dry-run",
+			"gitlab-cli job cancel 456 --project acme/web --confirm <confirm_token>"}})
+}
+
+// ---------------------------------------------------------------- artifacts
+
+// jobArtifactsTimeout bounds a download (WriteSpec.Timeout): archives can be large.
+const jobArtifactsTimeout = 10 * time.Minute
+
+func addJobArtifacts(app *aicli.App, parent *cobra.Command) {
+	c := &cobra.Command{Use: "artifacts <job>", RunE: func(cmd *cobra.Command, _ []string) error {
+		raw, _ := cmd.Flags().GetString("output")
+		path, err := filepath.Abs(strings.TrimSpace(raw))
+		if strings.TrimSpace(raw) == "" || err != nil {
+			e := aicli.Usage("invalid_value", "--output", "--output must name the new file to write.")
+			e.Details["expected"] = "a file path such as ./artifacts.zip"
+			return e
+		}
+		// The command only creates files: the gate refuses an --output that exists, at
+		// the dry-run and at the confirm, as E_VALIDATION (artifact without persist, Q9).
+		// The absolute path is what the scope checks and what is written, so it is what
+		// the token binds: ./a.zip from another directory is another request.
+		if err := aicli.SetResolved(cmd, "output", path); err != nil {
+			return err
+		}
+		gl := gitlabFor(app)
+		t, err := jobTarget(cmd, gl)
+		if err != nil {
+			return err
+		}
+		ref := jobRef(t.project, t.id)
+		return app.Write(cmd, aicli.WriteSpec{
+			// The target is the job, so a scope narrowed to the project covers it; the file
+			// is the preview's output, which the scope's outputs must cover (SEC-012).
+			Target:   aicli.Target{Key: ref, Kind: "job_artifacts"},
+			ReadBack: "job get " + ref,
+			Timeout:  jobArtifactsTimeout,
+			Preview: func(ctx context.Context) (aicli.Preview, error) {
+				client, err := gl.get()
+				if err != nil {
+					return aicli.Preview{}, err
+				}
+				j, err := client.Jobs.Get(ctx, t.project, t.id)
+				if err != nil {
+					return aicli.Preview{}, readError(err, jobNotFound(t.project))
+				}
+				changes := []aicli.FieldChange{{Field: "path", After: path, Note: "a new file; an existing file is never overwritten"}}
+				if j.ArtifactsFile != nil {
+					changes = append([]aicli.FieldChange{{Field: "bytes", After: j.ArtifactsFile.Size}}, changes...)
+				}
+				pv := aicli.Preview{Action: fmt.Sprintf("Save the artifacts archive of job %s as %s", ref, path), CanApply: true,
+					Changes: changes, Outputs: []string{path}}
+				if b := jobArtifactsBlocks(j, path); len(b) > 0 {
+					pv.CanApply, pv.BlockedBy = false, b
+				}
+				return pv, nil
+			},
+			Apply: func(ctx context.Context, op aicli.Op) (aicli.Result, error) {
+				client, err := gl.get()
+				if err != nil {
+					return aicli.Result{}, aicli.NotDispatched(err)
+				}
+				return jobArtifactsSave(ctx, app, client, t, path)
+			},
+		})
+	}}
+	addJobTargetFlags(c)
+	c.Flags().String("output", "", "The new file to write the artifacts archive to (an existing file is never overwritten)")
+	_ = c.MarkFlagRequired("output")
+	parent.AddCommand(c)
+	app.Register(c, aicli.Meta{Summary: "Download a job's artifacts archive into a new local file (--output)",
+		Aliases: []string{"download"}, Effects: []aicli.Effect{aicli.Artifact}, Output: "job_artifacts", Positional: "job",
+		Params:     map[string]aicli.ParamDoc{"output": {Type: "path"}},
+		ErrorCodes: gitlabWriteCodes, Maturity: aicli.Verified, Evidence: []string{jobEvidence, liveEvidence("job")},
+		Examples: []string{"gitlab-cli job artifacts 456 --project acme/web --output ./artifacts.zip --dry-run",
+			"gitlab-cli job artifacts 456 --project acme/web --output ./artifacts.zip --confirm <confirm_token>"}})
+}
+
+// jobArtifactsBlocks says why the archive cannot be saved at path: the job has
+// none, or the path is a directory or has none (an existing file is the gate's
+// refusal, Q9).
+func jobArtifactsBlocks(j *api.Job, path string) []aicli.Block {
+	var out []aicli.Block
+	if j.ArtifactsFile == nil {
+		out = append(out, aicli.Block{Kind: "no_artifacts", Message: "The job has no artifacts archive: none was uploaded, or it expired."})
 	}
-	if len(lines) <= n {
-		return data
+	switch info, err := os.Lstat(path); {
+	case err == nil && info.IsDir():
+		out = append(out, aicli.Block{Kind: "is_directory", Message: "The output path is a directory; name a new file in it."})
+	case err == nil:
+	default:
+		if info, err := os.Stat(filepath.Dir(path)); err != nil || !info.IsDir() {
+			out = append(out, aicli.Block{Kind: "no_directory", Message: "The output file's directory does not exist."})
+		}
 	}
-	return bytes.Join(lines[len(lines)-n:], nil)
+	return out
+}
+
+// jobArtifactsSave streams the archive into a new file through App.OpenOutput (Q8):
+// a temporary file beside path, committed only when the download is complete, never
+// over an existing file (a file that appeared since the preview is Q9's
+// E_VALIDATION). A failed download or write leaves nothing.
+func jobArtifactsSave(ctx context.Context, app *aicli.App, client *api.Client, t ciTarget, path string) (aicli.Result, error) {
+	out, e := app.OpenOutput(path, false)
+	if e != nil {
+		return aicli.Result{}, aicli.NotDispatched(e)
+	}
+	if err := client.Jobs.ArtifactsTo(ctx, t.project, t.id, out); err != nil {
+		out.Abort()
+		// The download failed, so nothing was saved: the read's own error.
+		return aicli.Result{}, aicli.NotDispatched(readError(err, jobNotFound(t.project), requiresRole("reporter")))
+	}
+	if e := out.Commit(); e != nil {
+		return aicli.Result{}, aicli.NotDispatched(e)
+	}
+	obs := map[string]any{"path": out.Path(), "bytes": out.Size()}
+	data := map[string]any{"ref": jobRef(t.project, t.id), "path": out.Path(), "bytes": out.Size(), "sha256": out.SHA256()}
+	return aicli.Result{Observed: obs, Data: data}, nil
+}
+
+func addJobWait(app *aicli.App, parent *cobra.Command) {
+	c := &cobra.Command{Use: "wait <job>", RunE: func(cmd *cobra.Command, _ []string) error {
+		wait, poll := ciDeprecatedWait(app, cmd)
+		return jobShow(app, cmd, wait, poll)
+	}}
+	addJobTargetFlags(c)
+	c.Flags().Int("timeout", 0, "Seconds to wait, at most 90 (0: 90)")
+	c.Flags().Int("interval", 0, "Seconds between status reads")
+	parent.AddCommand(c)
+	app.Register(c, aicli.Meta{Summary: "Wait up to 90s for a job to finish and show it",
+		Deprecated: "use `job get <job> --wait <duration>`",
+		Effects:    []aicli.Effect{aicli.Observe}, Output: "job", Positional: "job",
+		Params:     map[string]aicli.ParamDoc{"timeout": {Unit: "seconds"}, "interval": {Unit: "seconds"}},
+		ErrorCodes: gitlabReadCodes, Maturity: aicli.Experimental, Evidence: []string{jobEvidence},
+		Examples: []string{"gitlab-cli job wait 456 --project acme/web --timeout 60"}})
 }

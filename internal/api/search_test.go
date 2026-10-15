@@ -5,234 +5,96 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-
-	"github.com/fatecannotbealtered/gitlab-cli/internal/config"
 )
 
 func newSearchTestClient(serverURL string) *Client {
-	return NewClient(&config.Config{Host: serverURL, Token: "test-token"})
+	return NewClient(&Config{Host: serverURL, Token: "test-token"})
 }
 
-func TestSearch_Projects(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v4/search" {
-			t.Errorf("path = %q, want /api/v4/search", r.URL.Path)
+// searchServer answers one search request after checking its path, scope, query
+// and page, with body.
+func searchServer(t *testing.T, path, scope, body string) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		if r.URL.EscapedPath() != path || q.Get("scope") != scope || q.Get("search") != "login bug" ||
+			q.Get("page") != "2" || q.Get("per_page") != "5" {
+			t.Errorf("request = %s?%s, want %s scope=%s", r.URL.EscapedPath(), r.URL.RawQuery, path, scope)
 		}
-		if r.URL.Query().Get("scope") != "projects" {
-			t.Errorf("scope = %q, want projects", r.URL.Query().Get("scope"))
-		}
-		if r.URL.Query().Get("search") != "myquery" {
-			t.Errorf("search = %q, want myquery", r.URL.Query().Get("search"))
-		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`[{"id":1,"name":"found","path_with_namespace":"g/found","web_url":"https://gl.example.com/g/found"}]`))
+		w.Header().Set("X-Next-Page", "3")
+		_, _ = w.Write([]byte(body))
 	}))
-	defer srv.Close()
+}
 
-	c := newSearchTestClient(srv.URL)
-	results, err := c.Search.Projects(testCtx, "myquery", 10)
-	if err != nil {
-		t.Fatalf("Projects: %v", err)
-	}
-	if len(results) != 1 || results[0].ID != 1 {
-		t.Errorf("unexpected: %+v", results)
+func TestSearch_ProjectsPage(t *testing.T) {
+	srv := searchServer(t, "/api/v4/search", "projects",
+		`[{"id":1,"name":"found","path_with_namespace":"g/found","web_url":"https://gl.example.com/g/found"}]`)
+	defer srv.Close()
+	ps, pag, err := newSearchTestClient(srv.URL).Search.ProjectsPage(testCtx, " login bug ", 2, 5)
+	if err != nil || len(ps) != 1 || ps[0].PathWithNamespace != "g/found" || ps[0].Archived != nil || pag.NextPage != 3 {
+		t.Fatalf("ProjectsPage = %+v, %+v, %v", ps, pag, err)
 	}
 }
 
-func TestSearch_Issues_Global(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v4/search" {
-			t.Errorf("path = %q, want /api/v4/search", r.URL.Path)
+func TestSearch_IssuesPage(t *testing.T) {
+	body := `[{"id":5,"iid":2,"project_id":1,"title":"bug","state":"opened","labels":["bug"],"author":{"username":"carol"},` +
+		`"web_url":"https://gl.example.com/g/p/-/issues/2","references":{"full":"g/p#2"}}]`
+	for _, c := range []struct{ project, path string }{{"", "/api/v4/search"}, {"g/p", "/api/v4/projects/g%2Fp/search"}} {
+		srv := searchServer(t, c.path, "issues", body)
+		is, _, err := newSearchTestClient(srv.URL).Search.IssuesPage(testCtx, SearchOpts{Project: c.project, Query: "login bug", Page: 2, PerPage: 5})
+		srv.Close()
+		if err != nil || len(is) != 1 || is[0].IID != 2 || is[0].References.Full != "g/p#2" || is[0].Author.Username != "carol" {
+			t.Fatalf("IssuesPage(%q) = %+v, %v", c.project, is, err)
 		}
-		if r.URL.Query().Get("scope") != "issues" {
-			t.Errorf("scope = %q, want issues", r.URL.Query().Get("scope"))
-		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`[{"id":5,"iid":2,"title":"bug","state":"opened","web_url":"https://gl.example.com/g/p/-/issues/2"}]`))
-	}))
-	defer srv.Close()
-
-	c := newSearchTestClient(srv.URL)
-	results, err := c.Search.Issues(testCtx, "bug", "", 10)
-	if err != nil {
-		t.Fatalf("Issues: %v", err)
-	}
-	if len(results) != 1 || results[0].IID != 2 {
-		t.Errorf("unexpected: %+v", results)
 	}
 }
 
-func TestSearch_Issues_ProjectScoped(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v4/projects/42/search" {
-			t.Errorf("path = %q, want /api/v4/projects/42/search", r.URL.Path)
-		}
-		if r.URL.Query().Get("scope") != "issues" {
-			t.Errorf("scope = %q, want issues", r.URL.Query().Get("scope"))
-		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`[]`))
-	}))
+func TestSearch_MergeRequestsPage(t *testing.T) {
+	srv := searchServer(t, "/api/v4/projects/42/search", "merge_requests",
+		`[{"id":9,"iid":4,"title":"feat","state":"opened","draft":true,"source_branch":"feat","target_branch":"main","references":{"full":"g/p!4"}}]`)
 	defer srv.Close()
-
-	c := newSearchTestClient(srv.URL)
-	_, err := c.Search.Issues(testCtx, "bug", "42", 10)
-	if err != nil {
-		t.Fatalf("Issues project-scoped: %v", err)
+	ms, _, err := newSearchTestClient(srv.URL).Search.MergeRequestsPage(testCtx, SearchOpts{Project: "42", Query: "login bug", Page: 2, PerPage: 5})
+	if err != nil || len(ms) != 1 || ms[0].IID != 4 || !ms[0].Draft || ms[0].TargetBranch != "main" {
+		t.Fatalf("MergeRequestsPage = %+v, %v", ms, err)
 	}
 }
 
-func TestSearch_Code_RequiresProject(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v4/projects/99/search" {
-			t.Errorf("path = %q, want /api/v4/projects/99/search", r.URL.Path)
-		}
-		if r.URL.Query().Get("scope") != "blobs" {
-			t.Errorf("scope = %q, want blobs", r.URL.Query().Get("scope"))
-		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`[{"basename":"main","data":"func main()","path":"main.go","filename":"main.go","ref":"main","startline":1,"project_id":99}]`))
-	}))
+func TestSearch_BlobsPage(t *testing.T) {
+	srv := searchServer(t, "/api/v4/projects/99/search", "blobs",
+		`[{"basename":"main","data":"func main()","path":"cmd/main.go","filename":"main.go","ref":"main","startline":7,"project_id":99}]`)
 	defer srv.Close()
-
-	c := newSearchTestClient(srv.URL)
-	results, err := c.Search.Code(testCtx, "func main", "99", 5)
-	if err != nil {
-		t.Fatalf("Code: %v", err)
-	}
-	if len(results) != 1 || results[0].Filename != "main.go" {
-		t.Errorf("unexpected: %+v", results)
+	bs, _, err := newSearchTestClient(srv.URL).Search.BlobsPage(testCtx, SearchOpts{Project: "99", Query: "login bug", Page: 2, PerPage: 5})
+	if err != nil || len(bs) != 1 || bs[0].Path != "cmd/main.go" || bs[0].StartLine != 7 || bs[0].Ref != "main" {
+		t.Fatalf("BlobsPage = %+v, %v", bs, err)
 	}
 }
 
-func TestSearch_MergeRequests_Global(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v4/search" {
-			t.Errorf("path = %q", r.URL.Path)
-		}
-		if r.URL.Query().Get("scope") != "merge_requests" {
-			t.Errorf("scope = %q, want merge_requests", r.URL.Query().Get("scope"))
-		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`[{"id":9,"iid":4,"title":"feat","state":"opened","web_url":"https://gl.example.com/mr/4","project_id":1}]`))
-	}))
+func TestSearch_CommitsPage(t *testing.T) {
+	srv := searchServer(t, "/api/v4/search", "commits",
+		`[{"id":"abc123def","short_id":"abc123d","title":"fix: bug","author_name":"Alice","created_at":"2024-01-01T00:00:00Z","web_url":"https://gl.example.com/g/p/-/commit/abc123def"}]`)
 	defer srv.Close()
-
-	c := newSearchTestClient(srv.URL)
-	results, err := c.Search.MergeRequests(testCtx, "feat", "", 10)
-	if err != nil {
-		t.Fatalf("MergeRequests: %v", err)
-	}
-	if len(results) != 1 || results[0].IID != 4 {
-		t.Errorf("unexpected: %+v", results)
+	cs, _, err := newSearchTestClient(srv.URL).Search.CommitsPage(testCtx, SearchOpts{Query: "login bug", Page: 2, PerPage: 5})
+	if err != nil || len(cs) != 1 || cs[0].ShortID != "abc123d" || !strings.HasSuffix(cs[0].WebURL, "/commit/abc123def") {
+		t.Fatalf("CommitsPage = %+v, %v", cs, err)
 	}
 }
 
-func TestSearch_MergeRequests_ProjectScoped(t *testing.T) {
+func TestSearch_ParseErrors(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v4/projects/42/search" {
-			t.Errorf("path = %q", r.URL.Path)
-		}
-		if r.URL.Query().Get("scope") != "merge_requests" {
-			t.Errorf("scope = %q", r.URL.Query().Get("scope"))
-		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`[]`))
-	}))
-	defer srv.Close()
-
-	c := newSearchTestClient(srv.URL)
-	if _, err := c.Search.MergeRequests(testCtx, "fix", "42", 10); err != nil {
-		t.Fatalf("MergeRequests project-scoped: %v", err)
-	}
-}
-
-func TestSearch_MergeRequests_ParseError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`not-json`))
-	}))
-	defer srv.Close()
-
-	c := newSearchTestClient(srv.URL)
-	_, err := c.Search.MergeRequests(testCtx, "x", "", 10)
-	if err == nil || !strings.Contains(err.Error(), "parsing search mrs") {
-		t.Fatalf("expected parse error, got %v", err)
-	}
-}
-
-func TestSearch_Projects_ParseError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`bad`))
 	}))
 	defer srv.Close()
-
 	c := newSearchTestClient(srv.URL)
-	_, err := c.Search.Projects(testCtx, "q", 10)
-	if err == nil || !strings.Contains(err.Error(), "parsing search projects") {
-		t.Fatalf("expected parse error, got %v", err)
+	opts := SearchOpts{Project: "1", Query: "q"}
+	checks := map[string]func() error{
+		"projects":       func() error { _, _, err := c.Search.ProjectsPage(testCtx, "q", 1, 5); return err },
+		"issues":         func() error { _, _, err := c.Search.IssuesPage(testCtx, opts); return err },
+		"merge_requests": func() error { _, _, err := c.Search.MergeRequestsPage(testCtx, opts); return err },
+		"blobs":          func() error { _, _, err := c.Search.BlobsPage(testCtx, opts); return err },
+		"commits":        func() error { _, _, err := c.Search.CommitsPage(testCtx, opts); return err },
 	}
-}
-
-func TestSearch_Issues_ParseError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`bad`))
-	}))
-	defer srv.Close()
-
-	c := newSearchTestClient(srv.URL)
-	_, err := c.Search.Issues(testCtx, "q", "", 10)
-	if err == nil || !strings.Contains(err.Error(), "parsing search issues") {
-		t.Fatalf("expected parse error, got %v", err)
-	}
-}
-
-func TestSearch_Code_ParseError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`bad`))
-	}))
-	defer srv.Close()
-
-	c := newSearchTestClient(srv.URL)
-	_, err := c.Search.Code(testCtx, "q", "99", 5)
-	if err == nil || !strings.Contains(err.Error(), "parsing search blobs") {
-		t.Fatalf("expected parse error, got %v", err)
-	}
-}
-
-func TestSearch_Commits_ParseError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`bad`))
-	}))
-	defer srv.Close()
-
-	c := newSearchTestClient(srv.URL)
-	_, err := c.Search.Commits(testCtx, "q", "", 10)
-	if err == nil || !strings.Contains(err.Error(), "parsing search commits") {
-		t.Fatalf("expected parse error, got %v", err)
-	}
-}
-
-func TestSearch_Commits_Global(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("scope") != "commits" {
-			t.Errorf("scope = %q, want commits", r.URL.Query().Get("scope"))
+	for scope, fn := range checks {
+		if err := fn(); err == nil || !strings.Contains(err.Error(), "parsing search "+scope) {
+			t.Errorf("%s: expected parse error, got %v", scope, err)
 		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`[{"id":"abc123","short_id":"abc123","title":"fix: bug","author_name":"Alice","created_at":"2024-01-01T00:00:00Z","web_url":"https://gl.example.com/g/p/-/commit/abc123"}]`))
-	}))
-	defer srv.Close()
-
-	c := newSearchTestClient(srv.URL)
-	results, err := c.Search.Commits(testCtx, "fix", "", 10)
-	if err != nil {
-		t.Fatalf("Commits: %v", err)
-	}
-	if len(results) != 1 || results[0].ShortID != "abc123" {
-		t.Errorf("unexpected: %+v", results)
 	}
 }

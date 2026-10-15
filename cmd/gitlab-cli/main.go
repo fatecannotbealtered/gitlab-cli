@@ -1,35 +1,11 @@
+// Command gitlab-cli is GitLab for AI agents, built on the aicli library
+// (ai-native-cli-spec 2.0).
 package main
 
 import (
-	"context"
-	"errors"
-	"fmt"
 	"os"
-	"os/signal"
-	"syscall"
 
 	"github.com/fatecannotbealtered/gitlab-cli/cmd"
 )
 
-var osExit = os.Exit
-
-func main() {
-	osExit(run(os.Args))
-}
-
-func run(args []string) int {
-	if len(args) > 0 {
-		os.Args = args
-	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
-	if err := cmd.ExecuteContext(ctx); err != nil {
-		if errors.Is(err, cmd.ErrSilent) {
-			return cmd.LastExitCode()
-		}
-		fmt.Fprintln(os.Stderr, "Error:", err)
-		return cmd.ExitBadArgs
-	}
-	return 0
-}
+func main() { os.Exit(cmd.NewApp(os.Getenv).Execute(os.Args[1:])) }

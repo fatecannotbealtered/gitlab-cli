@@ -44,11 +44,14 @@ scripts/npm-token.local
 scripts/gitlab-runner-e2e.config.toml
 .e2e-auth-home/
 
-# E2E test report (generated locally; docs/E2E-ACCEPTANCE-REPORT.* are committed snapshots)
+# 1.x E2E reports (no longer generated; the live suite's records stay in its run directory)
 scripts/e2e-report.csv
 scripts/e2e-report.log
 scripts/e2e-report-verbose.log
 scripts/unit-report.log
+
+# Python bytecode (the live suite in e2e/)
+__pycache__/
 
 # coverage (go test -coverprofile / parallel agent runs)
 cov.out

@@ -88,7 +88,7 @@ $reg = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) "e2e-runner-r
 if (Test-Path $reg) {
     & $reg -HttpPort $HttpPort
     if ($LASTEXITCODE -ne 0) {
-        Write-Host "Runner registration failed; pipeline/job E2E tests may SKIP." -ForegroundColor Yellow
+        Write-Host "Runner registration failed; the live suite's ci phase needs a runner." -ForegroundColor Yellow
     }
 }
 
