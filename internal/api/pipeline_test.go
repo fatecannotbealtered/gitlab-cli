@@ -7,43 +7,43 @@ import (
 	"testing"
 )
 
-func TestPipeline_List(t *testing.T) {
+func TestPipeline_ListPage(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasPrefix(r.URL.Path, "/api/v4/projects/") || !strings.HasSuffix(r.URL.Path, "/pipelines") {
-			t.Errorf("unexpected path: %q", r.URL.Path)
+		q := r.URL.Query()
+		if r.URL.Path != "/api/v4/projects/group/proj/pipelines" && r.URL.EscapedPath() != "/api/v4/projects/group%2Fproj/pipelines" {
+			t.Errorf("unexpected path: %q", r.URL.EscapedPath())
 		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`[{"id":1,"iid":1,"ref":"main","status":"success"},{"id":2,"iid":2,"ref":"main","status":"failed"}]`))
+		if q.Get("ref") != "main" || q.Get("status") != "failed" || q.Get("username") != "carol" || q.Get("page") != "2" || q.Get("per_page") != "5" {
+			t.Errorf("query = %q", r.URL.RawQuery)
+		}
+		w.Header().Set("X-Next-Page", "3")
+		w.Header().Set("X-Total", "12")
+		_, _ = w.Write([]byte(`[{"id":1,"iid":1,"ref":"main","status":"failed","name":"Nightly"},{"id":2,"iid":2,"ref":"main","status":"failed"}]`))
 	}))
 	defer srv.Close()
 
 	c := newTestClient(srv.URL)
-	pipelines, err := c.Pipelines.List(testCtx, "group/proj", &PipelineListOpts{Ref: "main", Limit: 10})
+	ps, pag, err := c.Pipelines.ListPage(testCtx, "group/proj", PipelineListOpts{Ref: "main", Status: "failed", Username: "carol", Page: 2, PerPage: 5})
 	if err != nil {
-		t.Fatalf("List: %v", err)
+		t.Fatalf("ListPage: %v", err)
 	}
-	if len(pipelines) != 2 || pipelines[0].ID != 1 || pipelines[1].Status != "failed" {
-		t.Errorf("unexpected pipelines: %+v", pipelines)
+	if len(ps) != 2 || ps[0].Name != "Nightly" || pag.NextPage != 3 || !pag.HasTotal || pag.Total != 12 {
+		t.Errorf("unexpected: %+v %+v", ps, pag)
 	}
 }
 
-func TestPipeline_List_StatusFilter(t *testing.T) {
+func TestPipeline_ListPage_NoFilters(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("status") != "running" {
-			t.Errorf("expected status=running, got %q", r.URL.Query().Get("status"))
+		for _, k := range []string{"ref", "status", "username"} {
+			if r.URL.Query().Has(k) {
+				t.Errorf("%s sent without being asked: %q", k, r.URL.RawQuery)
+			}
 		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`[{"id":3,"status":"running"}]`))
+		_, _ = w.Write([]byte(`[]`))
 	}))
 	defer srv.Close()
-
-	c := newTestClient(srv.URL)
-	pipelines, err := c.Pipelines.List(testCtx, "42", &PipelineListOpts{Status: "running"})
-	if err != nil {
-		t.Fatalf("List: %v", err)
-	}
-	if len(pipelines) != 1 || pipelines[0].Status != "running" {
-		t.Errorf("unexpected: %+v", pipelines)
+	if _, _, err := newTestClient(srv.URL).Pipelines.ListPage(testCtx, "42", PipelineListOpts{}); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -52,37 +52,34 @@ func TestPipeline_Get(t *testing.T) {
 		if r.URL.Path != "/api/v4/projects/42/pipelines/7" {
 			t.Errorf("path = %q", r.URL.Path)
 		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"id":7,"iid":3,"ref":"feature","status":"running","web_url":"https://x"}`))
+		_, _ = w.Write([]byte(`{"id":7,"iid":3,"ref":"feature","status":"running","web_url":"https://x","duration":61,"coverage":"80.5",
+			"yaml_errors":null,"user":{"username":"carol"},"started_at":"2026-10-12T09:00:00Z"}`))
 	}))
 	defer srv.Close()
 
-	c := newTestClient(srv.URL)
-	p, err := c.Pipelines.Get(testCtx, "42", 7)
+	p, err := newTestClient(srv.URL).Pipelines.Get(testCtx, "42", 7)
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if p.ID != 7 || p.Status != "running" {
+	if p.ID != 7 || p.Status != "running" || p.Duration == nil || *p.Duration != 61 || *p.Coverage != "80.5" ||
+		p.YamlErrors != nil || p.User.Username != "carol" || p.StartedAt == "" {
 		t.Errorf("unexpected: %+v", p)
 	}
 }
 
 func TestPipeline_Create(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			t.Errorf("method = %q, want POST", r.Method)
-		}
-		// Note singular /pipeline (GitLab quirk)
-		if r.URL.Path != "/api/v4/projects/42/pipeline" {
-			t.Errorf("path = %q, want /api/v4/projects/42/pipeline", r.URL.Path)
+		// GitLab's create endpoint is the singular /pipeline.
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v4/projects/42/pipeline" {
+			t.Errorf("unexpected: %s %s", r.Method, r.URL.Path)
 		}
 		w.WriteHeader(http.StatusCreated)
 		_, _ = w.Write([]byte(`{"id":10,"ref":"main","status":"created"}`))
 	}))
 	defer srv.Close()
 
-	c := newTestClient(srv.URL)
-	p, err := c.Pipelines.Create(testCtx, "42", PipelineCreateBody{Ref: "main"})
+	p, err := newTestClient(srv.URL).Pipelines.Create(testCtx, "42", PipelineCreateBody{Ref: "main",
+		Variables: []PipelineVariable{{Key: "A", Value: "1"}}})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -91,161 +88,75 @@ func TestPipeline_Create(t *testing.T) {
 	}
 }
 
-func TestPipeline_Retry(t *testing.T) {
+func TestPipeline_RetryAndCancel(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || !strings.HasSuffix(r.URL.Path, "/retry") {
-			t.Errorf("unexpected: %s %s", r.Method, r.URL.Path)
+		if r.Method != http.MethodPost {
+			t.Errorf("method = %s", r.Method)
 		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"id":10,"status":"pending"}`))
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/pipelines/10/retry"):
+			_, _ = w.Write([]byte(`{"id":10,"status":"pending"}`))
+		case strings.HasSuffix(r.URL.Path, "/pipelines/10/cancel"):
+			_, _ = w.Write([]byte(`{"id":10,"status":"canceled"}`))
+		default:
+			t.Errorf("path = %s", r.URL.Path)
+		}
 	}))
 	defer srv.Close()
 
 	c := newTestClient(srv.URL)
-	p, err := c.Pipelines.Retry(testCtx, "42", 10)
-	if err != nil {
-		t.Fatalf("Retry: %v", err)
+	if p, err := c.Pipelines.Retry(testCtx, "42", 10); err != nil || p.Status != "pending" {
+		t.Fatalf("Retry: %+v %v", p, err)
 	}
-	if p.Status != "pending" {
-		t.Errorf("unexpected status: %q", p.Status)
-	}
-}
-
-func TestPipeline_Cancel(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || !strings.HasSuffix(r.URL.Path, "/cancel") {
-			t.Errorf("unexpected: %s %s", r.Method, r.URL.Path)
-		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"id":10,"status":"canceled"}`))
-	}))
-	defer srv.Close()
-
-	c := newTestClient(srv.URL)
-	p, err := c.Pipelines.Cancel(testCtx, "42", 10)
-	if err != nil {
-		t.Fatalf("Cancel: %v", err)
-	}
-	if p.Status != "canceled" {
-		t.Errorf("unexpected status: %q", p.Status)
+	if p, err := c.Pipelines.Cancel(testCtx, "42", 10); err != nil || p.Status != "canceled" {
+		t.Fatalf("Cancel: %+v %v", p, err)
 	}
 }
 
-func TestPipeline_Jobs(t *testing.T) {
+func TestPipeline_JobsPage(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasSuffix(r.URL.Path, "/jobs") {
+		if !strings.HasSuffix(r.URL.Path, "/pipelines/10/jobs") {
 			t.Errorf("path = %q", r.URL.Path)
 		}
-		scopes := r.URL.Query()["scope[]"]
-		if len(scopes) != 1 || scopes[0] != "failed" {
-			t.Errorf("scope[] = %v, want [failed]", scopes)
+		if scopes := r.URL.Query()["scope[]"]; len(scopes) != 2 || scopes[0] != "failed" || scopes[1] != "canceled" {
+			t.Errorf("scope[] = %v", scopes)
 		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`[{"id":5,"name":"test","status":"failed"}]`))
+		_, _ = w.Write([]byte(`[{"id":5,"name":"test","status":"failed","failure_reason":"script_failure","pipeline":{"id":10}}]`))
 	}))
 	defer srv.Close()
 
-	c := newTestClient(srv.URL)
-	jobs, err := c.Pipelines.Jobs(testCtx, "42", 10, []string{"failed"})
+	jobs, _, err := newTestClient(srv.URL).Pipelines.JobsPage(testCtx, "42", 10, PipelineJobsOpts{Scope: []string{"failed", "canceled"}})
 	if err != nil {
-		t.Fatalf("Jobs: %v", err)
+		t.Fatalf("JobsPage: %v", err)
 	}
-	if len(jobs) != 1 || jobs[0].ID != 5 {
+	if len(jobs) != 1 || jobs[0].ID != 5 || jobs[0].FailureReason != "script_failure" || jobs[0].Pipeline.ID != 10 {
 		t.Errorf("unexpected: %+v", jobs)
 	}
 }
 
-func TestPipeline_List_ParseError(t *testing.T) {
+func TestPipeline_ParseErrors(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`bad`))
 	}))
 	defer srv.Close()
 
 	c := newTestClient(srv.URL)
-	_, err := c.Pipelines.List(testCtx, "42", nil)
-	if err == nil || !strings.Contains(err.Error(), "parsing pipelines") {
-		t.Fatalf("expected parse error, got %v", err)
+	if _, _, err := c.Pipelines.ListPage(testCtx, "42", PipelineListOpts{}); err == nil || !strings.Contains(err.Error(), "parsing pipelines") {
+		t.Errorf("ListPage: %v", err)
 	}
-}
-
-func TestPipeline_Get_ParseError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`bad`))
-	}))
-	defer srv.Close()
-
-	c := newTestClient(srv.URL)
-	_, err := c.Pipelines.Get(testCtx, "42", 1)
-	if err == nil || !strings.Contains(err.Error(), "parsing pipeline") {
-		t.Fatalf("expected parse error, got %v", err)
+	if _, err := c.Pipelines.Get(testCtx, "42", 1); err == nil || !strings.Contains(err.Error(), "parsing pipeline") {
+		t.Errorf("Get: %v", err)
 	}
-}
-
-func TestPipeline_Create_ParseError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`bad`))
-	}))
-	defer srv.Close()
-
-	c := newTestClient(srv.URL)
-	_, err := c.Pipelines.Create(testCtx, "42", PipelineCreateBody{Ref: "main"})
-	if err == nil || !strings.Contains(err.Error(), "parsing pipeline") {
-		t.Fatalf("expected parse error, got %v", err)
+	if _, err := c.Pipelines.Create(testCtx, "42", PipelineCreateBody{Ref: "main"}); err == nil || !strings.Contains(err.Error(), "parsing pipeline") {
+		t.Errorf("Create: %v", err)
 	}
-}
-
-func TestPipeline_Retry_ParseError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`bad`))
-	}))
-	defer srv.Close()
-
-	c := newTestClient(srv.URL)
-	_, err := c.Pipelines.Retry(testCtx, "42", 1)
-	if err == nil || !strings.Contains(err.Error(), "parsing pipeline") {
-		t.Fatalf("expected parse error, got %v", err)
+	if _, err := c.Pipelines.Retry(testCtx, "42", 1); err == nil || !strings.Contains(err.Error(), "parsing pipeline") {
+		t.Errorf("Retry: %v", err)
 	}
-}
-
-func TestPipeline_Cancel_ParseError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`bad`))
-	}))
-	defer srv.Close()
-
-	c := newTestClient(srv.URL)
-	_, err := c.Pipelines.Cancel(testCtx, "42", 1)
-	if err == nil || !strings.Contains(err.Error(), "parsing pipeline") {
-		t.Fatalf("expected parse error, got %v", err)
+	if _, err := c.Pipelines.Cancel(testCtx, "42", 1); err == nil || !strings.Contains(err.Error(), "parsing pipeline") {
+		t.Errorf("Cancel: %v", err)
 	}
-}
-
-func TestPipeline_Jobs_ParseError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`bad`))
-	}))
-	defer srv.Close()
-
-	c := newTestClient(srv.URL)
-	_, err := c.Pipelines.Jobs(testCtx, "42", 1, nil)
-	if err == nil || !strings.Contains(err.Error(), "parsing jobs") {
-		t.Fatalf("expected parse error, got %v", err)
-	}
-}
-
-func TestPipelineListOpts_EncodeUsername(t *testing.T) {
-	opts := &PipelineListOpts{Username: "alice", Ref: "main"}
-	q := opts.encode()
-	if !strings.Contains(q, "username=alice") || !strings.Contains(q, "ref=main") {
-		t.Errorf("encode() = %q", q)
-	}
-	if (*PipelineListOpts)(nil).encode() != "" {
-		t.Error("nil encode should be empty")
+	if _, _, err := c.Pipelines.JobsPage(testCtx, "42", 1, PipelineJobsOpts{}); err == nil || !strings.Contains(err.Error(), "parsing jobs") {
+		t.Errorf("JobsPage: %v", err)
 	}
 }

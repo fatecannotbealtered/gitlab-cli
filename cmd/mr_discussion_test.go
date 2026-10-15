@@ -1,452 +1,157 @@
 package cmd
 
 import (
-	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 )
 
-func TestMRDiscussion_List_JSON(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `[{"id":"abc123","individual_note":false,"notes":[{"id":1,"body":"please fix","author":{"username":"alice"},"created_at":"2024-01-01"}]}]`)
-	}))
-	defer srv.Close()
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origJM := jsonMode
-	defer func() { jsonMode = origJM }()
-	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"mr", "discussion", "list", "--project", "foo/bar", "7", "--json"})
-		_ = rootCmd.Execute()
+func init() {
+	addConformanceSamples(map[string][]string{
+		"mr discussion reply":     {"5", "--project", "acme/web", "--discussion-id", "d5b", "--body", "Fixed in the last commit."},
+		"mr discussion create":    {"5", "--project", "acme/web", "--new-path", "src/client.go", "--new-line", "42", "--body", "This can be nil."},
+		"mr discussion resolve":   {"5", "--project", "acme/web", "--discussion-id", "d5b"},
+		"mr discussion unresolve": {"5", "--project", "acme/web", "--discussion-id", "d5c"},
 	})
-	if !strings.Contains(out, `"abc123"`) || !strings.Contains(out, `"please fix"`) {
-		t.Errorf("expected discussion + note body in output, got:\n%s", out)
+}
+
+func TestMRDiscussionMatrix(t *testing.T) {
+	cases := []matrixCase{
+		{Path: "mr discussion list", Args: []string{"5", "--project", "acme/web"}, EmptyArgs: []string{"7", "--project", "acme/web"},
+			Invalid: []invalidCase{{[]string{"--project", "acme/web"}, "E_USAGE", "missing_parameter", "--mr"}}},
+		{Path: "mr discussion get", Args: []string{"acme/web!5/discussions/d5b"},
+			Invalid: []invalidCase{
+				{[]string{"5", "--project", "acme/web"}, "E_USAGE", "missing_parameter", "--discussion-id"},
+				{[]string{"5", "--project", "acme/web", "--discussion-id", "a/b"}, "E_VALIDATION", "invalid_value", "--discussion-id"},
+				{[]string{"acme/web!5/discussions/d5b", "--discussion-id", "d5c"}, "E_USAGE", "conflicting_flags", "--discussion-id"},
+			}},
+		{Path: "mr discussion reply", Args: []string{"5", "--project", "acme/web", "--discussion-id", "d5b", "--body", "Fixed."},
+			Role: "guest", RequestFields: map[string]string{"body": "body"},
+			Invalid: []invalidCase{
+				{[]string{"acme/web!5/discussions/d5b"}, "E_USAGE", "missing_parameter", "--body"},
+				{[]string{"acme/web!5", "--body", "x"}, "E_USAGE", "missing_parameter", "--discussion-id"},
+			}},
+		{Path: "mr discussion create", Args: []string{"5", "--project", "acme/web", "--new-path", "src/client.go", "--new-line", "42",
+			"--body", "This can be nil."}, Role: "guest", RequestFields: map[string]string{"body": "body"},
+			Invalid: []invalidCase{
+				{[]string{"acme/web!5", "--new-line", "1", "--body", "x"}, "E_USAGE", "missing_parameter", "--new-path"},
+				{[]string{"acme/web!5", "--new-path", "a.go", "--body", "x"}, "E_USAGE", "missing_parameter", "--new-line"},
+				{[]string{"acme/web!5", "--new-path", "a.go", "--new-line", "-2", "--body", "x"}, "E_VALIDATION", "invalid_value", "--new-line"},
+				{[]string{"acme/web!5", "--new-path", "a.go", "--new-line", "2"}, "E_USAGE", "missing_parameter", "--body"},
+			}},
+		{Path: "mr discussion resolve", Args: []string{"acme/web!5/discussions/d5b"}, Role: "developer",
+			Invalid: []invalidCase{{[]string{"acme/web!5"}, "E_USAGE", "missing_parameter", "--discussion-id"}}},
+		{Path: "mr discussion unresolve", Args: []string{"acme/web!5/discussions/d5c"}, Role: "developer",
+			Invalid: []invalidCase{{[]string{"acme/web!5/discussions/"}, "E_USAGE", "missing_parameter", "--discussion-id"}}},
+	}
+	for _, c := range cases {
+		t.Run(c.Path, func(t *testing.T) { runMatrix(t, c) })
 	}
 }
 
-func TestMRDiscussion_List_PlainText(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `[{"id":"abc123","individual_note":false,"notes":[{"id":1,"body":"hello","author":{"username":"alice"},"created_at":"2024-01-01"}]}]`)
-	}))
-	defer srv.Close()
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origJM := jsonMode
-	defer func() { jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
-	setTextFormatForTest(t)
-	_ = rootCmd.PersistentFlags().Set("json", "false")
-	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"mr", "discussion", "list", "--project", "foo/bar", "7"})
-		_ = rootCmd.Execute()
+// TestMRDiscussionListIsSummaries: bounded summaries (CLI-043): who opened the
+// thread, an excerpt, where it is anchored, resolved or not; no notes. Threads of
+// system notes are left out.
+func TestMRDiscussionListIsSummaries(t *testing.T) {
+	e := newTestEnv(t)
+	r := e.run("mr", "discussion", "list", "acme/web!5", "--fields", "all")
+	items := r.items()
+	if r.exit != 0 || len(items) != 3 {
+		t.Fatalf("threads: %s", r.out)
+	}
+	open, done := items[1], items[2]
+	if open["ref"] != "acme/web!5/discussions/d5b" || open["resolvable"] != true || open["resolved"] != false || open["author"] != "@erin" ||
+		open["path"] != "src/client.go" || open["line"] == nil || open["note_count"] == nil || open["notes"] != nil ||
+		open["updated_at"] != "2026-10-04T09:00:00Z" {
+		t.Fatalf("an open thread: %v", open)
+	}
+	if done["resolved"] != true || items[0]["resolvable"] != false || items[0]["individual_note"] != true {
+		t.Fatalf("a resolved thread and a comment: %v %v", done, items[0])
+	}
+	r = e.run("mr", "threads", "ls", "acme/web!6")
+	if r.exit != 0 || len(r.items()) != 1 || !strings.Contains(r.data()["scope"].(map[string]any)["covers"].(string), "system notes") {
+		t.Fatalf("system threads left out: %s", r.out)
+	}
+	e.gl.locked(func() {
+		fakeMRByIID(e.gl, 5).Discussions[0].Notes[0].Body = strings.Repeat("long ", 100)
 	})
-	if !strings.Contains(out, "abc123") {
-		t.Errorf("expected discussion id in plain text, got:\n%s", out)
+	r = e.run("mr", "discussion", "list", "acme/web!5")
+	if ex, _ := r.items()[0]["excerpt"].(string); len([]rune(ex)) != 201 || !strings.HasSuffix(ex, "…") {
+		t.Fatalf("the excerpt is bounded: %q", ex)
 	}
 }
 
-func TestMRDiscussion_List_Empty(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `[]`)
-	}))
-	defer srv.Close()
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origJM := jsonMode
-	defer func() { jsonMode = origJM; _ = rootCmd.PersistentFlags().Set("json", "false") }()
-	setTextFormatForTest(t)
-	_ = rootCmd.PersistentFlags().Set("json", "false")
-	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"mr", "discussion", "list", "--project", "foo/bar", "7"})
-		_ = rootCmd.Execute()
-	})
-	if !strings.Contains(out, "No discussions") {
-		t.Errorf("expected 'No discussions' in output, got:\n%s", out)
+func TestMRDiscussionGetHasTheThread(t *testing.T) {
+	e := newTestEnv(t)
+	r := e.run("mr", "discussion", "get", "5", "--project", "acme/web", "--discussion-id", "d5b")
+	notes, _ := r.data()["notes"].([]any)
+	if r.exit != 0 || len(notes) != 2 || notes[1].(map[string]any)["ref"] != "acme/web!5/notes/9003" ||
+		notes[1].(map[string]any)["body"] != "Good catch, fixing." {
+		t.Fatalf("thread: %s", r.out)
+	}
+	if u := stringsOf(r.doc["meta"].(map[string]any)["untrusted"]); !hasString(u, "data.notes[].body") || !hasString(u, "data.excerpt") {
+		t.Fatalf("note bodies are untrusted: %v", u)
+	}
+	if r = e.run("mr", "discussion", "get", "acme/web!5#discussion_nope"); r.code() != "E_NOT_FOUND" ||
+		!strings.Contains(r.details()["next_action"].(string), "mr discussion list acme/web!5") {
+		t.Fatalf("a missing thread: %s", r.out)
 	}
 }
 
-func TestMRDiscussion_List_MissingProject(t *testing.T) {
-	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origExit := lastExit
-	defer func() { lastExit = origExit }()
-	lastExit = 0
-	_ = mrDiscussionListCmd.Flags().Set("project", "")
-	rootCmd.SetArgs([]string{"mr", "discussion", "list", "7"})
-	_ = rootCmd.Execute()
-	if lastExit != ExitBadArgs {
-		t.Errorf("exit = %d, want %d", lastExit, ExitBadArgs)
+// TestMRDiscussionReplyAndResolve: the thread's ref and --discussion-id bind as one
+// request (CLI-054); resolve and unresolve are blocked when moot, and the 1.x
+// resolve --unresolve still works, with a deprecated notice (CLI-081).
+func TestMRDiscussionReplyAndResolve(t *testing.T) {
+	e := newTestEnv(t)
+	tok := e.dryRun("mr", "discussion", "reply", "acme/web!5/discussions/d5b", "--body", "Done.")
+	r := e.confirm(tok, "mr", "discussion", "reply", "5", "--project", "acme/web", "--discussion-id", "d5b", "--body", "Done.")
+	if res, _ := r.data()["result"].(map[string]any); r.exit != 0 || !strings.HasPrefix(res["ref"].(string), "acme/web!5/notes/") {
+		t.Fatalf("reply: %s", r.out)
 	}
-}
-
-func TestMRDiscussion_List_APIError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusUnauthorized)
-		_, _ = w.Write([]byte(`{"message":"401 Unauthorized"}`))
-	}))
-	defer srv.Close()
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "bad")
-	origExit := lastExit
-	defer func() { lastExit = origExit }()
-	lastExit = 0
-	_ = mrDiscussionListCmd.Flags().Set("project", "foo/bar")
-	rootCmd.SetArgs([]string{"mr", "discussion", "list", "--project", "foo/bar", "7"})
-	_ = rootCmd.Execute()
-	if lastExit == ExitOK {
-		t.Errorf("expected non-zero exit for API error, got %d", lastExit)
-	}
-}
-
-func TestMRDiscussion_Reply_DryRun_JSON(t *testing.T) {
-	origDR := dryRun
-	origJM := jsonMode
-	origExit := lastExit
-	defer func() { dryRun = origDR; jsonMode = origJM; lastExit = origExit }()
-	dryRun = true
-	jsonMode = true
-	lastExit = 0
-	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
-	t.Setenv("GITLAB_CLI_TOKEN", "test-token")
-	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"mr", "discussion", "reply", "--project", "foo/bar", "7", "--discussion-id", "abc123", "--body", "done", "--dry-run", "--json"})
-		_ = rootCmd.Execute()
-	})
-	if lastExit != ExitOK {
-		t.Errorf("expected exit 0 for dry-run, got %d", lastExit)
-	}
-	for _, want := range []string{`"confirm_token"`, `"action": "reply mr discussion"`} {
-		if !strings.Contains(out, want) {
-			t.Errorf("missing %q in dry-run output, got:\n%s", want, out)
+	for _, c := range []struct{ verb, ref, kind string }{
+		{"resolve", "acme/web!5/discussions/d5c", "already_resolved"},
+		{"unresolve", "acme/web!5/discussions/d5b", "not_resolved"},
+		{"resolve", "acme/web!5/discussions/d5a", "not_resolvable"},
+	} {
+		r := e.run("mr", "discussion", c.verb, c.ref, "--dry-run")
+		if r.exit != 0 || r.token() != "" || r.preview()["blocked_by"].([]any)[0].(map[string]any)["kind"] != c.kind {
+			t.Fatalf("%s %s: %s", c.verb, c.ref, r.out)
 		}
 	}
-}
-
-func TestMRDiscussion_Reply_JSON(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.NotFound(w, r)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusCreated)
-		fmt.Fprint(w, `{"id":42,"body":"done","author":{"username":"alice"},"created_at":"2024-01-01"}`)
-	}))
-	defer srv.Close()
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origDR := dryRun
-	origJM := jsonMode
-	defer func() { dryRun = origDR; jsonMode = origJM }()
-	dryRun = false
-	out := captureStdout(t, func() {
-		rootCmd.SetArgs(withConfirmForTest(t, []string{"mr", "discussion", "reply", "--project", "foo/bar", "7", "--discussion-id", "abc123", "--body", "done", "--json"}))
-		_ = rootCmd.Execute()
-	})
-	if !strings.Contains(out, `"done"`) {
-		t.Errorf("expected reply body in output, got:\n%s", out)
+	args := []string{"mr", "discussion", "resolve", "acme/web!5/discussions/d5b"}
+	if r = e.confirm(e.dryRun(args...), args...); r.exit != 0 || r.receipt()["observed"].(map[string]any)["resolved"] != true {
+		t.Fatalf("resolve: %s", r.out)
+	}
+	args = []string{"mr", "discussion", "resolve", "acme/web!5/discussions/d5b", "--unresolve"}
+	r = e.confirm(e.dryRun(args...), args...)
+	notices, _ := r.doc["meta"].(map[string]any)["notices"].([]any)
+	if r.exit != 0 || r.data()["result"].(map[string]any)["resolved"] != false || len(notices) == 0 {
+		t.Fatalf("resolve --unresolve: %s", r.out)
 	}
 }
 
-func TestMRDiscussion_Reply_MissingDiscussionID(t *testing.T) {
-	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origExit := lastExit
-	origDR := dryRun
-	defer func() { lastExit = origExit; dryRun = origDR }()
-	lastExit = 0
-	dryRun = false
-	_ = mrDiscussionReplyCmd.Flags().Set("project", "")
-	_ = mrDiscussionReplyCmd.Flags().Set("discussion-id", "")
-	_ = mrDiscussionReplyCmd.Flags().Set("body", "")
-	rootCmd.SetArgs([]string{"mr", "discussion", "reply", "--project", "foo/bar", "7", "--body", "hi"})
-	_ = rootCmd.Execute()
-	if lastExit != ExitBadArgs {
-		t.Errorf("exit = %d, want %d", lastExit, ExitBadArgs)
+// TestMRDiscussionCreateAnchorsToTheDiff: the diff SHAs come from the merge
+// request; a push between the dry-run and the confirm is state_drift (CLI-057); a
+// merge request whose diff is not computed yet is blocked.
+func TestMRDiscussionCreateAnchorsToTheDiff(t *testing.T) {
+	e := newTestEnv(t)
+	args := []string{"mr", "discussion", "create", "acme/web!5", "--new-path", "src/retry.go", "--new-line", "2", "--body", "Name it backoff?"}
+	r := e.confirm(e.dryRun(args...), args...)
+	res, _ := r.data()["result"].(map[string]any)
+	if r.exit != 0 || res["path"] != "src/retry.go" || res["resolvable"] != true || r.outcome()["verification"] != "passed" {
+		t.Fatalf("create: %s", r.out)
 	}
-}
-
-func TestMRDiscussion_Reply_MissingBody(t *testing.T) {
-	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origExit := lastExit
-	origDR := dryRun
-	defer func() { lastExit = origExit; dryRun = origDR }()
-	lastExit = 0
-	dryRun = false
-	_ = mrDiscussionReplyCmd.Flags().Set("project", "")
-	_ = mrDiscussionReplyCmd.Flags().Set("discussion-id", "")
-	_ = mrDiscussionReplyCmd.Flags().Set("body", "")
-	rootCmd.SetArgs([]string{"mr", "discussion", "reply", "--project", "foo/bar", "7", "--discussion-id", "abc123"})
-	_ = rootCmd.Execute()
-	if lastExit != ExitBadArgs {
-		t.Errorf("exit = %d, want %d", lastExit, ExitBadArgs)
+	req, _ := e.gl.lastWrite()
+	if pos, _ := req.Body["position"].(map[string]any); pos["head_sha"] != "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a" || pos["old_path"] != "src/retry.go" {
+		t.Fatalf("position: %+v", req.Body)
 	}
-}
-
-func TestMRDiscussion_Reply_APIError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-		_, _ = w.Write([]byte(`{"message":"404 Not Found"}`))
-	}))
-	defer srv.Close()
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origExit := lastExit
-	origDR := dryRun
-	defer func() { lastExit = origExit; dryRun = origDR }()
-	lastExit = 0
-	dryRun = false
-	_ = mrDiscussionReplyCmd.Flags().Set("project", "")
-	_ = mrDiscussionReplyCmd.Flags().Set("discussion-id", "")
-	_ = mrDiscussionReplyCmd.Flags().Set("body", "")
-	rootCmd.SetArgs(withConfirmForTest(t, []string{"mr", "discussion", "reply", "--project", "foo/bar", "7", "--discussion-id", "nope", "--body", "hi", "--json"}))
-	_ = rootCmd.Execute()
-	if lastExit == ExitOK {
-		t.Errorf("expected non-zero exit for API error, got %d", lastExit)
+	tok := e.dryRun(args...)
+	e.gl.locked(func() { fakeMRByIID(e.gl, 5).SHA = "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c" })
+	if r = e.confirm(tok, args...); r.code() != "E_CONFLICT" || r.details()["conflict"] != "state_drift" {
+		t.Fatalf("a push after the dry-run: %s", r.out)
 	}
-}
-
-// ─── discussion create (inline) ───────────────────────────────────────────────
-
-// mrWithDiffRefs is the GET response an MR diff_refs lookup expects.
-const mrWithDiffRefs = `{"iid":7,"title":"feat","state":"opened","diff_refs":{"base_sha":"base1","start_sha":"start1","head_sha":"head1"}}`
-
-// inlineDiscussionServer answers the MR GET (diff_refs auto-fill) and the
-// discussion POST so the auto-fill path can be exercised end to end.
-func inlineDiscussionServer() *httptest.Server {
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		if r.Method == http.MethodPost {
-			w.WriteHeader(http.StatusCreated)
-			fmt.Fprint(w, `{"id":"disc1","individual_note":false,"notes":[{"id":1,"body":"nil deref here","author":{"username":"alice"},"created_at":"2024-01-01","resolvable":true,"resolved":false}]}`)
-			return
-		}
-		fmt.Fprint(w, mrWithDiffRefs)
-	}))
-}
-
-func TestMRDiscussion_Create_DryRun_JSON(t *testing.T) {
-	// Explicit SHAs keep the dry-run free of a network lookup; auto-fill is covered
-	// by the execute test below.
-	origDR := dryRun
-	origJM := jsonMode
-	origExit := lastExit
-	defer func() { dryRun = origDR; jsonMode = origJM; lastExit = origExit }()
-	dryRun = true
-	jsonMode = true
-	lastExit = 0
-	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
-	t.Setenv("GITLAB_CLI_TOKEN", "test-token")
-	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"mr", "discussion", "create", "--project", "foo/bar", "7",
-			"--new-path", "src/app.go", "--new-line", "42", "--body", "nil deref",
-			"--base-sha", "b", "--start-sha", "s", "--head-sha", "h", "--dry-run", "--json"})
-		_ = rootCmd.Execute()
-	})
-	if lastExit != ExitOK {
-		t.Errorf("expected exit 0 for dry-run, got %d", lastExit)
-	}
-	for _, want := range []string{`"confirm_token"`, `"action": "create mr discussion"`} {
-		if !strings.Contains(out, want) {
-			t.Errorf("missing %q in dry-run output, got:\n%s", want, out)
-		}
-	}
-}
-
-func TestMRDiscussion_Create_AutoFillSHAs_JSON(t *testing.T) {
-	srv := inlineDiscussionServer()
-	defer srv.Close()
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origDR := dryRun
-	origJM := jsonMode
-	defer func() { dryRun = origDR; jsonMode = origJM }()
-	dryRun = false
-	_ = mrDiscussionCreateCmd.Flags().Set("base-sha", "")
-	_ = mrDiscussionCreateCmd.Flags().Set("start-sha", "")
-	_ = mrDiscussionCreateCmd.Flags().Set("head-sha", "")
-	out := captureStdout(t, func() {
-		rootCmd.SetArgs(withConfirmForTest(t, []string{"mr", "discussion", "create", "--project", "foo/bar", "7",
-			"--new-path", "src/app.go", "--new-line", "42", "--body", "nil deref here", "--json"}))
-		_ = rootCmd.Execute()
-	})
-	if !strings.Contains(out, `"disc1"`) || !strings.Contains(out, `"nil deref here"`) {
-		t.Errorf("expected created discussion id + body in output, got:\n%s", out)
-	}
-	if !strings.Contains(out, `"resolved"`) {
-		t.Errorf("expected resolved state on resolvable note, got:\n%s", out)
-	}
-}
-
-func TestMRDiscussion_Create_IncompleteDiffRefs(t *testing.T) {
-	// GitLab leaves base/head SHA null while an MR diff is still computing; the
-	// command must fail with a usage error rather than POST an invalid position.
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"iid":7,"title":"feat","diff_refs":{"base_sha":null,"start_sha":"s1","head_sha":null}}`)
-	}))
-	defer srv.Close()
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origExit := lastExit
-	origDR := dryRun
-	defer func() { lastExit = origExit; dryRun = origDR }()
-	lastExit = 0
-	dryRun = false
-	_ = mrDiscussionCreateCmd.Flags().Set("base-sha", "")
-	_ = mrDiscussionCreateCmd.Flags().Set("start-sha", "")
-	_ = mrDiscussionCreateCmd.Flags().Set("head-sha", "")
-	rootCmd.SetArgs([]string{"mr", "discussion", "create", "--project", "foo/bar", "7", "--new-path", "a.go", "--new-line", "1", "--body", "hi", "--json"})
-	_ = rootCmd.Execute()
-	if lastExit != ExitBadArgs {
-		t.Errorf("exit = %d, want %d (incomplete diff_refs should be a usage error)", lastExit, ExitBadArgs)
-	}
-}
-
-func TestMRDiscussion_Create_MissingProject(t *testing.T) {
-	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origExit := lastExit
-	origDR := dryRun
-	defer func() { lastExit = origExit; dryRun = origDR }()
-	lastExit = 0
-	dryRun = false
-	_ = mrDiscussionCreateCmd.Flags().Set("project", "")
-	rootCmd.SetArgs([]string{"mr", "discussion", "create", "7", "--new-path", "a.go", "--new-line", "1", "--body", "hi"})
-	_ = rootCmd.Execute()
-	if lastExit != ExitBadArgs {
-		t.Errorf("exit = %d, want %d", lastExit, ExitBadArgs)
-	}
-}
-
-func TestMRDiscussion_Create_MissingPosition(t *testing.T) {
-	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origExit := lastExit
-	origDR := dryRun
-	defer func() { lastExit = origExit; dryRun = origDR }()
-	lastExit = 0
-	dryRun = false
-	_ = mrDiscussionCreateCmd.Flags().Set("project", "")
-	_ = mrDiscussionCreateCmd.Flags().Set("new-path", "")
-	_ = mrDiscussionCreateCmd.Flags().Set("old-path", "")
-	_ = mrDiscussionCreateCmd.Flags().Set("new-line", "0")
-	_ = mrDiscussionCreateCmd.Flags().Set("old-line", "0")
-	rootCmd.SetArgs([]string{"mr", "discussion", "create", "--project", "foo/bar", "7", "--body", "hi"})
-	_ = rootCmd.Execute()
-	if lastExit != ExitBadArgs {
-		t.Errorf("exit = %d, want %d (missing position should be a usage error)", lastExit, ExitBadArgs)
-	}
-}
-
-func TestMRDiscussion_Create_MissingBody(t *testing.T) {
-	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origExit := lastExit
-	origDR := dryRun
-	defer func() { lastExit = origExit; dryRun = origDR }()
-	lastExit = 0
-	dryRun = false
-	_ = mrDiscussionCreateCmd.Flags().Set("project", "")
-	_ = mrDiscussionCreateCmd.Flags().Set("body", "")
-	rootCmd.SetArgs([]string{"mr", "discussion", "create", "--project", "foo/bar", "7", "--new-path", "a.go", "--new-line", "1"})
-	_ = rootCmd.Execute()
-	if lastExit != ExitBadArgs {
-		t.Errorf("exit = %d, want %d", lastExit, ExitBadArgs)
-	}
-}
-
-// ─── discussion resolve ───────────────────────────────────────────────────────
-
-func TestMRDiscussion_Resolve_DryRun_JSON(t *testing.T) {
-	origDR := dryRun
-	origJM := jsonMode
-	origExit := lastExit
-	defer func() { dryRun = origDR; jsonMode = origJM; lastExit = origExit }()
-	dryRun = true
-	jsonMode = true
-	lastExit = 0
-	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
-	t.Setenv("GITLAB_CLI_TOKEN", "test-token")
-	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"mr", "discussion", "resolve", "--project", "foo/bar", "7", "--discussion-id", "disc1", "--dry-run", "--json"})
-		_ = rootCmd.Execute()
-	})
-	if lastExit != ExitOK {
-		t.Errorf("expected exit 0 for dry-run, got %d", lastExit)
-	}
-	for _, want := range []string{`"confirm_token"`, `"action": "resolve mr discussion"`} {
-		if !strings.Contains(out, want) {
-			t.Errorf("missing %q in dry-run output, got:\n%s", want, out)
-		}
-	}
-}
-
-func TestMRDiscussion_Resolve_JSON(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPut {
-			http.NotFound(w, r)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"id":"disc1","individual_note":false,"notes":[{"id":1,"body":"fix","author":{"username":"alice"},"created_at":"2024-01-01","resolvable":true,"resolved":true}]}`)
-	}))
-	defer srv.Close()
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origDR := dryRun
-	origJM := jsonMode
-	defer func() { dryRun = origDR; jsonMode = origJM }()
-	dryRun = false
-	out := captureStdout(t, func() {
-		rootCmd.SetArgs(withConfirmForTest(t, []string{"mr", "discussion", "resolve", "--project", "foo/bar", "7", "--discussion-id", "disc1", "--json"}))
-		_ = rootCmd.Execute()
-	})
-	if !strings.Contains(out, `"disc1"`) || !strings.Contains(out, `"resolved": true`) {
-		t.Errorf("expected resolved discussion in output, got:\n%s", out)
-	}
-}
-
-func TestMRDiscussion_Resolve_MissingDiscussionID(t *testing.T) {
-	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origExit := lastExit
-	origDR := dryRun
-	defer func() { lastExit = origExit; dryRun = origDR }()
-	lastExit = 0
-	dryRun = false
-	_ = mrDiscussionResolveCmd.Flags().Set("project", "")
-	_ = mrDiscussionResolveCmd.Flags().Set("discussion-id", "")
-	rootCmd.SetArgs([]string{"mr", "discussion", "resolve", "--project", "foo/bar", "7"})
-	_ = rootCmd.Execute()
-	if lastExit != ExitBadArgs {
-		t.Errorf("exit = %d, want %d", lastExit, ExitBadArgs)
-	}
-}
-
-func TestMRDiscussion_Resolve_APIError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-		_, _ = w.Write([]byte(`{"message":"404 Not Found"}`))
-	}))
-	defer srv.Close()
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "test")
-	origExit := lastExit
-	origDR := dryRun
-	defer func() { lastExit = origExit; dryRun = origDR }()
-	lastExit = 0
-	dryRun = false
-	_ = mrDiscussionResolveCmd.Flags().Set("project", "")
-	_ = mrDiscussionResolveCmd.Flags().Set("discussion-id", "")
-	rootCmd.SetArgs(withConfirmForTest(t, []string{"mr", "discussion", "resolve", "--project", "foo/bar", "7", "--discussion-id", "nope", "--json"}))
-	_ = rootCmd.Execute()
-	if lastExit == ExitOK {
-		t.Errorf("expected non-zero exit for API error, got %d", lastExit)
+	e.gl.locked(func() { fakeMRByIID(e.gl, 6).BaseSHA = "" })
+	r = e.run("mr", "discussion", "create", "acme/web!6", "--new-path", "a.go", "--new-line", "1", "--body", "x", "--dry-run")
+	if r.exit != 0 || r.token() != "" || r.preview()["blocked_by"].([]any)[0].(map[string]any)["kind"] != "diff_not_ready" {
+		t.Fatalf("no diff yet: %s", r.out)
 	}
 }

@@ -1,176 +1,111 @@
 package api
 
 import (
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 )
 
-func TestMilestone_List(t *testing.T) {
+func TestMilestone_ListPage(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasSuffix(r.URL.Path, "/milestones") {
-			t.Errorf("path = %q", r.URL.Path)
+		q := r.URL.Query()
+		if r.URL.EscapedPath() != "/api/v4/projects/acme%2Fweb/milestones" {
+			t.Errorf("path = %q", r.URL.EscapedPath())
 		}
-		if r.URL.Query().Get("state") != "active" {
-			t.Errorf("state = %q, want active", r.URL.Query().Get("state"))
+		if q.Get("state") != "active" || q.Get("search") != "rel" || q.Get("page") != "1" || q.Get("per_page") != "20" ||
+			q["iids[]"][0] != "3" || q.Get("title") != "v1.0" {
+			t.Errorf("query = %v", q)
 		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`[{"id":1,"iid":1,"title":"v1.0","state":"active"}]`))
+		_, _ = w.Write([]byte(`[{"id":11,"iid":3,"title":"v1.0","state":"active","expired":false}]`))
 	}))
 	defer srv.Close()
-
-	c := newTestClient(srv.URL)
-	ms, err := c.Milestones.List(testCtx, "42", &MilestoneListOpts{State: "active", Limit: 10})
-	if err != nil {
-		t.Fatalf("List: %v", err)
-	}
-	if len(ms) != 1 || ms[0].Title != "v1.0" {
-		t.Errorf("unexpected milestones: %+v", ms)
+	ms, pag, err := newTestClient(srv.URL).Milestones.ListPage(testCtx, "acme/web",
+		MilestoneListOpts{State: "active", Search: "rel", Title: "v1.0", IIDs: []int{3}, Page: 1, PerPage: 20})
+	if err != nil || len(ms) != 1 || ms[0].IID != 3 || ms[0].Expired == nil || pag.NextPage != 0 {
+		t.Fatalf("ListPage = %+v, %+v, %v", ms, pag, err)
 	}
 }
 
-func TestMilestone_GetByID(t *testing.T) {
+func TestMilestone_ListAllStateOmitsTheFilter(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v4/projects/42/milestones/5" {
-			t.Errorf("path = %q", r.URL.Path)
+		if r.URL.Query().Has("state") {
+			t.Errorf("state sent for all: %v", r.URL.Query())
 		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"id":5,"iid":2,"title":"v2.0","state":"active"}`))
+		_, _ = w.Write([]byte(`[{"id":1,"iid":1,"title":"v1"}]`))
 	}))
 	defer srv.Close()
-
-	c := newTestClient(srv.URL)
-	m, err := c.Milestones.GetByID(testCtx, "42", 5)
-	if err != nil {
-		t.Fatalf("GetByID: %v", err)
+	ms, err := newTestClient(srv.URL).Milestones.List(testCtx, "42", &MilestoneListOpts{State: "all", Limit: 5})
+	if err != nil || len(ms) != 1 {
+		t.Fatalf("List = %+v, %v", ms, err)
 	}
-	if m.ID != 5 || m.Title != "v2.0" {
-		t.Errorf("unexpected milestone: %+v", m)
+	if _, err := newTestClient(srv.URL).Milestones.List(testCtx, "42", nil); err != nil {
+		t.Fatalf("List(nil) = %v", err)
 	}
 }
 
-func TestMilestone_Create(t *testing.T) {
+func TestMilestone_GetCreateUpdateDelete(t *testing.T) {
+	var methods []string
+	var bodies []map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			t.Errorf("method = %q, want POST", r.Method)
+		methods = append(methods, r.Method+" "+r.URL.EscapedPath())
+		b, _ := io.ReadAll(r.Body)
+		var m map[string]any
+		_ = json.Unmarshal(b, &m)
+		bodies = append(bodies, m)
+		if r.Method == http.MethodDelete {
+			w.WriteHeader(http.StatusNoContent)
+			return
 		}
-		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`{"id":6,"iid":3,"title":"v3.0","state":"active"}`))
+		_, _ = w.Write([]byte(`{"id":11,"iid":3,"title":"v1.0","state":"closed"}`))
 	}))
 	defer srv.Close()
-
 	c := newTestClient(srv.URL)
-	m, err := c.Milestones.Create(testCtx, "42", MilestoneCreateOpts{Title: "v3.0"})
-	if err != nil {
-		t.Fatalf("Create: %v", err)
+	if m, err := c.Milestones.GetByID(testCtx, "42", 11); err != nil || m.IID != 3 {
+		t.Fatalf("GetByID = %+v, %v", m, err)
 	}
-	if m.Title != "v3.0" {
-		t.Errorf("title = %q, want v3.0", m.Title)
+	if _, err := c.Milestones.Create(testCtx, "42", MilestoneCreateOpts{Title: "v1.0", DueDate: "2026-11-01"}); err != nil {
+		t.Fatal(err)
 	}
-}
-
-func TestMilestone_Update(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPut {
-			t.Errorf("method = %q, want PUT", r.Method)
+	close := "close"
+	if _, err := c.Milestones.Update(testCtx, "42", 11, MilestoneUpdateOpts{StateEvent: &close}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Milestones.Delete(testCtx, "42", 11); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"GET /api/v4/projects/42/milestones/11", "POST /api/v4/projects/42/milestones",
+		"PUT /api/v4/projects/42/milestones/11", "DELETE /api/v4/projects/42/milestones/11"}
+	for i, w := range want {
+		if methods[i] != w {
+			t.Errorf("request %d = %q, want %q", i, methods[i], w)
 		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"id":6,"iid":3,"title":"v3.0","state":"closed"}`))
-	}))
-	defer srv.Close()
-
-	c := newTestClient(srv.URL)
-	m, err := c.Milestones.Update(testCtx, "42", 6, MilestoneUpdateOpts{StateEvent: "close"})
-	if err != nil {
-		t.Fatalf("Update: %v", err)
 	}
-	if m.State != "closed" {
-		t.Errorf("state = %q, want closed", m.State)
+	if bodies[1]["due_date"] != "2026-11-01" || len(bodies[2]) != 1 || bodies[2]["state_event"] != "close" {
+		t.Errorf("bodies = %v", bodies)
 	}
 }
 
-func TestMilestone_Delete(t *testing.T) {
+func TestMilestone_ParseErrors(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodDelete {
-			t.Errorf("method = %q, want DELETE", r.Method)
-		}
-		w.WriteHeader(http.StatusNoContent)
+		_, _ = w.Write([]byte(`not-json`))
 	}))
 	defer srv.Close()
-
 	c := newTestClient(srv.URL)
-	if err := c.Milestones.Delete(testCtx, "42", 6); err != nil {
-		t.Fatalf("Delete: %v", err)
+	if _, _, err := c.Milestones.ListPage(testCtx, "42", MilestoneListOpts{}); err == nil {
+		t.Error("ListPage")
 	}
-}
-
-func TestMilestoneListOpts_AllState_OmitsStateParam(t *testing.T) {
-	opts := &MilestoneListOpts{State: "all", Limit: 10}
-	q := opts.encode()
-	if strings.Contains(q, "state=") {
-		t.Errorf("state=all should not be sent, got: %s", q)
+	if _, err := c.Milestones.List(testCtx, "42", nil); err == nil {
+		t.Error("List")
 	}
-}
-
-func TestMilestone_List_ParseError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`bad`))
-	}))
-	defer srv.Close()
-
-	c := newTestClient(srv.URL)
-	_, err := c.Milestones.List(testCtx, "42", nil)
-	if err == nil || !strings.Contains(err.Error(), "parsing milestones") {
-		t.Fatalf("expected parse error, got %v", err)
+	if _, err := c.Milestones.GetByID(testCtx, "42", 1); err == nil {
+		t.Error("GetByID")
 	}
-}
-
-func TestMilestone_GetByID_ParseError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`bad`))
-	}))
-	defer srv.Close()
-
-	c := newTestClient(srv.URL)
-	_, err := c.Milestones.GetByID(testCtx, "42", 1)
-	if err == nil || !strings.Contains(err.Error(), "parsing milestone") {
-		t.Fatalf("expected parse error, got %v", err)
+	if _, err := c.Milestones.Create(testCtx, "42", MilestoneCreateOpts{Title: "v1"}); err == nil {
+		t.Error("Create")
 	}
-}
-
-func TestMilestone_Create_ParseError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`bad`))
-	}))
-	defer srv.Close()
-
-	c := newTestClient(srv.URL)
-	_, err := c.Milestones.Create(testCtx, "42", MilestoneCreateOpts{Title: "v1"})
-	if err == nil || !strings.Contains(err.Error(), "parsing created milestone") {
-		t.Fatalf("expected parse error, got %v", err)
-	}
-}
-
-func TestMilestone_Update_ParseError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`bad`))
-	}))
-	defer srv.Close()
-
-	c := newTestClient(srv.URL)
-	_, err := c.Milestones.Update(testCtx, "42", 1, MilestoneUpdateOpts{Title: "x"})
-	if err == nil || !strings.Contains(err.Error(), "parsing updated milestone") {
-		t.Fatalf("expected parse error, got %v", err)
-	}
-}
-
-func TestMilestoneListOpts_NilEncode(t *testing.T) {
-	if (*MilestoneListOpts)(nil).encode() != "" {
-		t.Error("nil encode should be empty")
+	if _, err := c.Milestones.Update(testCtx, "42", 1, MilestoneUpdateOpts{}); err == nil {
+		t.Error("Update")
 	}
 }

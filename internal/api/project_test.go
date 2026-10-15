@@ -5,12 +5,10 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-
-	"github.com/fatecannotbealtered/gitlab-cli/internal/config"
 )
 
 func newProjectTestClient(serverURL string) *Client {
-	return NewClient(&config.Config{Host: serverURL, Token: "test-token"})
+	return NewClient(&Config{Host: serverURL, Token: "test-token"})
 }
 
 func TestProject_List(t *testing.T) {
@@ -85,23 +83,70 @@ func TestProject_Get(t *testing.T) {
 	}
 }
 
-func TestProject_Members(t *testing.T) {
+func TestProject_ListPage(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.Contains(r.URL.Path, "/members") {
-			t.Errorf("path = %q, want contains /members", r.URL.Path)
+		q := r.URL.Query()
+		if r.URL.Path != "/api/v4/projects" || q.Get("search") != "payments" || q.Get("simple") != "true" ||
+			q.Get("membership") != "true" || q.Get("order_by") != "created_at" || q.Get("sort") != "desc" ||
+			q.Get("page") != "2" || q.Get("per_page") != "5" {
+			t.Errorf("request = %s?%s", r.URL.Path, r.URL.RawQuery)
 		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`[{"id":10,"username":"alice","name":"Alice","state":"active","access_level":40}]`))
+		w.Header().Set("X-Next-Page", "3")
+		w.Header().Set("X-Total", "11")
+		_, _ = w.Write([]byte(`[{"id":3,"name":"Payments Service","path":"payments-service","path_with_namespace":"acme/payments-service","archived":false}]`))
 	}))
 	defer srv.Close()
-
-	c := newProjectTestClient(srv.URL)
-	members, err := c.Projects.Members(testCtx, "123", "", 20)
-	if err != nil {
-		t.Fatalf("Members: %v", err)
+	ps, pag, err := newProjectTestClient(srv.URL).Projects.ListPage(testCtx, ProjectListOpts{Search: "payments", Simple: true,
+		Membership: true, OrderBy: "created_at", Sort: "desc", Page: 2, PerPage: 5})
+	if err != nil || len(ps) != 1 || ps[0].Path != "payments-service" || ps[0].Archived == nil || *ps[0].Archived {
+		t.Fatalf("ListPage = %+v, %v", ps, err)
 	}
-	if len(members) != 1 || members[0].Username != "alice" {
-		t.Errorf("unexpected: %+v", members)
+	if pag.NextPage != 3 || !pag.HasTotal || pag.Total != 11 {
+		t.Errorf("pagination = %+v", pag)
+	}
+}
+
+func TestProject_MembersPages(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		switch r.URL.EscapedPath() {
+		case "/api/v4/projects/acme%2Fweb/members/all":
+			if q.Get("query") != "car" || q.Get("page") != "1" || q.Get("per_page") != "20" {
+				t.Errorf("effective query = %v", q)
+			}
+			_, _ = w.Write([]byte(`[{"id":10,"username":"alice","name":"Alice","state":"active","access_level":40,"expires_at":"2026-12-31"}]`))
+		case "/api/v4/projects/acme%2Fweb/members":
+			if ids := q["user_ids[]"]; len(ids) != 2 || ids[0] != "10" || ids[1] != "11" {
+				t.Errorf("direct user_ids = %v", ids)
+			}
+			_, _ = w.Write([]byte(`[{"id":10,"username":"alice","access_level":30}]`))
+		default:
+			t.Errorf("path = %q", r.URL.EscapedPath())
+		}
+	}))
+	defer srv.Close()
+	c := newProjectTestClient(srv.URL)
+	all, _, err := c.Projects.EffectiveMembersPage(testCtx, "acme/web", MemberListOpts{Query: "car", Page: 1, PerPage: 20})
+	if err != nil || len(all) != 1 || all[0].Username != "alice" || all[0].AccessLevel != 40 || all[0].ExpiresAt != "2026-12-31" {
+		t.Fatalf("EffectiveMembersPage = %+v, %v", all, err)
+	}
+	direct, _, err := c.Projects.DirectMembersPage(testCtx, "acme/web", MemberListOpts{UserIDs: []int{10, 11}, PerPage: 100})
+	if err != nil || len(direct) != 1 || direct[0].AccessLevel != 30 {
+		t.Fatalf("DirectMembersPage = %+v, %v", direct, err)
+	}
+}
+
+func TestProject_GetNamespace(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.EscapedPath() != "/api/v4/namespaces/acme%2Fplatform" {
+			t.Errorf("path = %q", r.URL.EscapedPath())
+		}
+		_, _ = w.Write([]byte(`{"id":87,"name":"Platform","path":"platform","kind":"group","full_path":"acme/platform"}`))
+	}))
+	defer srv.Close()
+	ns, err := newProjectTestClient(srv.URL).Projects.GetNamespace(testCtx, "acme/platform")
+	if err != nil || ns.ID != 87 || ns.Kind != "group" || ns.FullPath != "acme/platform" {
+		t.Fatalf("GetNamespace = %+v, %v", ns, err)
 	}
 }
 
@@ -133,7 +178,7 @@ func TestProject_Get_ParseError(t *testing.T) {
 	}
 }
 
-func TestProject_Members_ParseError(t *testing.T) {
+func TestProject_PageParseErrors(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`bad`))
@@ -141,9 +186,14 @@ func TestProject_Members_ParseError(t *testing.T) {
 	defer srv.Close()
 
 	c := newProjectTestClient(srv.URL)
-	_, err := c.Projects.Members(testCtx, "1", "", 20)
-	if err == nil || !strings.Contains(err.Error(), "parsing project members") {
-		t.Fatalf("expected parse error, got %v", err)
+	if _, _, err := c.Projects.ListPage(testCtx, ProjectListOpts{}); err == nil || !strings.Contains(err.Error(), "parsing projects") {
+		t.Fatalf("ListPage: expected parse error, got %v", err)
+	}
+	if _, _, err := c.Projects.EffectiveMembersPage(testCtx, "1", MemberListOpts{}); err == nil || !strings.Contains(err.Error(), "parsing project members") {
+		t.Fatalf("EffectiveMembersPage: expected parse error, got %v", err)
+	}
+	if _, err := c.Projects.GetNamespace(testCtx, "acme"); err == nil || !strings.Contains(err.Error(), "parsing namespace") {
+		t.Fatalf("GetNamespace: expected parse error, got %v", err)
 	}
 }
 

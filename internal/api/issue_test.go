@@ -1,32 +1,62 @@
 package api
 
 import (
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 )
 
-func TestIssue_List(t *testing.T) {
+func TestIssue_ListPage(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasPrefix(r.URL.Path, "/api/v4/projects/") || !strings.HasSuffix(r.URL.Path, "/issues") {
-			t.Errorf("unexpected path: %q", r.URL.Path)
+		if r.URL.EscapedPath() != "/api/v4/projects/acme%2Fweb/issues" {
+			t.Errorf("path = %q", r.URL.EscapedPath())
 		}
-		if r.URL.Query().Get("state") != "opened" {
-			t.Errorf("state = %q, want opened", r.URL.Query().Get("state"))
+		q := r.URL.Query()
+		want := map[string]string{"state": "opened", "labels": "bug,needs triage", "milestone": "v1.1",
+			"author_username": "carol", "assignee_username": "dave", "search": "timeout", "in": "title",
+			"order_by": "created_at", "sort": "desc", "page": "2", "per_page": "5"}
+		for k, v := range want {
+			if q.Get(k) != v {
+				t.Errorf("%s = %q, want %q (query %v)", k, q.Get(k), v, q)
+			}
 		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`[{"iid":1,"title":"Bug","state":"opened"},{"iid":2,"title":"Feature","state":"opened"}]`))
+		if !reflect.DeepEqual(q["iids[]"], []string{"2", "6"}) {
+			t.Errorf("iids[] = %v", q["iids[]"])
+		}
+		w.Header().Set("X-Next-Page", "3")
+		w.Header().Set("X-Total", "11")
+		_, _ = w.Write([]byte(`[{"id":502,"iid":2,"title":"Timeout in checkout","state":"opened","labels":["bug"],
+			"assignees":[{"id":8,"username":"dave"}],"author":{"id":7,"username":"carol"},
+			"milestone":{"id":40,"iid":2,"title":"v1.1"},"user_notes_count":3,"closed_at":null,"description":null}]`))
 	}))
 	defer srv.Close()
-
-	c := newTestClient(srv.URL)
-	issues, err := c.Issues.List(testCtx, "group/proj", &IssueListOpts{State: "opened", Limit: 10})
+	issues, pag, err := newTestClient(srv.URL).Issues.ListPage(testCtx, "acme/web", IssueListOpts{State: "opened",
+		Labels: []string{"bug", "needs triage"}, Milestone: "v1.1", AuthorUsername: "carol", AssigneeUsername: "dave",
+		Search: " timeout ", In: []string{"title"}, IIDs: []int{2, 6}, OrderBy: "created_at", Sort: "desc", Page: 2, PerPage: 5})
 	if err != nil {
-		t.Fatalf("List: %v", err)
+		t.Fatal(err)
 	}
-	if len(issues) != 2 || issues[0].IID != 1 || issues[1].Title != "Feature" {
-		t.Errorf("unexpected issues: %+v", issues)
+	if len(issues) != 1 {
+		t.Fatalf("issues = %+v", issues)
+	}
+	iss := issues[0]
+	if iss.IID != 2 || iss.Assignees[0].Username != "dave" || iss.Author.Username != "carol" || iss.Milestone.IID != 2 ||
+		iss.UserNotesCount != 3 || iss.Description != "" || iss.ClosedAt != "" {
+		t.Errorf("issue = %+v", iss)
+	}
+	if pag.NextPage != 3 || !pag.HasTotal || pag.Total != 11 {
+		t.Errorf("pagination = %+v", pag)
+	}
+}
+
+func TestIssueListOpts_AllStateAndEmptyFiltersAreNotSent(t *testing.T) {
+	q := IssueListOpts{State: "all", AssigneeID: "None"}.query()
+	if q.Has("state") || q.Has("labels") || q.Has("search") || q.Has("in") || q.Get("assignee_id") != "None" {
+		t.Errorf("query = %v", q)
 	}
 }
 
@@ -35,247 +65,132 @@ func TestIssue_Get(t *testing.T) {
 		if r.URL.Path != "/api/v4/projects/42/issues/7" {
 			t.Errorf("path = %q", r.URL.Path)
 		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"iid":7,"title":"Test","state":"opened"}`))
+		_, _ = w.Write([]byte(`{"iid":7,"title":"Test","state":"opened","updated_at":"2026-10-12T09:00:01.000Z"}`))
 	}))
 	defer srv.Close()
-
-	c := newTestClient(srv.URL)
-	issue, err := c.Issues.Get(testCtx, "42", 7)
-	if err != nil {
-		t.Fatalf("Get: %v", err)
-	}
-	if issue.IID != 7 || issue.Title != "Test" {
-		t.Errorf("unexpected issue: %+v", issue)
+	issue, err := newTestClient(srv.URL).Issues.Get(testCtx, "42", 7)
+	if err != nil || issue.IID != 7 || issue.Title != "Test" || issue.UpdatedAt == "" {
+		t.Fatalf("Get = %+v, %v", issue, err)
 	}
 }
 
 func TestIssue_Create(t *testing.T) {
+	var body map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			t.Errorf("method = %q, want POST", r.Method)
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v4/projects/42/issues" {
+			t.Errorf("%s %s", r.Method, r.URL.Path)
 		}
+		b, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(b, &body)
 		w.WriteHeader(http.StatusCreated)
 		_, _ = w.Write([]byte(`{"iid":3,"title":"New Issue","state":"opened"}`))
 	}))
 	defer srv.Close()
-
-	c := newTestClient(srv.URL)
-	issue, err := c.Issues.Create(testCtx, "42", IssueCreateOpts{Title: "New Issue"})
-	if err != nil {
-		t.Fatalf("Create: %v", err)
+	issue, err := newTestClient(srv.URL).Issues.Create(testCtx, "42", IssueCreateOpts{Title: "New Issue", Labels: "bug,ops"})
+	if err != nil || issue.IID != 3 {
+		t.Fatalf("Create = %+v, %v", issue, err)
 	}
-	if issue.IID != 3 || issue.Title != "New Issue" {
-		t.Errorf("unexpected issue: %+v", issue)
+	if body["title"] != "New Issue" || body["labels"] != "bug,ops" || body["description"] != nil || body["assignee_ids"] != nil {
+		t.Errorf("body = %v", body)
 	}
 }
 
-func TestIssue_Update(t *testing.T) {
+// TestIssue_UpdateSendsOnlyTheGivenFields: nil fields stay out of the body; an
+// empty assignee list and milestone 0 are sent, because they clear (CLI-029).
+func TestIssue_UpdateSendsOnlyTheGivenFields(t *testing.T) {
+	var body map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPut {
-			t.Errorf("method = %q, want PUT", r.Method)
+		if r.Method != http.MethodPut || r.URL.Path != "/api/v4/projects/42/issues/3" {
+			t.Errorf("%s %s", r.Method, r.URL.Path)
 		}
-		w.WriteHeader(http.StatusOK)
+		b, _ := io.ReadAll(r.Body)
+		body = nil
+		_ = json.Unmarshal(b, &body)
 		_, _ = w.Write([]byte(`{"iid":3,"title":"Updated","state":"closed"}`))
 	}))
 	defer srv.Close()
-
 	c := newTestClient(srv.URL)
 	issue, err := c.Issues.Update(testCtx, "42", 3, IssueUpdateOpts{StateEvent: "close"})
-	if err != nil {
-		t.Fatalf("Update: %v", err)
+	if err != nil || issue.State != "closed" {
+		t.Fatalf("Update = %+v, %v", issue, err)
 	}
-	if issue.State != "closed" {
-		t.Errorf("state = %q, want closed", issue.State)
+	if len(body) != 1 || body["state_event"] != "close" {
+		t.Errorf("body = %v", body)
 	}
-}
-
-func TestIssue_ListNotes(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasSuffix(r.URL.Path, "/notes") {
-			t.Errorf("path = %q, want suffix /notes", r.URL.Path)
-		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`[{"id":10,"body":"hello","system":false}]`))
-	}))
-	defer srv.Close()
-
-	c := newTestClient(srv.URL)
-	notes, err := c.Issues.ListNotes(testCtx, "42", 3, 20)
-	if err != nil {
-		t.Fatalf("ListNotes: %v", err)
+	empty, none, zero := "", []int{0}, 0
+	if _, err := c.Issues.Update(testCtx, "42", 3, IssueUpdateOpts{Description: &empty, AssigneeIDs: &none, MilestoneID: &zero,
+		AddLabels: "a,b"}); err != nil {
+		t.Fatal(err)
 	}
-	if len(notes) != 1 || notes[0].ID != 10 || notes[0].Body != "hello" {
-		t.Errorf("unexpected notes: %+v", notes)
+	if body["description"] != "" || !reflect.DeepEqual(body["assignee_ids"], []any{float64(0)}) || body["milestone_id"] != float64(0) ||
+		body["add_labels"] != "a,b" || body["title"] != nil || body["remove_labels"] != nil {
+		t.Errorf("body = %v", body)
 	}
 }
 
-func TestIssue_AddNote(t *testing.T) {
+func TestIssue_Notes(t *testing.T) {
+	var posted map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			t.Errorf("method = %q, want POST", r.Method)
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/projects/42/issues/3/notes":
+			q := r.URL.Query()
+			if q.Get("order_by") != "created_at" || q.Get("sort") != "desc" || q.Get("page") != "1" || q.Get("per_page") != "20" {
+				t.Errorf("query = %v", q)
+			}
+			w.Header().Set("X-Total", "2")
+			_, _ = w.Write([]byte(`[{"id":10,"body":"hello","system":false,"noteable_iid":3},{"id":11,"body":"added ~bug","system":true}]`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/projects/42/issues/3/notes/10":
+			_, _ = w.Write([]byte(`{"id":10,"body":"hello","author":{"username":"carol"}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/projects/42/issues/3/notes":
+			b, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(b, &posted)
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"id":12,"body":"new comment"}`))
+		case r.Method == http.MethodDelete && r.URL.Path == "/api/v4/projects/42/issues/3/notes/12":
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
 		}
-		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`{"id":11,"body":"new comment"}`))
 	}))
 	defer srv.Close()
-
 	c := newTestClient(srv.URL)
-	note, err := c.Issues.AddNote(testCtx, "42", 3, "new comment")
-	if err != nil {
-		t.Fatalf("AddNote: %v", err)
+	notes, pag, err := c.Issues.ListNotesPage(testCtx, "42", 3, IssueNoteListOpts{OrderBy: "created_at", Sort: "desc", Page: 1, PerPage: 20})
+	if err != nil || len(notes) != 2 || notes[0].NoteableIID != 3 || !notes[1].System || pag.Total != 2 {
+		t.Fatalf("ListNotesPage = %+v %+v %v", notes, pag, err)
 	}
-	if note.ID != 11 {
-		t.Errorf("note.ID = %d, want 11", note.ID)
+	n, err := c.Issues.GetNote(testCtx, "42", 3, 10)
+	if err != nil || n.Author.Username != "carol" {
+		t.Fatalf("GetNote = %+v, %v", n, err)
 	}
-}
-
-func TestIssue_DeleteNote(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodDelete {
-			t.Errorf("method = %q, want DELETE", r.Method)
-		}
-		w.WriteHeader(http.StatusNoContent)
-	}))
-	defer srv.Close()
-
-	c := newTestClient(srv.URL)
-	if err := c.Issues.DeleteNote(testCtx, "42", 3, 11); err != nil {
+	n, err = c.Issues.AddNote(testCtx, "42", 3, "new comment")
+	if err != nil || n.ID != 12 || posted["body"] != "new comment" {
+		t.Fatalf("AddNote = %+v, %v (posted %v)", n, err, posted)
+	}
+	if err := c.Issues.DeleteNote(testCtx, "42", 3, 12); err != nil {
 		t.Fatalf("DeleteNote: %v", err)
 	}
 }
 
-func TestIssueListOpts_Encode(t *testing.T) {
-	opts := &IssueListOpts{State: "opened", AssigneeUsername: "alice", Limit: 5}
-	q := opts.encode()
-	if !strings.Contains(q, "state=opened") {
-		t.Errorf("missing state: %s", q)
-	}
-	if !strings.Contains(q, "assignee_username=alice") {
-		t.Errorf("missing assignee_username: %s", q)
-	}
-	if !strings.Contains(q, "per_page=5") {
-		t.Errorf("missing per_page: %s", q)
-	}
-}
-
-func TestIssueListOpts_AllState_OmitsStateParam(t *testing.T) {
-	opts := &IssueListOpts{State: "all", Limit: 10}
-	q := opts.encode()
-	if strings.Contains(q, "state=") {
-		t.Errorf("state=all should not be sent, got: %s", q)
-	}
-}
-
-func TestIssueListOpts_EncodeAllFields(t *testing.T) {
-	opts := &IssueListOpts{
-		State:            "closed",
-		AssigneeUsername: "alice",
-		AuthorUsername:   "bob",
-		Labels:           "bug",
-		Search:           "crash",
-		Milestone:        "v1",
-		Limit:            8,
-	}
-	q := opts.encode()
-	for _, part := range []string{
-		"state=closed",
-		"assignee_username=alice",
-		"author_username=bob",
-		"labels=bug",
-		"search=crash",
-		"milestone=v1",
-		"per_page=8",
+func TestIssue_ParseErrors(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`bad`))
+	}))
+	defer srv.Close()
+	c := newTestClient(srv.URL)
+	title := "x"
+	for name, call := range map[string]func() error{
+		"parsing issues":         func() error { _, _, err := c.Issues.ListPage(testCtx, "42", IssueListOpts{}); return err },
+		"parsing issue":          func() error { _, err := c.Issues.Get(testCtx, "42", 1); return err },
+		"parsing created issue":  func() error { _, err := c.Issues.Create(testCtx, "42", IssueCreateOpts{Title: "x"}); return err },
+		"parsing updated issue":  func() error { _, err := c.Issues.Update(testCtx, "42", 1, IssueUpdateOpts{Title: &title}); return err },
+		"parsing notes":          func() error { _, _, err := c.Issues.ListNotesPage(testCtx, "42", 1, IssueNoteListOpts{}); return err },
+		"parsing note (get)":     func() error { _, err := c.Issues.GetNote(testCtx, "42", 1, 2); return err },
+		"parsing note (created)": func() error { _, err := c.Issues.AddNote(testCtx, "42", 1, "hi"); return err },
 	} {
-		if !strings.Contains(q, part) {
-			t.Errorf("encode() missing %q in %q", part, q)
+		want := strings.SplitN(name, " (", 2)[0]
+		if err := call(); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: got %v", name, err)
 		}
-	}
-	if (*IssueListOpts)(nil).encode() != "" {
-		t.Error("nil encode should be empty")
-	}
-}
-
-func TestIssue_List_ParseError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`bad`))
-	}))
-	defer srv.Close()
-
-	c := newTestClient(srv.URL)
-	_, err := c.Issues.List(testCtx, "42", nil)
-	if err == nil || !strings.Contains(err.Error(), "parsing issues") {
-		t.Fatalf("expected parse error, got %v", err)
-	}
-}
-
-func TestIssue_Get_ErrorPaths(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`bad`))
-	}))
-	defer srv.Close()
-
-	c := newTestClient(srv.URL)
-	_, err := c.Issues.Get(testCtx, "42", 1)
-	if err == nil || !strings.Contains(err.Error(), "parsing issue") {
-		t.Fatalf("expected parse error, got %v", err)
-	}
-}
-
-func TestIssue_Create_ParseError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`bad`))
-	}))
-	defer srv.Close()
-
-	c := newTestClient(srv.URL)
-	_, err := c.Issues.Create(testCtx, "42", IssueCreateOpts{Title: "x"})
-	if err == nil || !strings.Contains(err.Error(), "parsing created issue") {
-		t.Fatalf("expected parse error, got %v", err)
-	}
-}
-
-func TestIssue_Update_ParseError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`bad`))
-	}))
-	defer srv.Close()
-
-	c := newTestClient(srv.URL)
-	_, err := c.Issues.Update(testCtx, "42", 1, IssueUpdateOpts{Title: "x"})
-	if err == nil || !strings.Contains(err.Error(), "parsing updated issue") {
-		t.Fatalf("expected parse error, got %v", err)
-	}
-}
-
-func TestIssue_ListNotes_ParseError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`bad`))
-	}))
-	defer srv.Close()
-
-	c := newTestClient(srv.URL)
-	_, err := c.Issues.ListNotes(testCtx, "42", 1, 20)
-	if err == nil || !strings.Contains(err.Error(), "parsing notes") {
-		t.Fatalf("expected parse error, got %v", err)
-	}
-}
-
-func TestIssue_AddNote_ParseError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`bad`))
-	}))
-	defer srv.Close()
-
-	c := newTestClient(srv.URL)
-	_, err := c.Issues.AddNote(testCtx, "42", 1, "hi")
-	if err == nil || !strings.Contains(err.Error(), "parsing note") {
-		t.Fatalf("expected parse error, got %v", err)
 	}
 }

@@ -1,199 +1,203 @@
 package cmd
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
-	"os"
+	"errors"
+	"fmt"
 	"strings"
 
-	"github.com/fatecannotbealtered/gitlab-cli/internal/api"
 	"github.com/spf13/cobra"
+
+	"github.com/fatecannotbealtered/gitlab-cli/internal/aicli"
+	"github.com/fatecannotbealtered/gitlab-cli/internal/api"
 )
 
-// variable bulk-import is a class-B batch (CLI-SPEC §15.7): it parses a .env or
-// JSON file and loops create-or-update per key over the existing single-variable
-// endpoints. The external contract matches every other batch: plural input (the
-// file is the target set), one dry-run preview, one confirm token, aggregated
-// items[]/summary, --continue-on-error. Because it writes/overwrites secret CI
-// variables it is also write-dangerous (§15.4): it requires the --dangerous
-// two-step gate (declared intent) on top of dry-run → confirm (authorized batch).
+// variable bulk-import is a batch (CLI-063): one variable per item, created when
+// the key is new in the scope and its value replaced when it exists, through
+// App.WriteBatch, so one preview and one token cover the file. The file holds
+// secrets, so it is a secret file input: the token binds a keyed digest of its
+// content, previews show it as ***, and no output names a value.
 
-// importVar is one parsed key/value pair to import. Order is preserved from the
-// source file so items[] zips back to the input deterministically.
+// importVar is one key and value of the import file, in file order.
 type importVar struct {
-	Key   string
-	Value string
+	key, value string
+	line       int
 }
 
-var variableBulkImportCmd = &cobra.Command{
-	Use:   "bulk-import",
-	Short: "Import many CI/CD variables from a .env or JSON file (write-dangerous; requires --dangerous)",
-	Long: "Import CI/CD variables from a file, creating new keys and updating " +
-		"existing ones. --file is a .env (KEY=value lines) or a JSON object " +
-		"({\"KEY\":\"value\"}). Format is auto-detected from the extension or content.",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		project, _ := cmd.Flags().GetString("project")
-		file, _ := cmd.Flags().GetString("file")
-		envScope, _ := cmd.Flags().GetString("env-scope")
-		if project == "" {
-			return failArg("--project is required")
-		}
-		if file == "" {
-			return failArg("--file is required")
-		}
-
-		vars, err := parseVariableImportFile(file)
-		if err != nil {
-			return err
-		}
-		if len(vars) == 0 {
-			return failArg("no variables found in --file")
-		}
-
-		targets := make([]string, len(vars))
-		for i, v := range vars {
-			targets[i] = v.Key
-		}
-		// envScope is part of the confirm scope: importing into "*" vs "production"
-		// is a different operation and must bind a different token.
-		if done, err := prepareBatchWrite(cmd, "variable bulk-import", targets, map[string]any{"project": project, "envScope": envScope}); done || err != nil {
-			return err
-		}
-
-		client, _, err := newClient()
-		if err != nil {
-			return err
-		}
-
-		keepGoing := continueOnError(cmd)
-		items := make([]batchItem, 0, len(vars))
-		var unattempted []string
-		for i, v := range vars {
-			action, err := importOneVariable(client, project, v, envScope)
-			if err != nil {
-				items = append(items, batchItem{Target: v.Key, OK: false, Error: batchErrorFor(err), Extra: map[string]any{"envScope": envScope}})
-				setExitCode(ExitError)
-				if !keepGoing {
-					unattempted = targetsTail(targets, i+1)
-					break
-				}
-				continue
-			}
-			items = append(items, batchItem{Target: v.Key, OK: true, Extra: map[string]any{"action": action, "envScope": envScope}})
-		}
-		emitBatchResult(items, unattempted)
-		return nil
-	},
-}
-
-// importOneVariable creates the variable, or updates it if it already exists.
-// Returns "created" or "updated" for the per-item detail. A 400 with "already
-// exists" from create is treated as an update path so re-running an import is
-// idempotent.
-func importOneVariable(client *api.Client, project string, v importVar, envScope string) (string, error) {
-	_, err := client.Variables.Create(apiCtx(), project, &api.VariableCreateOpts{
-		Key:              v.Key,
-		Value:            v.Value,
-		EnvironmentScope: envScope,
-	})
-	if err == nil {
-		return "created", nil
+// parseVariableImport reads a .env file (KEY=value lines; blank lines, # comments
+// and a leading "export " are skipped; one pair of surrounding quotes is removed) or
+// a flat JSON object of strings (a .json file, or content that starts with "{").
+// Errors name a line number, never a key or a value.
+func parseVariableImport(path string, content []byte) ([]importVar, error) {
+	var vars []importVar
+	var err error
+	if strings.HasSuffix(strings.ToLower(path), ".json") || bytes.HasPrefix(bytes.TrimSpace(content), []byte("{")) {
+		vars, err = parseVariableJSON(content)
+	} else {
+		vars, err = parseVariableDotenv(string(content))
 	}
-	// Already exists → update in place rather than failing the whole key.
-	if isVariableExistsError(err) {
-		_, uErr := client.Variables.Update(apiCtx(), project, v.Key, envScope, &api.VariableUpdateOpts{Value: v.Value})
-		if uErr != nil {
-			return "", uErr
-		}
-		return "updated", nil
-	}
-	return "", err
-}
-
-// isVariableExistsError reports whether a create failure is GitLab's "key
-// already exists" conflict, which the importer maps to an update.
-func isVariableExistsError(err error) bool {
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "already") && strings.Contains(msg, "exist") ||
-		strings.Contains(msg, "has already been taken")
-}
-
-// parseVariableImportFile reads and parses a .env or JSON variable file. JSON is
-// detected from a .json extension or a leading '{'; everything else is .env.
-func parseVariableImportFile(path string) ([]importVar, error) {
-	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, failArg("reading --file: " + err.Error())
+		return nil, err
 	}
-	trimmed := strings.TrimSpace(string(data))
-	if strings.HasSuffix(strings.ToLower(path), ".json") || strings.HasPrefix(trimmed, "{") {
-		return parseJSONVariables(trimmed)
+	seen := map[string]int{}
+	for _, v := range vars {
+		if !ciVariableKey.MatchString(v.key) {
+			return nil, aicli.Validation("--file", "KEY=value lines (or a JSON object) whose keys are letters, digits and _",
+				fmt.Sprintf("Entry %d of --file has a key that is not letters, digits and _.", v.line))
+		}
+		if first, dup := seen[v.key]; dup {
+			return nil, aicli.Validation("--file", "each key once", fmt.Sprintf("Entries %d and %d of --file set the same key.", first, v.line))
+		}
+		seen[v.key] = v.line
 	}
-	return parseDotenvVariables(string(data)), nil
+	if len(vars) == 0 {
+		e := aicli.Usage("missing_parameter", "--file", "--file holds no variables.")
+		e.Details["next_action"] = "Pass a .env file with KEY=value lines, or a JSON object of strings."
+		return nil, e
+	}
+	return vars, nil
 }
 
-// parseJSONVariables parses a flat {"KEY":"value"} object, preserving key order
-// via a streaming decoder (Go maps would lose it).
-func parseJSONVariables(s string) ([]importVar, error) {
-	dec := json.NewDecoder(strings.NewReader(s))
-	tok, err := dec.Token()
-	if err != nil || tok != json.Delim('{') {
-		return nil, failArg("--file is not a flat JSON object of key/value pairs")
+func parseVariableJSON(content []byte) ([]importVar, error) {
+	invalid := func(why string) error {
+		return aicli.Validation("--file", `a flat JSON object of strings: {"KEY": "value"}`, why)
+	}
+	dec := json.NewDecoder(bytes.NewReader(content))
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
+		return nil, invalid("--file is not a JSON object.")
 	}
 	var out []importVar
-	for dec.More() {
-		keyTok, err := dec.Token()
+	for n := 1; dec.More(); n++ {
+		tok, err := dec.Token()
 		if err != nil {
-			return nil, failArg("malformed JSON in --file")
+			return nil, invalid("--file is not valid JSON.")
 		}
-		key, _ := keyTok.(string)
-		var val string
-		if err := dec.Decode(&val); err != nil {
-			return nil, failArg("--file value for key " + key + " must be a string")
+		key, _ := tok.(string)
+		var value string
+		if err := dec.Decode(&value); err != nil {
+			return nil, invalid(fmt.Sprintf("Entry %d of --file is not a string value.", n))
 		}
-		if key != "" {
-			out = append(out, importVar{Key: key, Value: val})
-		}
+		out = append(out, importVar{key: key, value: value, line: n})
+	}
+	if _, err := dec.Token(); err != nil {
+		return nil, invalid("--file is not valid JSON.")
 	}
 	return out, nil
 }
 
-// parseDotenvVariables parses KEY=value lines, ignoring blanks, comments, and an
-// optional leading "export ". Surrounding single/double quotes are stripped.
-func parseDotenvVariables(s string) []importVar {
+func parseVariableDotenv(s string) ([]importVar, error) {
 	var out []importVar
-	for _, line := range strings.Split(s, "\n") {
-		line = strings.TrimSpace(line)
+	for i, line := range strings.Split(s, "\n") {
+		line = strings.TrimSpace(strings.TrimSuffix(line, "\r"))
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
 		line = strings.TrimPrefix(line, "export ")
-		key, val, found := strings.Cut(line, "=")
+		key, value, found := strings.Cut(line, "=")
 		if !found {
-			continue
+			return nil, aicli.Validation("--file", "KEY=value lines", fmt.Sprintf("Line %d of --file is not KEY=value.", i+1))
 		}
-		key = strings.TrimSpace(key)
-		val = strings.TrimSpace(val)
-		if len(val) >= 2 {
-			if (val[0] == '"' && val[len(val)-1] == '"') || (val[0] == '\'' && val[len(val)-1] == '\'') {
-				val = val[1 : len(val)-1]
-			}
+		value = strings.TrimSpace(value)
+		if len(value) >= 2 && (value[0] == '"' || value[0] == '\'') && value[len(value)-1] == value[0] {
+			value = value[1 : len(value)-1]
 		}
-		if key != "" {
-			out = append(out, importVar{Key: key, Value: val})
-		}
+		out = append(out, importVar{key: strings.TrimSpace(key), value: value, line: i + 1})
 	}
-	return out
+	return out, nil
 }
 
-func init() {
-	variableCmd.AddCommand(variableBulkImportCmd)
-	variableBulkImportCmd.Flags().String("project", "", "Project ID or path (required)")
-	variableBulkImportCmd.Flags().String("file", "", "Path to a .env or JSON file (required)")
-	variableBulkImportCmd.Flags().String("env-scope", "*", "Environment scope for all imported variables")
-	// bulk-import writes/overwrites secret CI variables, so it is write-dangerous
-	// (§15.4): default --continue-on-error to false so a failed write stops the
-	// batch rather than charging through the rest of the secrets.
-	markBatch(variableBulkImportCmd, false)
-	markConfirm(variableBulkImportCmd)
-	markRiskLevel(variableBulkImportCmd, "high")
+func addVariableBulkImport(app *aicli.App, parent *cobra.Command) {
+	c := &cobra.Command{Use: "bulk-import", RunE: func(cmd *cobra.Command, _ []string) error {
+		content, err := app.ReadFileInput(cmd, "file")
+		if err != nil {
+			return err
+		}
+		path, _ := cmd.Flags().GetString("file")
+		vars, err := parseVariableImport(path, content)
+		if err != nil {
+			return err
+		}
+		scope, _ := cmd.Flags().GetString("env-scope")
+		if scope = strings.TrimSpace(scope); !variableScopeOK(scope) {
+			return aicli.Validation("--env-scope", "an environment name or pattern such as production, review/* or *",
+				"--env-scope is not an environment scope.")
+		}
+		gl := gitlabFor(app)
+		project, err := projectFlag(cmd, "", gl)
+		if err != nil {
+			return err
+		}
+		// Each item's Preview decides create or update; at confirm the gate runs every
+		// Preview again before the first Apply, and a decision that changed is drift.
+		creates := make([]bool, len(vars))
+		projectSeen := false
+		items := make([]aicli.BatchItem, 0, len(vars))
+		for i, v := range vars {
+			ref := variableRef(project, v.key, scope)
+			items = append(items, aicli.BatchItem{
+				Target: aicli.Target{Key: ref, Kind: "variable"},
+				Preview: func(ctx context.Context) (aicli.Preview, error) {
+					client, err := gl.get()
+					if err != nil {
+						return aicli.Preview{}, err
+					}
+					var apiErr *api.APIError
+					switch _, err := client.Variables.Get(ctx, project, v.key, scope); {
+					case err == nil:
+						creates[i] = false
+						return aicli.Preview{Action: fmt.Sprintf("Replace the value of CI/CD variable %s", variableName(v.key, scope)),
+							CanApply: true, Changes: variableChanges(&api.Variable{}, variableWant{value: &v.value})}, nil
+					case errors.As(err, &apiErr) && apiErr.StatusCode == 404:
+						if !projectSeen {
+							if err := projectExists(ctx, client, project); err != nil {
+								return aicli.Preview{}, err
+							}
+							projectSeen = true
+						}
+						creates[i] = true
+						return aicli.Preview{Action: fmt.Sprintf("Create CI/CD variable %s", variableName(v.key, scope)), CanApply: true,
+							Changes: variableChanges(nil, variableWant{create: true, key: v.key, scope: scope, value: &v.value})}, nil
+					default:
+						return aicli.Preview{}, readError(err, projectNotFound(), requiresRole("maintainer"))
+					}
+				},
+				Apply: func(ctx context.Context, op aicli.Op) (aicli.Result, error) {
+					client, err := gl.get()
+					if err != nil {
+						return aicli.Result{}, aicli.NotDispatched(err)
+					}
+					var got *api.Variable
+					want := variableWant{value: &v.value}
+					if creates[i] {
+						want = variableWant{create: true, key: v.key, scope: scope, value: &v.value}
+						got, err = client.Variables.Create(ctx, project, &api.VariableCreateOpts{Key: v.key, Value: v.value,
+							EnvironmentScope: scope})
+					} else {
+						got, err = client.Variables.Update(ctx, project, v.key, scope, &api.VariableUpdateOpts{Value: &v.value})
+					}
+					if err != nil {
+						return aicli.Result{}, classifyWriteError(err, requiresRole("maintainer"), variableNotFound(project))
+					}
+					obs, mismatched := variableObserved(*got, want)
+					return aicli.Result{Observed: obs, Mismatched: mismatched, Data: variableOut(project, *got),
+						Untrusted: variableUntrusted}, nil
+				},
+			})
+		}
+		return app.WriteBatch(cmd, aicli.BatchSpec{Items: items})
+	}}
+	c.Flags().String("project", "", "Project path (acme/web), web URL or numeric ID")
+	_ = c.MarkFlagRequired("project")
+	c.Flags().String("file", "", "A .env file (KEY=value lines) or a JSON object of strings; - reads stdin. Its values are secret")
+	_ = c.MarkFlagRequired("file")
+	c.Flags().String("env-scope", "*", "Environment scope of every variable: * (every environment), production, review/*")
+	parent.AddCommand(c)
+	app.Register(c, aicli.Meta{Summary: "Create or update many CI/CD variables from a .env or JSON file in one batch (configure: dangerous)",
+		Effects: []aicli.Effect{aicli.Configure}, Output: "variable", BatchFlag: "file",
+		FileInputs: map[string]string{"file": "variables"}, Secrets: []string{"file"},
+		ErrorCodes: gitlabWriteCodes, Maturity: aicli.Experimental, Evidence: []string{"simulated:cmd/variable_bulk_test.go"},
+		Examples: []string{"gitlab-cli variable bulk-import --project acme/web --file ci.env --dangerous --dry-run",
+			"gitlab-cli variable bulk-import --project acme/web --file ci.env --dangerous --confirm <confirm_token>"}})
 }

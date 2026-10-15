@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-  Register and start gitlab-runner for local E2E CI (pipeline/job integration tests).
+  Register and start gitlab-runner for the local E2E GitLab (the live suite's pipeline and job phase).
 
 .DESCRIPTION
   - Creates an instance runner via POST /api/v4/user/runners (root PAT)
@@ -146,5 +146,5 @@ Write-Host "GitLab Runner ready for E2E CI." -ForegroundColor Green
 Write-Host "  Container: gitlab-cli-e2e-runner"
 Write-Host "  Executor:  shell (clone_url=$CloneURL)"
 Write-Host ""
-Write-Host "Re-run integration tests:" -ForegroundColor Yellow
-Write-Host "  go test -tags=integration -timeout=25m ./e2e/..."
+Write-Host "Run the live suite (docs/E2E.md):" -ForegroundColor Yellow
+Write-Host "  python e2e/scenario.py run"

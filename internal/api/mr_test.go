@@ -1,622 +1,225 @@
 package api
 
 import (
-	"errors"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
-
-	"github.com/fatecannotbealtered/gitlab-cli/internal/config"
 )
 
-func newMRTestClient(serverURL string) *Client {
-	return NewClient(&config.Config{Host: serverURL, Token: "test-token"})
+// mrCall is one request the MR client made, as the test server saw it.
+type mrCall struct {
+	method, path, query string
+	body                map[string]any
 }
 
-func TestMR_List(t *testing.T) {
+// mrServer answers every request with status and body and records it.
+func mrServer(t *testing.T, status int, body string, header map[string]string) (*Client, *[]mrCall) {
+	t.Helper()
+	var calls []mrCall
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			t.Errorf("method = %q, want GET", r.Method)
+		c := mrCall{method: r.Method, path: r.URL.EscapedPath(), query: r.URL.RawQuery}
+		if b, _ := io.ReadAll(r.Body); len(b) > 0 {
+			_ = json.Unmarshal(b, &c.body)
 		}
-		if !strings.Contains(r.URL.Path, "/merge_requests") {
-			t.Errorf("path = %q, want contains /merge_requests", r.URL.Path)
+		calls = append(calls, c)
+		for k, v := range header {
+			w.Header().Set(k, v)
 		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`[{"iid":1,"title":"feat: add login","state":"opened","source_branch":"feat/login","target_branch":"main"}]`))
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(body))
 	}))
-	defer srv.Close()
+	t.Cleanup(srv.Close)
+	return newTestClient(srv.URL), &calls
+}
 
-	c := newMRTestClient(srv.URL)
-	mrs, err := c.MergeRequests.List(testCtx, "group/proj", &MergeRequestListOpts{State: "opened"})
-	if err != nil {
-		t.Fatalf("List: %v", err)
+func TestMR_ListPageSendsFiltersAndPages(t *testing.T) {
+	c, calls := mrServer(t, 200, `[{"id":51,"iid":5,"title":"Add retry","state":"opened","assignees":[{"username":"carol"}],
+		"reviewers":[{"username":"erin"}],"labels":["backend"],"detailed_merge_status":"mergeable"}]`,
+		map[string]string{"X-Next-Page": "3", "X-Total": "41"})
+	mrs, pag, err := c.MergeRequests.ListPage(testCtx, "acme/web", MergeRequestListOpts{State: "opened", AuthorUsername: "dave",
+		AssigneeUsername: "carol", ReviewerUsername: "erin", Labels: []string{"backend", "ui"}, Search: "retry",
+		SourceBranch: "feature/retry", TargetBranch: "main", OrderBy: "updated_at", Sort: "desc", Page: 2, PerPage: 20})
+	if err != nil || len(mrs) != 1 || mrs[0].IID != 5 || mrs[0].Assignees[0].Username != "carol" || mrs[0].DetailedMergeStatus != "mergeable" {
+		t.Fatalf("ListPage = %+v, %v", mrs, err)
 	}
-	if len(mrs) != 1 || mrs[0].IID != 1 || mrs[0].Title != "feat: add login" {
-		t.Errorf("unexpected: %+v", mrs)
+	if pag.NextPage != 3 || !pag.HasTotal || pag.Total != 41 {
+		t.Errorf("pagination = %+v", pag)
+	}
+	got := (*calls)[0]
+	want := "assignee_username=carol&author_username=dave&labels=backend%2Cui&order_by=updated_at&page=2&per_page=20" +
+		"&reviewer_username=erin&search=retry&sort=desc&source_branch=feature%2Fretry&state=opened&target_branch=main"
+	if got.path != "/api/v4/projects/acme%2Fweb/merge_requests" || got.query != want {
+		t.Errorf("request = %s?%s", got.path, got.query)
+	}
+	// "all" drops the state filter.
+	if _, _, err := c.MergeRequests.ListPage(testCtx, "acme/web", MergeRequestListOpts{State: "all"}); err != nil {
+		t.Fatal(err)
+	}
+	if q := (*calls)[1].query; q != "page=1&per_page=20" {
+		t.Errorf("state all: %s", q)
 	}
 }
 
-func TestMR_List_WithOpts(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		q := r.URL.Query()
-		if q.Get("state") != "closed" {
-			t.Errorf("state = %q, want closed", q.Get("state"))
+func TestMR_GetParsesPipelineAndDiffRefs(t *testing.T) {
+	c, calls := mrServer(t, 200, `{"iid":5,"head_pipeline":{"id":9,"status":"failed"},
+		"diff_refs":{"base_sha":"b","start_sha":"s","head_sha":"h"},"author":{"username":"dave"}}`, nil)
+	mr, err := c.MergeRequests.Get(testCtx, "acme/web", 5)
+	if err != nil || mr.HeadPipeline.Status != "failed" || mr.DiffRefs.HeadSHA != "h" || mr.Author.Username != "dave" {
+		t.Fatalf("Get = %+v, %v", mr, err)
+	}
+	if (*calls)[0].path != "/api/v4/projects/acme%2Fweb/merge_requests/5" {
+		t.Errorf("path = %s", (*calls)[0].path)
+	}
+}
+
+func TestMR_WritesSendTheirBodies(t *testing.T) {
+	title, empty := "New", []int{}
+	squash := true
+	cases := []struct {
+		name, method, path string
+		call               func(c *Client) error
+		body               map[string]any
+	}{
+		{"create", "POST", "/api/v4/projects/acme%2Fweb/merge_requests", func(c *Client) error {
+			_, err := c.MergeRequests.Create(testCtx, "acme/web", &MergeRequestCreateRequest{Title: "T", SourceBranch: "f", TargetBranch: "main",
+				AssigneeIDs: []int{7}, Labels: "a,b", Squash: true})
+			return err
+		}, map[string]any{"title": "T", "source_branch": "f", "target_branch": "main", "assignee_ids": []any{float64(7)},
+			"labels": "a,b", "squash": true}},
+		{"update", "PUT", "/api/v4/projects/acme%2Fweb/merge_requests/5", func(c *Client) error {
+			_, err := c.MergeRequests.Update(testCtx, "acme/web", 5, MergeRequestUpdateOpts{Title: &title, AssigneeIDs: &empty, AddLabels: "x"})
+			return err
+		}, map[string]any{"title": "New", "assignee_ids": []any{}, "add_labels": "x"}},
+		{"merge", "PUT", "/api/v4/projects/acme%2Fweb/merge_requests/5/merge", func(c *Client) error {
+			_, err := c.MergeRequests.Merge(testCtx, "acme/web", 5, MergeRequestMergeOpts{SHA: "abc", Squash: &squash})
+			return err
+		}, map[string]any{"sha": "abc", "squash": true}},
+		{"approve", "POST", "/api/v4/projects/acme%2Fweb/merge_requests/5/approve", func(c *Client) error {
+			_, err := c.MergeRequests.Approve(testCtx, "acme/web", 5, "abc")
+			return err
+		}, map[string]any{"sha": "abc"}},
+		{"unapprove", "POST", "/api/v4/projects/acme%2Fweb/merge_requests/5/unapprove", func(c *Client) error {
+			return c.MergeRequests.Unapprove(testCtx, "acme/web", 5)
+		}, nil},
+		{"add note", "POST", "/api/v4/projects/acme%2Fweb/merge_requests/5/notes", func(c *Client) error {
+			_, err := c.MergeRequests.AddNote(testCtx, "acme/web", 5, "hi")
+			return err
+		}, map[string]any{"body": "hi"}},
+		{"delete note", "DELETE", "/api/v4/projects/acme%2Fweb/merge_requests/5/notes/9", func(c *Client) error {
+			return c.MergeRequests.DeleteNote(testCtx, "acme/web", 5, 9)
+		}, nil},
+		{"create discussion", "POST", "/api/v4/projects/acme%2Fweb/merge_requests/5/discussions", func(c *Client) error {
+			line := 12
+			_, err := c.MergeRequests.CreateDiscussion(testCtx, "acme/web", 5, "nit", &DiffPosition{BaseSHA: "b", StartSHA: "s",
+				HeadSHA: "h", PositionType: "text", NewPath: "a.go", OldPath: "a.go", NewLine: &line})
+			return err
+		}, map[string]any{"body": "nit", "position": map[string]any{"base_sha": "b", "start_sha": "s", "head_sha": "h",
+			"position_type": "text", "new_path": "a.go", "old_path": "a.go", "new_line": float64(12)}}},
+		{"reply", "POST", "/api/v4/projects/acme%2Fweb/merge_requests/5/discussions/d1/notes", func(c *Client) error {
+			_, err := c.MergeRequests.ReplyDiscussion(testCtx, "acme/web", 5, "d1", "done")
+			return err
+		}, map[string]any{"body": "done"}},
+		{"resolve", "PUT", "/api/v4/projects/acme%2Fweb/merge_requests/5/discussions/d1", func(c *Client) error {
+			_, err := c.MergeRequests.ResolveDiscussion(testCtx, "acme/web", 5, "d1", true)
+			return err
+		}, map[string]any{"resolved": true}},
+	}
+	for _, tc := range cases {
+		c, calls := mrServer(t, 200, `{"iid":5}`, nil)
+		if err := tc.call(c); err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
 		}
-		if q.Get("assignee_username") != "alice" {
-			t.Errorf("assignee_username = %q, want alice", q.Get("assignee_username"))
+		got := (*calls)[0]
+		if got.method != tc.method || got.path != tc.path {
+			t.Errorf("%s: %s %s", tc.name, got.method, got.path)
 		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`[]`))
-	}))
-	defer srv.Close()
-
-	c := newMRTestClient(srv.URL)
-	_, err := c.MergeRequests.List(testCtx, "123", &MergeRequestListOpts{State: "closed", AssigneeUser: "alice"})
-	if err != nil {
-		t.Fatalf("List: %v", err)
-	}
-}
-
-func TestMR_Get(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasSuffix(r.URL.Path, "/merge_requests/42") {
-			t.Errorf("path = %q, want suffix /merge_requests/42", r.URL.Path)
-		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"iid":42,"title":"fix: bug","state":"opened","source_branch":"fix/bug","target_branch":"main","author":{"id":1,"username":"bob"}}`))
-	}))
-	defer srv.Close()
-
-	c := newMRTestClient(srv.URL)
-	mr, err := c.MergeRequests.Get(testCtx, "group/proj", 42)
-	if err != nil {
-		t.Fatalf("Get: %v", err)
-	}
-	if mr.IID != 42 || mr.Author == nil || mr.Author.Username != "bob" {
-		t.Errorf("unexpected: %+v", mr)
-	}
-}
-
-func TestMR_Create(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			t.Errorf("method = %q, want POST", r.Method)
-		}
-		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`{"iid":5,"title":"new feature","state":"opened","source_branch":"feat/x","target_branch":"main"}`))
-	}))
-	defer srv.Close()
-
-	c := newMRTestClient(srv.URL)
-	mr, err := c.MergeRequests.Create(testCtx, "group/proj", &MergeRequestCreateRequest{
-		Title:        "new feature",
-		SourceBranch: "feat/x",
-		TargetBranch: "main",
-	})
-	if err != nil {
-		t.Fatalf("Create: %v", err)
-	}
-	if mr.IID != 5 || mr.Title != "new feature" {
-		t.Errorf("unexpected: %+v", mr)
-	}
-}
-
-func TestMR_Update(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPut {
-			t.Errorf("method = %q, want PUT", r.Method)
-		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"iid":3,"title":"updated title","state":"opened","source_branch":"feat/x","target_branch":"main"}`))
-	}))
-	defer srv.Close()
-
-	c := newMRTestClient(srv.URL)
-	mr, err := c.MergeRequests.Update(testCtx, "group/proj", 3, &MergeRequestUpdateRequest{Title: "updated title"})
-	if err != nil {
-		t.Fatalf("Update: %v", err)
-	}
-	if mr.Title != "updated title" {
-		t.Errorf("unexpected title: %q", mr.Title)
-	}
-}
-
-func TestMR_Merge(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasSuffix(r.URL.Path, "/merge") {
-			t.Errorf("path = %q, want suffix /merge", r.URL.Path)
-		}
-		if r.Method != http.MethodPut {
-			t.Errorf("method = %q, want PUT", r.Method)
-		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"iid":7,"title":"done","state":"merged","source_branch":"feat/x","target_branch":"main"}`))
-	}))
-	defer srv.Close()
-
-	c := newMRTestClient(srv.URL)
-	mr, err := c.MergeRequests.Merge(testCtx, "group/proj", 7, &MergeRequestMergeRequest{Squash: true})
-	if err != nil {
-		t.Fatalf("Merge: %v", err)
-	}
-	if mr.State != "merged" {
-		t.Errorf("state = %q, want merged", mr.State)
-	}
-}
-
-func TestMR_Approve(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasSuffix(r.URL.Path, "/approve") {
-			t.Errorf("path = %q, want suffix /approve", r.URL.Path)
-		}
-		if r.Method != http.MethodPost {
-			t.Errorf("method = %q, want POST", r.Method)
-		}
-		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`{}`))
-	}))
-	defer srv.Close()
-
-	c := newMRTestClient(srv.URL)
-	if err := c.MergeRequests.Approve(testCtx, "group/proj", 7); err != nil {
-		t.Fatalf("Approve: %v", err)
-	}
-}
-
-func TestMR_Unapprove(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasSuffix(r.URL.Path, "/unapprove") {
-			t.Errorf("path = %q, want suffix /unapprove", r.URL.Path)
-		}
-		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`{}`))
-	}))
-	defer srv.Close()
-
-	c := newMRTestClient(srv.URL)
-	if err := c.MergeRequests.Unapprove(testCtx, "group/proj", 7); err != nil {
-		t.Fatalf("Unapprove: %v", err)
-	}
-}
-
-func TestMR_Close_StateEvent(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPut {
-			t.Errorf("method = %q, want PUT", r.Method)
-		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"iid":2,"title":"x","state":"closed","source_branch":"b","target_branch":"main"}`))
-	}))
-	defer srv.Close()
-
-	c := newMRTestClient(srv.URL)
-	mr, err := c.MergeRequests.Close(testCtx, "group/proj", 2)
-	if err != nil {
-		t.Fatalf("Close: %v", err)
-	}
-	if mr.State != "closed" {
-		t.Errorf("state = %q, want closed", mr.State)
-	}
-}
-
-func TestMR_GetRawDiff(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasSuffix(r.URL.Path, "/raw_diffs") {
-			t.Errorf("path = %q, want suffix /raw_diffs", r.URL.Path)
-		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("--- a/file.go\n+++ b/file.go\n@@ -1 +1 @@\n-old\n+new\n"))
-	}))
-	defer srv.Close()
-
-	c := newMRTestClient(srv.URL)
-	diff, err := c.MergeRequests.GetRawDiff(testCtx, "group/proj", 1)
-	if err != nil {
-		t.Fatalf("GetRawDiff: %v", err)
-	}
-	if !strings.Contains(diff, "--- a/file.go") {
-		t.Errorf("unexpected diff: %q", diff)
-	}
-}
-
-func TestMR_ListNotes(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasSuffix(r.URL.Path, "/notes") {
-			t.Errorf("path = %q, want suffix /notes", r.URL.Path)
-		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`[{"id":10,"body":"LGTM","author":{"id":1,"username":"alice"},"created_at":"2024-01-01T00:00:00Z"}]`))
-	}))
-	defer srv.Close()
-
-	c := newMRTestClient(srv.URL)
-	notes, err := c.MergeRequests.ListNotes(testCtx, "group/proj", 1, 20)
-	if err != nil {
-		t.Fatalf("ListNotes: %v", err)
-	}
-	if len(notes) != 1 || notes[0].ID != 10 || notes[0].Body != "LGTM" {
-		t.Errorf("unexpected: %+v", notes)
-	}
-}
-
-func TestMR_AddNote(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			t.Errorf("method = %q, want POST", r.Method)
-		}
-		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`{"id":11,"body":"looks good","author":{"id":2,"username":"bob"},"created_at":"2024-01-02T00:00:00Z"}`))
-	}))
-	defer srv.Close()
-
-	c := newMRTestClient(srv.URL)
-	note, err := c.MergeRequests.AddNote(testCtx, "group/proj", 1, "looks good")
-	if err != nil {
-		t.Fatalf("AddNote: %v", err)
-	}
-	if note.ID != 11 || note.Body != "looks good" {
-		t.Errorf("unexpected: %+v", note)
-	}
-}
-
-func TestMR_DeleteNote(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodDelete {
-			t.Errorf("method = %q, want DELETE", r.Method)
-		}
-		if !strings.HasSuffix(r.URL.Path, "/notes/99") {
-			t.Errorf("path = %q, want suffix /notes/99", r.URL.Path)
-		}
-		w.WriteHeader(http.StatusNoContent)
-	}))
-	defer srv.Close()
-
-	c := newMRTestClient(srv.URL)
-	if err := c.MergeRequests.DeleteNote(testCtx, "group/proj", 1, 99); err != nil {
-		t.Fatalf("DeleteNote: %v", err)
-	}
-}
-
-// 鈹€鈹€鈹€ Error path tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
-
-func TestMR_List_401(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusUnauthorized)
-		_, _ = w.Write([]byte(`{"message":"401 Unauthorized"}`))
-	}))
-	defer srv.Close()
-
-	c := newMRTestClient(srv.URL)
-	_, err := c.MergeRequests.List(testCtx, "group/proj", nil)
-	if err == nil {
-		t.Fatal("expected error")
-	}
-	var apiErr *APIError
-	if !errors.As(err, &apiErr) || apiErr.StatusCode != 401 {
-		t.Errorf("expected 401 APIError, got %v", err)
-	}
-}
-
-func TestMR_Get_404(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-		_, _ = w.Write([]byte(`{"message":"404 Not Found"}`))
-	}))
-	defer srv.Close()
-
-	c := newMRTestClient(srv.URL)
-	_, err := c.MergeRequests.Get(testCtx, "group/proj", 9999)
-	if err == nil {
-		t.Fatal("expected error")
-	}
-	var apiErr *APIError
-	if !errors.As(err, &apiErr) || apiErr.StatusCode != 404 {
-		t.Errorf("expected 404 APIError, got %v", err)
-	}
-}
-
-func TestMR_Create_422(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusUnprocessableEntity)
-		_, _ = w.Write([]byte(`{"message":{"source_branch":["is invalid"]}}`))
-	}))
-	defer srv.Close()
-
-	c := newMRTestClient(srv.URL)
-	_, err := c.MergeRequests.Create(testCtx, "group/proj", &MergeRequestCreateRequest{
-		Title:        "x",
-		SourceBranch: "bad branch",
-		TargetBranch: "main",
-	})
-	if err == nil {
-		t.Fatal("expected error")
-	}
-	var apiErr *APIError
-	if !errors.As(err, &apiErr) || apiErr.StatusCode != 422 {
-		t.Errorf("expected 422 APIError, got %v", err)
-	}
-}
-
-func TestMR_List_WithAllEncodeFields(t *testing.T) {
-	opts := &MergeRequestListOpts{
-		State:        "opened",
-		AssigneeUser: "alice",
-		AuthorUser:   "bob",
-		Labels:       "bug",
-		Search:       "fix",
-		SourceBranch: "feat/x",
-		TargetBranch: "main",
-		Limit:        150,
-	}
-	q := opts.encode()
-	for _, part := range []string{
-		"state=opened",
-		"assignee_username=alice",
-		"author_username=bob",
-		"labels=bug",
-		"search=fix",
-		"source_branch=feat%2Fx",
-		"target_branch=main",
-	} {
-		if !strings.Contains(q, part) {
-			t.Errorf("encode() missing %q in %q", part, q)
-		}
-	}
-	if !strings.Contains(q, "per_page=100") {
-		t.Errorf("encode() should cap per_page at 100, got %q", q)
-	}
-	if (*MergeRequestListOpts)(nil).encode() != "" {
-		t.Error("nil encode should be empty")
-	}
-}
-
-func TestMR_Reopen_StateEvent(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPut {
-			t.Errorf("method = %q, want PUT", r.Method)
-		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"iid":2,"title":"x","state":"opened","source_branch":"b","target_branch":"main"}`))
-	}))
-	defer srv.Close()
-
-	c := newMRTestClient(srv.URL)
-	mr, err := c.MergeRequests.Reopen(testCtx, "group/proj", 2)
-	if err != nil {
-		t.Fatalf("Reopen: %v", err)
-	}
-	if mr.State != "opened" {
-		t.Errorf("state = %q, want opened", mr.State)
-	}
-}
-
-func TestMR_List_ParseError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`bad`))
-	}))
-	defer srv.Close()
-
-	c := newMRTestClient(srv.URL)
-	_, err := c.MergeRequests.List(testCtx, "group/proj", nil)
-	if err == nil || !strings.Contains(err.Error(), "parsing merge requests") {
-		t.Fatalf("expected parse error, got %v", err)
-	}
-}
-
-func TestMR_Get_ParseError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`bad`))
-	}))
-	defer srv.Close()
-
-	c := newMRTestClient(srv.URL)
-	_, err := c.MergeRequests.Get(testCtx, "group/proj", 1)
-	if err == nil || !strings.Contains(err.Error(), "parsing merge request") {
-		t.Fatalf("expected parse error, got %v", err)
-	}
-}
-
-func TestMR_Create_ParseError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`bad`))
-	}))
-	defer srv.Close()
-
-	c := newMRTestClient(srv.URL)
-	_, err := c.MergeRequests.Create(testCtx, "group/proj", &MergeRequestCreateRequest{Title: "x", SourceBranch: "a", TargetBranch: "main"})
-	if err == nil || !strings.Contains(err.Error(), "parsing created merge request") {
-		t.Fatalf("expected parse error, got %v", err)
-	}
-}
-
-func TestMR_Update_ParseError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`bad`))
-	}))
-	defer srv.Close()
-
-	c := newMRTestClient(srv.URL)
-	_, err := c.MergeRequests.Update(testCtx, "group/proj", 1, &MergeRequestUpdateRequest{Title: "x"})
-	if err == nil || !strings.Contains(err.Error(), "parsing updated merge request") {
-		t.Fatalf("expected parse error, got %v", err)
-	}
-}
-
-func TestMR_Merge_ParseError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`bad`))
-	}))
-	defer srv.Close()
-
-	c := newMRTestClient(srv.URL)
-	_, err := c.MergeRequests.Merge(testCtx, "group/proj", 1, nil)
-	if err == nil || !strings.Contains(err.Error(), "parsing merged merge request") {
-		t.Fatalf("expected parse error, got %v", err)
-	}
-}
-
-func TestMR_ListNotes_ParseError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`bad`))
-	}))
-	defer srv.Close()
-
-	c := newMRTestClient(srv.URL)
-	_, err := c.MergeRequests.ListNotes(testCtx, "group/proj", 1, 20)
-	if err == nil || !strings.Contains(err.Error(), "parsing notes") {
-		t.Fatalf("expected parse error, got %v", err)
-	}
-}
-
-func TestMR_AddNote_ParseError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`bad`))
-	}))
-	defer srv.Close()
-
-	c := newMRTestClient(srv.URL)
-	_, err := c.MergeRequests.AddNote(testCtx, "group/proj", 1, "hi")
-	if err == nil || !strings.Contains(err.Error(), "parsing note") {
-		t.Fatalf("expected parse error, got %v", err)
-	}
-}
-
-func TestMR_GetRawDiff_Error(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-		_, _ = w.Write([]byte(`{"message":"404"}`))
-	}))
-	defer srv.Close()
-
-	c := newMRTestClient(srv.URL)
-	_, err := c.MergeRequests.GetRawDiff(testCtx, "group/proj", 1)
-	if err == nil {
-		t.Fatal("expected error")
-	}
-}
-
-func TestMR_ListDiscussions(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			t.Errorf("method = %q, want GET", r.Method)
-		}
-		if !strings.HasSuffix(r.URL.Path, "/merge_requests/7/discussions") {
-			t.Errorf("path = %q", r.URL.Path)
-		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`[{"id":"abc","individual_note":false,"notes":[{"id":1,"body":"hi","author":{"username":"alice"}}]}]`))
-	}))
-	defer srv.Close()
-	c := newMRTestClient(srv.URL)
-	ds, err := c.MergeRequests.ListDiscussions(testCtx, "g/p", 7, 20)
-	if err != nil {
-		t.Fatalf("ListDiscussions: %v", err)
-	}
-	if len(ds) != 1 || ds[0].ID != "abc" || len(ds[0].Notes) != 1 {
-		t.Errorf("unexpected: %+v", ds)
-	}
-}
-
-func TestMR_ReplyDiscussion(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			t.Errorf("method = %q, want POST", r.Method)
-		}
-		if !strings.HasSuffix(r.URL.Path, "/discussions/abc/notes") {
-			t.Errorf("path = %q", r.URL.Path)
-		}
-		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`{"id":42,"body":"done","author":{"username":"alice"}}`))
-	}))
-	defer srv.Close()
-	c := newMRTestClient(srv.URL)
-	note, err := c.MergeRequests.ReplyDiscussion(testCtx, "g/p", 7, "abc", "done")
-	if err != nil {
-		t.Fatalf("ReplyDiscussion: %v", err)
-	}
-	if note.ID != 42 || note.Body != "done" {
-		t.Errorf("unexpected: %+v", note)
-	}
-}
-
-func TestMR_Get_ParsesDiffRefs(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"iid":7,"title":"feat","diff_refs":{"base_sha":"b1","start_sha":"s1","head_sha":"h1"}}`))
-	}))
-	defer srv.Close()
-	c := newMRTestClient(srv.URL)
-	mr, err := c.MergeRequests.Get(testCtx, "g/p", 7)
-	if err != nil {
-		t.Fatalf("Get: %v", err)
-	}
-	if mr.DiffRefs == nil || mr.DiffRefs.BaseSHA != "b1" || mr.DiffRefs.StartSHA != "s1" || mr.DiffRefs.HeadSHA != "h1" {
-		t.Errorf("diff_refs not parsed: %+v", mr.DiffRefs)
-	}
-}
-
-func TestMR_CreateDiscussion_WithPosition(t *testing.T) {
-	var gotBody string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			t.Errorf("method = %q, want POST", r.Method)
-		}
-		if !strings.HasSuffix(r.URL.Path, "/merge_requests/7/discussions") {
-			t.Errorf("path = %q", r.URL.Path)
-		}
-		buf, _ := io.ReadAll(r.Body)
-		gotBody = string(buf)
-		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`{"id":"disc1","individual_note":false,"notes":[{"id":1,"body":"nit","author":{"username":"alice"},"resolvable":true,"resolved":false}]}`))
-	}))
-	defer srv.Close()
-	c := newMRTestClient(srv.URL)
-	line := 42
-	pos := &DiffPosition{BaseSHA: "b1", StartSHA: "s1", HeadSHA: "h1", PositionType: "text", NewPath: "a.go", OldPath: "a.go", NewLine: &line}
-	d, err := c.MergeRequests.CreateDiscussion(testCtx, "g/p", 7, "nit", pos)
-	if err != nil {
-		t.Fatalf("CreateDiscussion: %v", err)
-	}
-	if d.ID != "disc1" || len(d.Notes) != 1 || !d.Notes[0].Resolvable {
-		t.Errorf("unexpected discussion: %+v", d)
-	}
-	for _, want := range []string{`"position"`, `"new_path":"a.go"`, `"new_line":42`, `"head_sha":"h1"`} {
-		if !strings.Contains(gotBody, want) {
-			t.Errorf("request body missing %q, got: %s", want, gotBody)
+		if tc.body != nil && !jsonEqual(got.body, tc.body) {
+			t.Errorf("%s: body %v, want %v", tc.name, got.body, tc.body)
 		}
 	}
 }
 
-func TestMR_ResolveDiscussion(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPut {
-			t.Errorf("method = %q, want PUT", r.Method)
-		}
-		if !strings.HasSuffix(r.URL.Path, "/discussions/disc1") {
-			t.Errorf("path = %q", r.URL.Path)
-		}
-		if r.URL.Query().Get("resolved") != "true" {
-			t.Errorf("resolved query = %q, want true", r.URL.Query().Get("resolved"))
-		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"id":"disc1","notes":[{"id":1,"body":"fix","resolvable":true,"resolved":true}]}`))
-	}))
-	defer srv.Close()
-	c := newMRTestClient(srv.URL)
-	d, err := c.MergeRequests.ResolveDiscussion(testCtx, "g/p", 7, "disc1", true)
-	if err != nil {
-		t.Fatalf("ResolveDiscussion: %v", err)
+func jsonEqual(a, b any) bool {
+	x, _ := json.Marshal(a)
+	y, _ := json.Marshal(b)
+	return string(x) == string(y)
+}
+
+func TestMR_ReadsOfApprovalsDiffsNotesAndDiscussions(t *testing.T) {
+	c, calls := mrServer(t, 200, `{"approved":true,"approvals_left":0,"approved_by":[{"user":{"username":"carol"}}]}`, nil)
+	ap, err := c.MergeRequests.Approvals(testCtx, "acme/web", 5)
+	if err != nil || !ap.Approved || len(ap.Usernames()) != 1 || ap.Usernames()[0] != "carol" {
+		t.Fatalf("Approvals = %+v, %v", ap, err)
 	}
-	if d.ID != "disc1" || len(d.Notes) != 1 || !d.Notes[0].Resolved {
-		t.Errorf("unexpected: %+v", d)
+	if (*calls)[0].path != "/api/v4/projects/acme%2Fweb/merge_requests/5/approvals" {
+		t.Errorf("path = %s", (*calls)[0].path)
+	}
+
+	c, calls = mrServer(t, 200, `[{"old_path":"a.go","new_path":"a.go","diff":"@@ -1 +1 @@\n-a\n+b\n","renamed_file":false}]`,
+		map[string]string{"X-Next-Page": ""})
+	diffs, _, err := c.MergeRequests.DiffsPage(testCtx, "acme/web", 5, 1, 10)
+	if err != nil || len(diffs) != 1 || diffs[0].NewPath != "a.go" {
+		t.Fatalf("DiffsPage = %+v, %v", diffs, err)
+	}
+	if got := (*calls)[0]; got.path != "/api/v4/projects/acme%2Fweb/merge_requests/5/diffs" || got.query != "page=1&per_page=10" {
+		t.Errorf("request = %s?%s", got.path, got.query)
+	}
+
+	c, calls = mrServer(t, 200, "diff --git a/a.go b/a.go\n", nil)
+	if raw, err := c.MergeRequests.RawDiff(testCtx, "acme/web", 5); err != nil || raw != "diff --git a/a.go b/a.go\n" {
+		t.Fatalf("RawDiff = %q, %v", raw, err)
+	}
+	if (*calls)[0].path != "/api/v4/projects/acme%2Fweb/merge_requests/5/raw_diffs" {
+		t.Errorf("path = %s", (*calls)[0].path)
+	}
+
+	c, calls = mrServer(t, 200, `[{"id":9,"body":"hi","system":false,"author":{"username":"carol"}}]`, nil)
+	notes, _, err := c.MergeRequests.NotesPage(testCtx, "acme/web", 5, 2, 20)
+	if err != nil || len(notes) != 1 || notes[0].Author.Username != "carol" {
+		t.Fatalf("NotesPage = %+v, %v", notes, err)
+	}
+	if got := (*calls)[0]; got.query != "order_by=created_at&page=2&per_page=20&sort=asc" {
+		t.Errorf("query = %s", got.query)
+	}
+
+	c, _ = mrServer(t, 200, `{"id":9,"body":"hi","position":{"new_path":"a.go","new_line":3}}`, nil)
+	if n, err := c.MergeRequests.GetNote(testCtx, "acme/web", 5, 9); err != nil || n.Position.NewPath != "a.go" || *n.Position.NewLine != 3 {
+		t.Fatalf("GetNote = %+v, %v", n, err)
+	}
+
+	c, calls = mrServer(t, 200, `[{"id":"d1","individual_note":false,"notes":[{"id":1,"resolvable":true}]}]`, nil)
+	ds, _, err := c.MergeRequests.DiscussionsPage(testCtx, "acme/web", 5, 1, 20)
+	if err != nil || len(ds) != 1 || ds[0].ID != "d1" || !ds[0].Notes[0].Resolvable {
+		t.Fatalf("DiscussionsPage = %+v, %v", ds, err)
+	}
+	if got := (*calls)[0]; got.path != "/api/v4/projects/acme%2Fweb/merge_requests/5/discussions" || got.query != "page=1&per_page=20" {
+		t.Errorf("request = %s?%s", got.path, got.query)
+	}
+	c, calls = mrServer(t, 200, `{"id":"d1","notes":[]}`, nil)
+	if d, err := c.MergeRequests.GetDiscussion(testCtx, "acme/web", 5, "d1"); err != nil || d.ID != "d1" {
+		t.Fatalf("GetDiscussion = %+v, %v", d, err)
+	}
+	if (*calls)[0].path != "/api/v4/projects/acme%2Fweb/merge_requests/5/discussions/d1" {
+		t.Errorf("path = %s", (*calls)[0].path)
+	}
+}
+
+func TestMR_ParseErrors(t *testing.T) {
+	c, _ := mrServer(t, 200, `{not json`, nil)
+	checks := map[string]error{}
+	_, _, checks["ListPage"] = c.MergeRequests.ListPage(testCtx, "p/q", MergeRequestListOpts{})
+	_, checks["Get"] = c.MergeRequests.Get(testCtx, "p/q", 1)
+	_, checks["Approvals"] = c.MergeRequests.Approvals(testCtx, "p/q", 1)
+	_, _, checks["DiffsPage"] = c.MergeRequests.DiffsPage(testCtx, "p/q", 1, 1, 20)
+	_, _, checks["NotesPage"] = c.MergeRequests.NotesPage(testCtx, "p/q", 1, 1, 20)
+	_, checks["GetNote"] = c.MergeRequests.GetNote(testCtx, "p/q", 1, 2)
+	_, _, checks["DiscussionsPage"] = c.MergeRequests.DiscussionsPage(testCtx, "p/q", 1, 1, 20)
+	_, checks["GetDiscussion"] = c.MergeRequests.GetDiscussion(testCtx, "p/q", 1, "d")
+	for name, err := range checks {
+		if err == nil {
+			t.Errorf("%s: a malformed answer must be an error", name)
+		}
 	}
 }

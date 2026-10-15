@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"strconv"
+	"strings"
 )
 
 // MilestoneAPI wraps milestone-related API calls.
@@ -13,15 +14,18 @@ import (
 // Endpoint reference: https://docs.gitlab.com/api/milestones/
 type MilestoneAPI struct{ client *Client }
 
-// Milestone represents a GitLab project milestone.
+// Milestone represents a GitLab project milestone. ID is global; IID is the number
+// within the project that the web URL (/-/milestones/<iid>) and %<iid> use.
 type Milestone struct {
 	ID          int    `json:"id"`
 	IID         int    `json:"iid"`
+	ProjectID   int    `json:"project_id"`
 	Title       string `json:"title"`
 	Description string `json:"description"`
 	State       string `json:"state"`
 	StartDate   string `json:"start_date"`
 	DueDate     string `json:"due_date"`
+	Expired     *bool  `json:"expired"`
 	WebURL      string `json:"web_url"`
 	CreatedAt   string `json:"created_at"`
 	UpdatedAt   string `json:"updated_at"`
@@ -29,36 +33,64 @@ type Milestone struct {
 
 // MilestoneListOpts holds query parameters for listing milestones.
 type MilestoneListOpts struct {
-	State string // active|closed|all
-	Limit int
+	State   string // active|closed; "" or "all" means every state
+	Search  string // a substring of the title or description
+	Title   string // the exact title
+	IIDs    []int  // only these iids
+	Limit   int    // List only: the number of milestones to return
+	Page    int    // ListPage only
+	PerPage int    // ListPage only
 }
 
-func (o *MilestoneListOpts) encode() string {
-	if o == nil {
-		return ""
-	}
+func (o *MilestoneListOpts) query() url.Values {
 	q := url.Values{}
+	if o == nil {
+		return q
+	}
 	if o.State != "" && o.State != "all" {
 		q.Set("state", o.State)
 	}
-	q.Set("per_page", strconv.Itoa(listPerPage(o.Limit)))
-	return q.Encode()
+	if s := strings.TrimSpace(o.Search); s != "" {
+		q.Set("search", s)
+	}
+	if o.Title != "" {
+		q.Set("title", o.Title)
+	}
+	for _, iid := range o.IIDs {
+		q.Add("iids[]", strconv.Itoa(iid))
+	}
+	return q
 }
 
-// List returns milestones for a project.
+// ListPage returns one page of a project's own milestones (not those of its
+// groups), newest first.
+//
+// GET /api/v4/projects/:id/milestones
+func (a *MilestoneAPI) ListPage(ctx context.Context, projectID string, opts MilestoneListOpts) ([]Milestone, Pagination, error) {
+	path := a.client.APIPath("/projects/"+EncodeProjectPath(projectID)+"/milestones") + "?" + opts.query().Encode()
+	data, pag, err := GetPage(ctx, a.client, path, opts.Page, opts.PerPage)
+	if err != nil {
+		return nil, Pagination{}, err
+	}
+	var out []Milestone
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, Pagination{}, fmt.Errorf("parsing milestones: %w", err)
+	}
+	return out, pag, nil
+}
+
+// List returns up to opts.Limit milestones of a project (all pages merged).
 //
 // GET /api/v4/projects/:id/milestones
 func (a *MilestoneAPI) List(ctx context.Context, projectID string, opts *MilestoneListOpts) ([]Milestone, error) {
-	path := a.client.APIPath("/projects/" + EncodeProjectPath(projectID) + "/milestones")
 	limit := 0
-	var q string
+	q := url.Values{}
 	if opts != nil {
 		limit = opts.Limit
-		q = opts.encode()
+		q = opts.query()
 	}
-	if q != "" {
-		path += "?" + q
-	}
+	q.Set("per_page", strconv.Itoa(listPerPage(limit)))
+	path := a.client.APIPath("/projects/"+EncodeProjectPath(projectID)+"/milestones") + "?" + q.Encode()
 	data, _, err := PaginateGET(ctx, a.client, path, limit)
 	if err != nil {
 		return nil, err
@@ -70,7 +102,7 @@ func (a *MilestoneAPI) List(ctx context.Context, projectID string, opts *Milesto
 	return out, nil
 }
 
-// GetByID returns a single milestone by its ID.
+// GetByID returns a single milestone by its global ID.
 //
 // GET /api/v4/projects/:id/milestones/:milestone_id
 func (a *MilestoneAPI) GetByID(ctx context.Context, projectID string, milestoneID int) (*Milestone, error) {
@@ -110,16 +142,16 @@ func (a *MilestoneAPI) Create(ctx context.Context, projectID string, opts Milest
 	return &out, nil
 }
 
-// MilestoneUpdateOpts holds parameters for updating a milestone.
+// MilestoneUpdateOpts holds the fields to change; nil fields are left as they are.
 type MilestoneUpdateOpts struct {
-	Title       string `json:"title,omitempty"`
-	Description string `json:"description,omitempty"`
-	StartDate   string `json:"start_date,omitempty"`
-	DueDate     string `json:"due_date,omitempty"`
-	StateEvent  string `json:"state_event,omitempty"` // close|activate
+	Title       *string `json:"title,omitempty"`
+	Description *string `json:"description,omitempty"`
+	StartDate   *string `json:"start_date,omitempty"`
+	DueDate     *string `json:"due_date,omitempty"`
+	StateEvent  *string `json:"state_event,omitempty"` // close|activate
 }
 
-// Update updates an existing milestone.
+// Update changes a milestone, found by its global ID.
 //
 // PUT /api/v4/projects/:id/milestones/:milestone_id
 func (a *MilestoneAPI) Update(ctx context.Context, projectID string, milestoneID int, opts MilestoneUpdateOpts) (*Milestone, error) {
@@ -135,7 +167,7 @@ func (a *MilestoneAPI) Update(ctx context.Context, projectID string, milestoneID
 	return &out, nil
 }
 
-// Delete deletes a milestone.
+// Delete deletes a milestone, found by its global ID.
 //
 // DELETE /api/v4/projects/:id/milestones/:milestone_id
 func (a *MilestoneAPI) Delete(ctx context.Context, projectID string, milestoneID int) error {

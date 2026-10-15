@@ -1,31 +1,60 @@
 name: Integration
 
+# Manual only. The live suite (e2e/, docs/E2E.md) runs against a GitLab in Docker
+# on a maintainer's machine. This workflow runs the part that needs no GitLab: the
+# built-ins phase through the suite's harness (binary build, isolation, records),
+# every stdout checked with the spec's validator at the pinned tag.
 on:
   workflow_dispatch:
-  schedule:
-  - cron: '0 3 * * 0'
+
+permissions:
+  contents: read
 
 jobs:
-  reference-json:
+  e2e-harness:
+    name: Live suite harness, no GitLab
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
 
-      - name: Set up Go
-        uses: actions/setup-go@v7
+      # Go version is sourced from go.mod; the harness builds ./cmd/gitlab-cli.
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
 
-      - name: Reference JSON smoke
-        run: |
-          go test -run TestReference_JSON_HasAgentMetadata ./cmd/...
-          go build -o gitlab-cli ./cmd/gitlab-cli
-          ./gitlab-cli reference --json --compact | head -c 2000
+      - name: Check out the spec at the pinned tag (its Python validator)
+        run: git clone --quiet --depth 1 --branch "$(cat .agent/SPEC_VERSION)" https://github.com/fatecannotbealtered/ai-native-cli-spec.git "$RUNNER_TEMP/spec"
 
-  # Full GitLab CE E2E requires Docker + long bootstrap; run locally via docs/E2E.md
-  # and scripts/e2e-test.ps1. Uncomment when a hosted runner with Docker is available.
-  # integration:
+      - name: Built-ins through the suite's harness
+        env:
+          GITLAB_E2E_RUN_DIR: ${{ runner.temp }}/e2e-run
+        run: |
+          export GITLAB_E2E_VALIDATOR="$RUNNER_TEMP/spec/template/python/aicli/validate.py"
+          python3 -m py_compile e2e/*.py
+          python3 e2e/scenario.py builtins_pre
+
+  # The live suite itself is not enabled here. A job for it would need, on a runner
+  # with Docker (GitLab takes about 8 GB of memory and 5 to 15 minutes to start):
+  #   - GitLab from docker-compose.e2e.yml and a runner registered with it for the
+  #     pipeline and job phase (scripts/e2e-runner-register.ps1 shows the steps; the
+  #     script assumes Windows);
+  #   - the three tokens of docs/E2E.md, "Accounts and tokens": a fresh GitLab has
+  #     only root, so the job creates root's token and the two accounts first;
+  #   - an OS keyring the tool can write for auth login and auth logout (on Linux, a
+  #     Secret Service such as gnome-keyring in a D-Bus session).
+  # The suite has run on Windows only. With those in place, the job is:
+  #
+  # live:
   #   runs-on: ubuntu-latest
+  #   timeout-minutes: 60
   #   steps:
   #     - uses: actions/checkout@v7
+  #     - uses: actions/setup-go@v7
+  #       with:
+  #         go-version-file: go.mod
   #     - run: docker compose -f docker-compose.e2e.yml up -d --wait
+  #     # ... register the runner, create the accounts, export the three tokens ...
+  #     - name: Live suite
+  #       env:
+  #         GITLAB_E2E_RUN_DIR: ${{ runner.temp }}/e2e-run
+  #       run: python3 e2e/scenario.py run

@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-10-15
+
+### Added
+
+- Profiles in `~/.gitlab-cli/settings.json` (or `GITLAB_CLI_SETTINGS_FILE`), one per GitLab host, picked with `--profile` or `GITLAB_CLI_PROFILE`. `auth login --token-file -` checks a token with GitLab and stores it in the OS keyring; `auth status` shows the account, the token's scopes and its expiry; `auth logout` removes the token.
+- `operation show|list|resolve`: after a lost reply (`E_OUTCOME_UNKNOWN`), look the write up instead of sending it again.
+- Every resource has a `ref` (`acme/web!5`, `acme/web#12`, `@carol`) that commands take back, as they take web URLs. `--project` also takes a project name; several matches are `E_AMBIGUOUS` with `details.candidates`.
+- Every list pages with `--limit` and `--offset` (from `next_offset`) and reports `has_more`, `total` (when GitLab sends it) and `scope`; in 1.x only `mr list` reported more results.
+- `label get`, `repo branch get`, `repo file content`, `mr discussion get` and `mr discussion unresolve`; `mr list --pipeline-status` and `--reviewer`; `--query` on the issue, MR, project, label, milestone and branch lists; `--wait <duration>` (up to 90s) on `pipeline get`, `job get` and `job log`; `--idempotency-key` on every create (a repeat returns the first result); `update --allow-downgrade`; `--pretty`.
+- Root shortcuts `branch`, `file`, `commit`, `tree`, `members`, `mr-comment`, `mr-discussion`, `mr-bulk`, `issue-comment` and `issue-bulk`, and verb aliases such as `ls`, `view`, `add`, `edit` and `rm`.
+- `GITLAB_CLI_DEBUG` (request lines on stderr, secrets redacted), `GITLAB_CLI_CA_FILE` (a private CA), `GITLAB_CLI_TIMEOUT`, `GITLAB_CLI_STATE_DIR` and `GITLAB_CLI_SCOPE_FILE`.
+
+### Changed
+
+- gitlab-cli follows ai-native-cli-spec 2.0. Upgrade steps for 1.x users: `docs/UPGRADE-2.0.md`.
+- Output: one compact JSON envelope with `schema_version` `"2.0"`; snake_case keys (`web_url`, `has_more`), users as `@name`, pipelines' and jobs' branch in `ref_name`; `meta.untrusted` replaces `_untrusted`; lists drop `limit`, `page` and `all`. Commands return their default fields: `--fields +a` adds one, `--fields all` returns all. Errors carry `details.dispatch_state` and `details.next_action`; new codes include `E_AMBIGUOUS`, `E_OUTCOME_UNKNOWN` and `E_PARTIAL`.
+- Every write needs a scope file that a person writes (`~/.gitlab-cli/scope.json` or `GITLAB_CLI_SCOPE_FILE`), else `E_FORBIDDEN` with `details.scope`; then `--dry-run`, and the same command with `--confirm <token>`. Tokens bind the whole request, work once and expire after 15 minutes; 1.x tokens are refused. A confirmed write returns `operation_id`, `receipt` and `result`; a partly applied batch is `E_PARTIAL`.
+- `--dangerous` is now also needed for `auth login`, `auth logout`, `label delete`, `issue comment delete`, `mr comment delete` and a `repo commit create` that deletes a file. Variable writes and `auth login|logout` need `configure` in the scope; `job artifacts` needs `artifact` and an `outputs` folder, and never replaces a file. Risk tier T2.
+- The 1.x `config.json` and `profiles.json`, and glab's `GITLAB_HOST` and `GITLAB_TOKEN`, are not read: sign in again with `auth login`, or set `GITLAB_CLI_TOKEN`. A stored token is sent only to its own host; `http://` works for localhost only.
+- `issue assign <issue> --assignee <user>` replaces `issue assign <iid> <user>`; `issue comment add` is now `issue comment create` (`add` stays an alias).
+- Long text left the defaults: `mr get` drops the description (`--fields +description`); `mr diff` lists files with line counts (`--fields +diff`, or `--format raw` for the diff); `job log` returns the last 100 lines (`--format raw --tail 0` for the whole log); `repo file get` returns metadata (`repo file content` or `--format raw` for the content); `release list` drops the notes; `mr discussion list` returns summaries; `repo commit get` and `release get` cut long text at 4,000 characters (`--format raw` for all of it).
+- `context` works offline and exits 0 when no one is signed in. `update` is aicli's built-in and copies the Skills from the installed package. Reads retry at most twice, writes never; requests time out after 30s.
+
+### Deprecated
+
+- `pipeline wait` and `job wait`: use `pipeline get` or `job get` with `--wait <duration>`. They wait at most 90s and no longer exit 6 when the pipeline or job failed, or 8 on timeout; the status is in the output.
+- Flags kept with a notice: `--search` (use `--query`), `pipeline list --status` and `pipeline jobs --scope` (`--state`), `repo commit list --ref-name` (`--ref`), `variable get|delete --filter` (`--env-scope`), `job log --timeout` (`--wait`), `project create --namespace-id` (`--namespace`), `--milestone-id` on issue writes (`--milestone`), `--label-id` and `--milestone-id` on label and milestone commands (the argument), `mr discussion resolve --unresolve` (`mr discussion unresolve`), `mr create --find-existing` (no effect).
+
+### Removed
+
+- `auth profile list|use|remove`: profiles live in settings.json.
+- `variable --show-values` and `GITLAB_CLI_ALLOW_SHOW_VALUES`: no command shows a variable's value.
+- `repo file get --output`: use `--format raw`.
+- `mr list --all`, `context --strict|--no-strict`, `update --reinstall`, `--force` and `release_readiness`.
+- `GITLAB_CLI_AGENT_SAFE`, `GITLAB_CLI_ALLOW_FORCE`, `GITLAB_CLI_USER_AGENT`, `GITLAB_CLI_MAX_RETRIES`, `GITLAB_CLI_RETRY_BASE_MS`, `GITLAB_CLI_NO_UPDATE_CHECK` and `GITLAB_CLI_INSTALL_METHOD`.
+
+### Fixed
+
+- `project members` includes members inherited from groups (`membership`); 1.x listed direct members only.
+- `repo commit diff` reads every page; 1.x returned only GitLab's first 20 files.
+- Variable commands with an environment scope send `filter[environment_scope]`; 1.x sent `filter[env_scope]`, which GitLab ignores.
+- `mr create --draft` makes a draft (`Draft:` title prefix); 1.x sent a field the create API ignores.
+- `job log --follow` no longer repeats the log when GitLab ignores the byte range.
+
+### Security
+
+- Every write passes aicli's shared gate: the scope check, confirm tokens keyed with HMAC-SHA256 under a machine-local key and bound to the request, account, host and profile, and an operation record written before anything is sent.
+- Writes are sent once; 1.x retried a write after a 5xx, a 429 or a network error, which could apply it twice.
+- Secrets never appear in output, previews, records or debug lines: tokens, variable values, and `--variable KEY=VALUE` values (previews name the keys).
+- An MR or issue comment, reply or description with a quick-action line (`/merge`, `/close`, `/move`) is blocked at the preview; this covers `issue create`, `issue update`, `issue bulk update`, `issue comment create` and `issue bulk comment` too.
+- `update` accepts only strict semver targets, runs package managers without a shell, and installs a binary only after its Sigstore signature and checksum verify.
+
 ## [1.2.17] - 2026-08-26
 
 ### Security

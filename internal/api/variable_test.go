@@ -1,206 +1,139 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
-
-	"github.com/fatecannotbealtered/gitlab-cli/internal/config"
 )
 
-func TestVariable_List(t *testing.T) {
+func TestVariable_ListPage(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			t.Errorf("method = %q, want GET", r.Method)
+		if r.Method != http.MethodGet || !strings.HasSuffix(r.URL.Path, "/variables") {
+			t.Errorf("unexpected: %s %s", r.Method, r.URL.Path)
 		}
-		if !strings.HasSuffix(r.URL.Path, "/variables") {
-			t.Errorf("path = %q", r.URL.Path)
+		if r.URL.Query().Get("page") != "2" || r.URL.Query().Get("per_page") != "10" {
+			t.Errorf("query = %q", r.URL.RawQuery)
 		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`[{"key":"FOO","value":"bar","variable_type":"env_var","protected":false,"masked":true,"environment_scope":"*"}]`))
+		_, _ = w.Write([]byte(`[{"key":"FOO","value":"bar","variable_type":"env_var","masked":true,"environment_scope":"*"},
+			{"key":"HIDDEN","value":null,"hidden":true,"masked":true,"environment_scope":"production"}]`))
 	}))
 	defer srv.Close()
 
-	c := NewClient(&config.Config{Host: srv.URL, Token: "tok"})
-	vars, err := c.Variables.List(testCtx, "group/proj", 0)
+	vars, _, err := newTestClient(srv.URL).Variables.ListPage(testCtx, "group/proj", 2, 10)
 	if err != nil {
-		t.Fatalf("List: %v", err)
+		t.Fatalf("ListPage: %v", err)
 	}
-	if len(vars) != 1 || vars[0].Key != "FOO" {
+	if len(vars) != 2 || vars[0].Key != "FOO" || !vars[0].Masked || *vars[0].Value != "bar" || vars[1].Value != nil || !vars[1].Hidden {
 		t.Errorf("unexpected: %+v", vars)
 	}
-	if !vars[0].Masked {
-		t.Error("expected masked=true")
-	}
 }
 
-func TestVariable_Get(t *testing.T) {
+// TestVariable_FilterParameter: GitLab's filter is filter[environment_scope] (1.x sent
+// filter[env_scope], which GitLab ignores); no scope sends no filter.
+func TestVariable_FilterParameter(t *testing.T) {
+	var queries []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasSuffix(r.URL.Path, "/variables/FOO") {
 			t.Errorf("path = %q", r.URL.Path)
 		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"key":"FOO","value":"secret","variable_type":"env_var","environment_scope":"*"}`))
-	}))
-	defer srv.Close()
-
-	c := NewClient(&config.Config{Host: srv.URL, Token: "tok"})
-	v, err := c.Variables.Get(testCtx, "group/proj", "FOO", "")
-	if err != nil {
-		t.Fatalf("Get: %v", err)
-	}
-	if v.Key != "FOO" || v.Value != "secret" {
-		t.Errorf("unexpected: %+v", v)
-	}
-}
-
-func TestVariable_Get_WithEnvScope(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.Contains(r.URL.RawQuery, "filter") {
-			t.Errorf("expected filter query param, got %q", r.URL.RawQuery)
+		queries = append(queries, r.URL.Query().Get("filter[environment_scope]")+"|"+r.URL.RawQuery)
+		switch r.Method {
+		case http.MethodDelete:
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			_, _ = w.Write([]byte(`{"key":"FOO","value":"v","environment_scope":"review/*"}`))
 		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"key":"FOO","value":"prod-secret","environment_scope":"production"}`))
 	}))
 	defer srv.Close()
 
-	c := NewClient(&config.Config{Host: srv.URL, Token: "tok"})
-	v, err := c.Variables.Get(testCtx, "group/proj", "FOO", "production")
-	if err != nil {
-		t.Fatalf("Get: %v", err)
+	c := newTestClient(srv.URL)
+	if v, err := c.Variables.Get(testCtx, "g/p", "FOO", "review/*"); err != nil || v.EnvironmentScope != "review/*" {
+		t.Fatalf("Get: %+v %v", v, err)
 	}
-	if v.EnvironmentScope != "production" {
-		t.Errorf("unexpected scope: %q", v.EnvironmentScope)
+	if _, err := c.Variables.Get(testCtx, "g/p", "FOO", ""); err != nil {
+		t.Fatal(err)
+	}
+	value := "x"
+	if _, err := c.Variables.Update(testCtx, "g/p", "FOO", "production", &VariableUpdateOpts{Value: &value}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Variables.Delete(testCtx, "g/p", "FOO", "staging"); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"review/*|filter%5Benvironment_scope%5D=review%2F%2A", "|", "production|filter%5Benvironment_scope%5D=production",
+		"staging|filter%5Benvironment_scope%5D=staging"}
+	for i := range want {
+		if queries[i] != want[i] {
+			t.Errorf("request %d: %q, want %q", i, queries[i], want[i])
+		}
 	}
 }
 
-func TestVariable_Create(t *testing.T) {
+func TestVariable_CreateSendsEveryFlag(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			t.Errorf("method = %q, want POST", r.Method)
+			t.Errorf("method = %q", r.Method)
+		}
+		var b map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&b)
+		if b["protected"] != false || b["masked"] != false || b["raw"] != false || b["key"] != "NEW_VAR" {
+			t.Errorf("body = %v", b)
 		}
 		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`{"key":"NEW_VAR","value":"newval","variable_type":"env_var","protected":true,"masked":false,"environment_scope":"*"}`))
+		_, _ = w.Write([]byte(`{"key":"NEW_VAR","value":"newval","variable_type":"env_var","environment_scope":"*"}`))
 	}))
 	defer srv.Close()
 
-	c := NewClient(&config.Config{Host: srv.URL, Token: "tok"})
-	v, err := c.Variables.Create(testCtx, "group/proj", &VariableCreateOpts{
-		Key:   "NEW_VAR",
-		Value: "newval",
-	})
-	if err != nil {
-		t.Fatalf("Create: %v", err)
-	}
-	if v.Key != "NEW_VAR" {
-		t.Errorf("unexpected key: %q", v.Key)
+	v, err := newTestClient(srv.URL).Variables.Create(testCtx, "group/proj", &VariableCreateOpts{Key: "NEW_VAR", Value: "newval"})
+	if err != nil || v.Key != "NEW_VAR" {
+		t.Fatalf("Create: %+v %v", v, err)
 	}
 }
 
-func TestVariable_Update(t *testing.T) {
+func TestVariable_UpdateSendsOnlyTheGivenFields(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPut {
-			t.Errorf("method = %q, want PUT", r.Method)
+		var b map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&b)
+		if len(b) != 1 || b["protected"] != true {
+			t.Errorf("body = %v", b)
 		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"key":"FOO","value":"updated","variable_type":"env_var","environment_scope":"*"}`))
+		_, _ = w.Write([]byte(`{"key":"FOO","protected":true}`))
 	}))
 	defer srv.Close()
 
-	c := NewClient(&config.Config{Host: srv.URL, Token: "tok"})
-	v, err := c.Variables.Update(testCtx, "group/proj", "FOO", "", &VariableUpdateOpts{Value: "updated"})
-	if err != nil {
-		t.Fatalf("Update: %v", err)
-	}
-	if v.Value != "updated" {
-		t.Errorf("unexpected value: %q", v.Value)
+	on := true
+	if v, err := newTestClient(srv.URL).Variables.Update(testCtx, "g/p", "FOO", "", &VariableUpdateOpts{Protected: &on}); err != nil || !v.Protected {
+		t.Fatalf("Update: %+v %v", v, err)
 	}
 }
 
-func TestVariable_Delete(t *testing.T) {
+func TestVariable_Errors(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodDelete {
-			t.Errorf("method = %q, want DELETE", r.Method)
+		if r.Method == http.MethodDelete {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"message":"404 Variable Not Found"}`))
+			return
 		}
-		if !strings.HasSuffix(r.URL.Path, "/variables/FOO") {
-			t.Errorf("path = %q", r.URL.Path)
-		}
-		w.WriteHeader(http.StatusNoContent)
-	}))
-	defer srv.Close()
-
-	c := NewClient(&config.Config{Host: srv.URL, Token: "tok"})
-	if err := c.Variables.Delete(testCtx, "group/proj", "FOO", ""); err != nil {
-		t.Fatalf("Delete: %v", err)
-	}
-}
-
-func TestVariable_List_ParseError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`bad`))
 	}))
 	defer srv.Close()
 
-	c := NewClient(&config.Config{Host: srv.URL, Token: "tok"})
-	_, err := c.Variables.List(testCtx, "group/proj", 0)
-	if err == nil || !strings.Contains(err.Error(), "parsing variables") {
-		t.Fatalf("expected parse error, got %v", err)
+	c := newTestClient(srv.URL)
+	if _, _, err := c.Variables.ListPage(testCtx, "g/p", 1, 20); err == nil || !strings.Contains(err.Error(), "parsing variables") {
+		t.Errorf("ListPage: %v", err)
 	}
-}
-
-func TestVariable_Get_ParseError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`bad`))
-	}))
-	defer srv.Close()
-
-	c := NewClient(&config.Config{Host: srv.URL, Token: "tok"})
-	_, err := c.Variables.Get(testCtx, "group/proj", "FOO", "")
-	if err == nil || !strings.Contains(err.Error(), "parsing variable") {
-		t.Fatalf("expected parse error, got %v", err)
+	if _, err := c.Variables.Get(testCtx, "g/p", "FOO", ""); err == nil || !strings.Contains(err.Error(), "parsing variable") {
+		t.Errorf("Get: %v", err)
 	}
-}
-
-func TestVariable_Create_ParseError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`bad`))
-	}))
-	defer srv.Close()
-
-	c := NewClient(&config.Config{Host: srv.URL, Token: "tok"})
-	_, err := c.Variables.Create(testCtx, "group/proj", &VariableCreateOpts{Key: "X", Value: "y"})
-	if err == nil || !strings.Contains(err.Error(), "parsing created variable") {
-		t.Fatalf("expected parse error, got %v", err)
+	if _, err := c.Variables.Create(testCtx, "g/p", &VariableCreateOpts{Key: "X", Value: "y"}); err == nil || !strings.Contains(err.Error(), "parsing created variable") {
+		t.Errorf("Create: %v", err)
 	}
-}
-
-func TestVariable_Update_ParseError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`bad`))
-	}))
-	defer srv.Close()
-
-	c := NewClient(&config.Config{Host: srv.URL, Token: "tok"})
-	_, err := c.Variables.Update(testCtx, "group/proj", "FOO", "", &VariableUpdateOpts{Value: "x"})
-	if err == nil || !strings.Contains(err.Error(), "parsing updated variable") {
-		t.Fatalf("expected parse error, got %v", err)
+	if _, err := c.Variables.Update(testCtx, "g/p", "FOO", "", &VariableUpdateOpts{}); err == nil || !strings.Contains(err.Error(), "parsing updated variable") {
+		t.Errorf("Update: %v", err)
 	}
-}
-
-func TestVariable_Delete_Error(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-		_, _ = w.Write([]byte(`{"message":"404"}`))
-	}))
-	defer srv.Close()
-
-	c := NewClient(&config.Config{Host: srv.URL, Token: "tok"})
-	if err := c.Variables.Delete(testCtx, "group/proj", "FOO", ""); err == nil {
-		t.Fatal("expected error")
+	if err := c.Variables.Delete(testCtx, "g/p", "FOO", ""); err == nil {
+		t.Error("Delete: want the 404")
 	}
 }

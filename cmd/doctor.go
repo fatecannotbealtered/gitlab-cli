@@ -1,185 +1,131 @@
 package cmd
 
 import (
+	"context"
+	"errors"
 	"fmt"
-	"os"
-	"strings"
+	"regexp"
 	"time"
 
+	"github.com/fatecannotbealtered/gitlab-cli/internal/aicli"
 	"github.com/fatecannotbealtered/gitlab-cli/internal/api"
-	"github.com/fatecannotbealtered/gitlab-cli/internal/config"
-	"github.com/fatecannotbealtered/gitlab-cli/internal/output"
-	"github.com/spf13/cobra"
+	"github.com/fatecannotbealtered/gitlab-cli/internal/gitctx"
 )
 
-var doctorCmd = &cobra.Command{
-	Use:   "doctor",
-	Short: "Check configuration and connectivity",
-	RunE:  runDoctor,
-}
+// doctorTimeout bounds doctor's one request to GitLab.
+const doctorTimeout = 5 * time.Second
 
-func init() {
-	rootCmd.AddCommand(doctorCmd)
-}
-
-func runDoctor(_ *cobra.Command, _ []string) error {
-	type doctorCheck struct {
-		Check  string  `json:"check"`
-		Status string  `json:"status"`
-		Fix    *string `json:"fix"`
+// gitlabDoctorChecks is App.DoctorChecks (CLI-036): it replaces aicli's
+// credentials and connectivity checks with a real one, GET /api/v4/user with the
+// configured token. A network failure fails only connectivity; a certificate
+// failure names GITLAB_CLI_CA_FILE (CLI-110).
+func gitlabDoctorChecks(ctx context.Context, app *aicli.App) []aicli.Check {
+	cred, cerr := resolveCredentials(app)
+	var ae *aicli.Error
+	if cerr != nil && errors.As(cerr, &ae) && ae.Code == "E_CONFIG" {
+		return []aicli.Check{{Check: "connectivity", Status: "warn", Message: "Not checked: " + ae.Message,
+			Fix: "Fix the configuration the settings check names, then run `gitlab-cli doctor` again."}}
 	}
-	type doctorResult struct {
-		Checks          []doctorCheck  `json:"checks"`
-		Notices         []updateNotice `json:"notices,omitempty"`
-		Version         string         `json:"version"`
-		SkillMinVersion string         `json:"skill_min_version"`
-		RiskTier        string         `json:"risk_tier"`
-		ConfigExists    bool           `json:"configExists"`
-		AuthValid       bool           `json:"authValid"`
-		LatencyMs       int64          `json:"latencyMs"`
-		Host            string         `json:"host,omitempty"`
-		Username        string         `json:"username,omitempty"`
-		Name            string         `json:"name,omitempty"`
-		Error           string         `json:"error,omitempty"`
+	host := cred.Host
+	if cerr != nil {
+		host, _ = settingHost(app)
 	}
-
-	result := doctorResult{
-		Version:         version,
-		SkillMinVersion: skillMinVersion,
-		RiskTier:        toolRiskTier,
-		Notices:         refreshUpdateNotices(apiCtx(), "doctor"),
-	}
-	check := func(name, status, fix string) {
-		var fixPtr *string
-		if fix != "" {
-			fixPtr = &fix
-		}
-		result.Checks = append(result.Checks, doctorCheck{Check: name, Status: status, Fix: fixPtr})
-	}
-
-	if currentVersionMeetsSkillMin() {
-		check("version", "pass", "")
-	} else {
-		check("version", "fail", "npm install -g @fateforge/gitlab-cli@latest && gitlab-cli changelog --since "+version)
-	}
-	check("release_readiness", releaseReadinessCheckStatus(), releaseReadinessCheckFix())
-
-	cfg, err := config.Load()
+	c, err := clientFor(app, host, cred.Token)
 	if err != nil {
-		result.Error = err.Error()
-		check("config", "fail", "run gitlab-cli auth login or fix the config file")
-		if jsonMode {
-			output.PrintJSON(result)
-		} else {
-			output.Error("Reading config: " + err.Error())
+		msg := "The GitLab client cannot be built."
+		if errors.As(err, &ae) {
+			msg = ae.Message
 		}
-		setExitCode(ExitAuth)
-		return ErrSilent
+		return []aicli.Check{{Check: "connectivity", Status: "fail", Message: msg, Fix: "Fix the configuration it names, then run `gitlab-cli doctor` again."}}
 	}
-
-	if cfg.Host == "" || cfg.Token == "" {
-		result.ConfigExists = false
-		result.Error = "not configured: run 'gitlab-cli auth login' or set GITLAB_HOST and GITLAB_TOKEN"
-		check("config", "fail", "run gitlab-cli auth login or set GITLAB_HOST and GITLAB_TOKEN")
-		if jsonMode {
-			output.PrintJSON(result)
-		} else {
-			fmt.Println()
-			output.Bold("  gitlab-cli Doctor")
-			output.Gray("  ────────────────────────────────────────")
-			fmt.Println()
-			output.Error(result.Error)
-			fmt.Println()
-		}
-		setExitCode(ExitAuth)
-		return ErrSilent
-	}
-	result.ConfigExists = true
-	result.Host = cfg.Host
-	check("config", "pass", "")
-
-	client := api.NewClient(cfg)
+	cctx, cancel := context.WithTimeout(ctx, doctorTimeout)
+	defer cancel()
 	start := time.Now()
-	me, err := client.Users.Me(apiCtx())
-	latency := time.Since(start).Milliseconds()
-	result.LatencyMs = latency
-
-	if err != nil {
-		result.AuthValid = false
-		result.Error = err.Error()
+	var checks []aicli.Check
+	if cerr != nil {
+		// No token: say so, and still check that GitLab answers (GET /version
+		// answers 401 without one, which proves the connection).
+		checks = append(checks, aicli.Check{Check: "credentials", Status: "fail", Message: errMessage(cerr),
+			Fix: fmt.Sprintf("Ask the user to run `gitlab-cli auth login --host %s --token-file -` in their terminal, or to set GITLAB_CLI_TOKEN.", host)})
+		_, err = c.Get(cctx, c.APIPath("/version"))
 		var apiErr *api.APIError
-		if asAPI(err, &apiErr) && (apiErr.StatusCode == 401 || apiErr.StatusCode == 403) {
-			check("network", "pass", "")
-			check("auth", "fail", "check PAT scope and project membership")
-		} else {
-			check("network", "fail", "set HTTP_PROXY or check VPN/connectivity")
-			check("auth", "fail", "retry after network connectivity is restored")
+		if err == nil || errors.As(err, &apiErr) {
+			return append(checks, connectivityPass(host, start))
 		}
-		if jsonMode {
-			output.PrintJSON(result)
-		} else {
-			fmt.Println()
-			output.Bold("  gitlab-cli Doctor")
-			output.Gray("  ────────────────────────────────────────")
-			fmt.Println()
-			output.Error("Connection failed: " + err.Error())
-			fmt.Println()
-		}
-		// Map status code to exit code via handleAPIError-style logic.
-		if asAPI(err, &apiErr) {
-			setExitCode(exitCodeForStatus(apiErr.StatusCode))
-		} else {
-			setExitCode(ExitNetwork)
-		}
-		return ErrSilent
+		return append(checks, connectivityFail(host, err))
 	}
+	me, err := c.Users.Me(cctx)
+	var apiErr *api.APIError
+	switch {
+	case err == nil:
+		checks = append(checks, aicli.Check{Check: "credentials", Status: "pass",
+			Message: fmt.Sprintf("The token from the %s signs in as %s.", sourceName(cred.Source), me.Username)}, connectivityPass(host, start))
+	case errors.As(err, &apiErr) && apiErr.StatusCode == 401:
+		checks = append(checks, aicli.Check{Check: "credentials", Status: "fail",
+			Message: fmt.Sprintf("GitLab rejected the token from the %s: it is invalid, expired or revoked.", sourceName(cred.Source)),
+			Fix:     fmt.Sprintf("Ask the user to create a new token and run `gitlab-cli auth login --host %s --token-file -`, or to update GITLAB_CLI_TOKEN.", host)},
+			connectivityPass(host, start))
+	case errors.As(err, &apiErr):
+		checks = append(checks, aicli.Check{Check: "connectivity", Status: "warn",
+			Message: fmt.Sprintf("%s answered GET /user with HTTP %d.", host, apiErr.StatusCode),
+			Fix:     "Run `gitlab-cli auth status` for the details, then `gitlab-cli doctor` again."})
+	default:
+		checks = append(checks, connectivityFail(host, err))
+	}
+	return checks
+}
 
-	result.AuthValid = true
-	result.Username = me.Username
-	result.Name = me.Name
-	check("network", "pass", "")
-	check("auth", "pass", "")
+func sourceName(source string) string {
+	if source == "env" {
+		return "GITLAB_CLI_TOKEN variable"
+	}
+	return "OS keyring"
+}
 
-	if jsonMode {
-		output.PrintJSON(result)
+func connectivityPass(host string, start time.Time) aicli.Check {
+	return aicli.Check{Check: "connectivity", Status: "pass",
+		Message: fmt.Sprintf("%s answered in %d ms.", host, time.Since(start).Milliseconds())}
+}
+
+func connectivityFail(host string, err error) aicli.Check {
+	var ne *api.NetworkError
+	switch {
+	case errors.As(err, &ne) && ne.TLS:
+		return aicli.Check{Check: "connectivity", Status: "fail",
+			Message: fmt.Sprintf("The TLS certificate of %s is not trusted.", host),
+			Fix:     "If GitLab uses a company CA, point GITLAB_CLI_CA_FILE at its PEM file, then run `gitlab-cli doctor` again."}
+	case errors.As(err, &ne) && ne.Timeout:
+		return aicli.Check{Check: "connectivity", Status: "fail",
+			Message: fmt.Sprintf("%s did not answer within %d s.", host, int(doctorTimeout.Seconds())),
+			Fix:     "Check the VPN, HTTPS_PROXY and NO_PROXY, then run `gitlab-cli doctor` again."}
+	}
+	return aicli.Check{Check: "connectivity", Status: "fail",
+		Message: fmt.Sprintf("%s could not be reached.", host),
+		Fix:     "Check the host setting, the VPN, HTTPS_PROXY and NO_PROXY, then run `gitlab-cli doctor` again."}
+}
+
+func errMessage(err error) string {
+	var ae *aicli.Error
+	if errors.As(err, &ae) {
+		return ae.Message
+	}
+	return "The credentials cannot be resolved."
+}
+
+var (
+	safeHost    = regexp.MustCompile(`^[A-Za-z0-9.-]+(:[0-9]+)?$`)
+	safeProject = regexp.MustCompile(`^[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)+$`)
+)
+
+// gitlabContextExtra is App.ContextExtra (CLI-035): the GitLab remote of the
+// current directory's git repository, from `git remote -v` (local, no network), so
+// an agent working in a checkout learns its --project. Only a host and a path that
+// look like ones are reported; anything else in a remote URL (user info, a token)
+// never is.
+func gitlabContextExtra() map[string]any {
+	r, err := gitctx.DetectGitLabRemote("")
+	if err != nil || r == nil || !safeHost.MatchString(r.Host) || !safeProject.MatchString(r.ProjectPath) {
 		return nil
 	}
-
-	fmt.Println()
-	output.Bold("  gitlab-cli Doctor")
-	output.Gray("  ────────────────────────────────────────")
-	fmt.Println()
-	output.Success("Config found")
-	output.Success("PAT valid (Bearer authentication)")
-	output.Success(fmt.Sprintf("Connected to %s", cfg.Host))
-	output.Success(fmt.Sprintf("Authenticated as %s (%s)", me.Name, me.Username))
-	output.Gray(fmt.Sprintf("  Latency: %dms", latency))
-	printUpdateNoticeHint(os.Stdout, result.Notices)
-	fmt.Println()
-	return nil
-}
-
-func currentVersionMeetsSkillMin() bool {
-	current := cleanVersion(version)
-	if current == "" || current == "dev" || strings.Contains(current, "devel") {
-		return true
-	}
-	return !semverGreater(skillMinVersion, current)
-}
-
-// asAPI is a small helper to keep doctor.go decoupled from errors.As call site sprawl.
-func asAPI(err error, target **api.APIError) bool {
-	type unwrapper interface{ Unwrap() error }
-	for cur := err; cur != nil; {
-		if v, ok := cur.(*api.APIError); ok {
-			*target = v
-			return true
-		}
-		u, ok := cur.(unwrapper)
-		if !ok {
-			return false
-		}
-		cur = u.Unwrap()
-	}
-	return false
+	return map[string]any{"git_remote": map[string]any{"host": r.Host, "project": r.ProjectPath}}
 }

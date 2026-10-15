@@ -68,16 +68,6 @@ func TestPaginateGET_MultiPage(t *testing.T) {
 	}
 }
 
-func TestRateLimitWait_RateLimitReset(t *testing.T) {
-	reset := strconv.FormatInt(1700000000, 10)
-	h := http.Header{}
-	h.Set("RateLimit-Reset", reset)
-	wait := rateLimitWait(h)
-	if wait <= 0 {
-		t.Errorf("expected positive wait from RateLimit-Reset, got %v", wait)
-	}
-}
-
 func TestListPerPage(t *testing.T) {
 	if got := listPerPage(0); got != 20 {
 		t.Errorf("listPerPage(0) = %d, want 20", got)

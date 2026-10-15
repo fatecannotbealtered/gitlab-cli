@@ -1,725 +1,519 @@
 package cmd
 
 import (
-	"encoding/base64"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
 	"fmt"
-	"os"
+	"net/url"
+	"regexp"
+	"strings"
+	"time"
+	"unicode"
 	"unicode/utf8"
 
-	"github.com/fatecannotbealtered/gitlab-cli/internal/api"
-	"github.com/fatecannotbealtered/gitlab-cli/internal/output"
 	"github.com/spf13/cobra"
+
+	"github.com/fatecannotbealtered/gitlab-cli/internal/aicli"
+	"github.com/fatecannotbealtered/gitlab-cli/internal/api"
 )
 
-// 鈹€鈹€鈹€ Parent commands 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
-
-var repoCmd = &cobra.Command{
-	Use:   "repo",
-	Short: "Manage repository files, branches, commits, and tree",
-}
-
-var repoFileCmd = &cobra.Command{
-	Use:   "file",
-	Short: "Manage repository files",
-}
-
-var repoBranchCmd = &cobra.Command{
-	Use:   "branch",
-	Short: "Manage repository branches",
-}
-
-var repoCommitCmd = &cobra.Command{
-	Use:   "commit",
-	Short: "Browse repository commits",
-}
-
-// 鈹€鈹€鈹€ repo file get 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
-
-var repoFileGetCmd = &cobra.Command{
-	Use:   "get",
-	Short: "Get a file from the repository (raw bytes)",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		client, _, err := newClient()
-		if err != nil {
-			return err
-		}
-		project, _ := cmd.Flags().GetString("project")
-		path, _ := cmd.Flags().GetString("path")
-		ref, _ := cmd.Flags().GetString("ref")
-		outPath, _ := cmd.Flags().GetString("output")
-
-		if project == "" {
-			return failArg("--project is required")
-		}
-		if path == "" {
-			return failArg("--path is required")
-		}
-		if formatMode == formatText && (outPath == "" || outPath == "-") {
-			return failArg("repo file get --format text requires --output; use --format raw for stdout content")
-		}
-
-		if outPath != "" && outPath != "-" {
-			if err := validateOutputPath(outPath); err != nil {
-				return failArg(err.Error())
-			}
-		}
-
-		data, err := client.Repos.GetFileRaw(apiCtx(), project, path, ref)
-		if err != nil {
-			return handleAPIError(err, jsonMode)
-		}
-
-		if jsonMode {
-			result := map[string]any{
-				"project": project,
-				"path":    path,
-				"ref":     ref,
-				"bytes":   len(data),
-			}
-			if outPath != "" && outPath != "-" {
-				if err := os.WriteFile(outPath, data, 0o644); err != nil {
-					return failWithCode("writing file: "+err.Error(), ExitNetwork, output.ErrNetwork)
-				}
-				result["output"] = outPath
-				output.PrintJSON(result)
-				return nil
-			}
-			if utf8.Valid(data) {
-				result["encoding"] = "text"
-				result["content"] = string(data)
-			} else {
-				result["encoding"] = "base64"
-				result["content"] = base64.StdEncoding.EncodeToString(data)
-			}
-			output.PrintJSON(output.MarkUntrusted(result, "content"))
-			return nil
-		}
-
-		if outPath == "" || outPath == "-" {
-			_, _ = os.Stdout.Write(data)
-			return nil
-		}
-		if err := os.WriteFile(outPath, data, 0o644); err != nil {
-			return failWithCode("writing file: "+err.Error(), ExitNetwork, output.ErrNetwork)
-		}
-		if formatMode == formatText {
-			output.Success(fmt.Sprintf("Saved to %s (%d bytes)", outPath, len(data)))
-		}
-		return nil
-	},
-}
-
-// 鈹€鈹€鈹€ repo file create 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
-
-var repoFileCreateCmd = &cobra.Command{
-	Use:   "create",
-	Short: "Create a new file in the repository",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		project, _ := cmd.Flags().GetString("project")
-		path, _ := cmd.Flags().GetString("path")
-		branch, _ := cmd.Flags().GetString("branch")
-		content, _ := cmd.Flags().GetString("content")
-		contentFile, _ := cmd.Flags().GetString("content-file")
-		commitMsg, _ := cmd.Flags().GetString("commit-message")
-		encoding, _ := cmd.Flags().GetString("encoding")
-
-		if project == "" || path == "" || branch == "" || commitMsg == "" {
-			return failArg("--project, --path, --branch, and --commit-message are required")
-		}
-		if content == "" && contentFile == "" {
-			return failArg("--content or --content-file is required")
-		}
-
-		finalContent, finalEncoding, err := resolveContent(content, contentFile, encoding)
-		if err != nil {
-			return failArg(err.Error())
-		}
-
-		confirmDetail := map[string]any{
-			"project": project, "path": path, "branch": branch,
-		}
-		if key := idempotencyKeyOf(cmd); key != "" {
-			confirmDetail["idempotencyKey"] = key
-		}
-		if done, err := prepareWrite(cmd, "repo file create", confirmDetail); done || err != nil {
-			return err
-		}
-
-		client, _, err := newClient()
-		if err != nil {
-			return err
-		}
-
-		if err := client.Repos.CreateFile(idempotentCtx(cmd), project, path, api.FileWriteBody{
-			Branch:        branch,
-			Content:       finalContent,
-			CommitMessage: commitMsg,
-			Encoding:      finalEncoding,
-		}); err != nil {
-			return handleAPIError(err, jsonMode)
-		}
-
-		if jsonMode {
-			output.PrintJSON(map[string]any{"path": path, "branch": branch, "action": "created"})
-			return nil
-		}
-		output.Success(fmt.Sprintf("Created %s on %s", path, branch))
-		return nil
-	},
-}
-
-// 鈹€鈹€鈹€ repo file update 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
-
-var repoFileUpdateCmd = &cobra.Command{
-	Use:   "update",
-	Short: "Update an existing file in the repository",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		project, _ := cmd.Flags().GetString("project")
-		path, _ := cmd.Flags().GetString("path")
-		branch, _ := cmd.Flags().GetString("branch")
-		content, _ := cmd.Flags().GetString("content")
-		contentFile, _ := cmd.Flags().GetString("content-file")
-		commitMsg, _ := cmd.Flags().GetString("commit-message")
-		encoding, _ := cmd.Flags().GetString("encoding")
-
-		if project == "" || path == "" || branch == "" || commitMsg == "" {
-			return failArg("--project, --path, --branch, and --commit-message are required")
-		}
-		if content == "" && contentFile == "" {
-			return failArg("--content or --content-file is required")
-		}
-
-		finalContent, finalEncoding, err := resolveContent(content, contentFile, encoding)
-		if err != nil {
-			return failArg(err.Error())
-		}
-
-		client, _, err := newClient()
-		if err != nil {
-			return err
-		}
-
-		// Optimistic concurrency: bind last_commit_id into the confirm scope. The
-		// value is captured at dry-run and re-captured here; if the file changed
-		// between the two steps the token no longer matches and confirm fails with
-		// E_CONFLICT, so an update never clobbers a concurrent edit.
-		lastCommitID, err := repoFileLastCommitID(client, project, path, branch)
-		if err != nil {
-			return err
-		}
-		confirmDetail := map[string]any{
-			"project": project, "path": path, "branch": branch, "lastCommitId": lastCommitID,
-		}
-		if done, err := prepareWrite(cmd, "repo file update", confirmDetail); done || err != nil {
-			return err
-		}
-
-		if err := client.Repos.UpdateFile(apiCtx(), project, path, api.FileWriteBody{
-			Branch:        branch,
-			Content:       finalContent,
-			CommitMessage: commitMsg,
-			Encoding:      finalEncoding,
-			LastCommitID:  lastCommitID,
-		}); err != nil {
-			return handleAPIError(err, jsonMode)
-		}
-
-		if jsonMode {
-			output.PrintJSON(map[string]any{"path": path, "branch": branch, "action": "updated"})
-			return nil
-		}
-		output.Success(fmt.Sprintf("Updated %s on %s", path, branch))
-		return nil
-	},
-}
-
-// 鈹€鈹€鈹€ repo file delete 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
-
-var repoFileDeleteCmd = &cobra.Command{
-	Use:   "delete",
-	Short: "Delete a file from the repository",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		project, _ := cmd.Flags().GetString("project")
-		path, _ := cmd.Flags().GetString("path")
-		branch, _ := cmd.Flags().GetString("branch")
-		commitMsg, _ := cmd.Flags().GetString("commit-message")
-
-		if project == "" || path == "" || branch == "" || commitMsg == "" {
-			return failArg("--project, --path, --branch, and --commit-message are required")
-		}
-
-		client, _, err := newClient()
-		if err != nil {
-			return err
-		}
-
-		// Optimistic concurrency: bind last_commit_id so a delete cannot race a
-		// concurrent edit (mismatch → token no longer matches → E_CONFLICT).
-		lastCommitID, err := repoFileLastCommitID(client, project, path, branch)
-		if err != nil {
-			return err
-		}
-		confirmPayload := map[string]any{
-			"project":       project,
-			"path":          path,
-			"branch":        branch,
-			"commitMessage": commitMsg,
-			"lastCommitId":  lastCommitID,
-		}
-		if done, err := prepareWrite(cmd, "repo file delete", confirmPayload); done || err != nil {
-			return err
-		}
-
-		if err := client.Repos.DeleteFile(apiCtx(), project, path, branch, commitMsg, lastCommitID); err != nil {
-			return handleAPIError(err, jsonMode)
-		}
-
-		if jsonMode {
-			output.PrintJSON(map[string]any{"path": path, "branch": branch, "action": "deleted"})
-			return nil
-		}
-		output.Success(fmt.Sprintf("Deleted %s from %s", path, branch))
-		return nil
-	},
-}
-
-// 鈹€鈹€鈹€ repo branch list 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
-
-var repoBranchListCmd = &cobra.Command{
-	Use:   "list",
-	Short: "List branches",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		client, _, err := newClient()
-		if err != nil {
-			return err
-		}
-		project, _ := cmd.Flags().GetString("project")
-		search, _ := cmd.Flags().GetString("search")
-		limit, err := requireLimit(cmd)
-		if err != nil {
-			return err
-		}
-
-		if project == "" {
-			return failArg("--project is required")
-		}
-
-		branches, err := client.Repos.ListBranches(apiCtx(), project, &api.BranchListOpts{Search: search, Limit: limit})
-		if err != nil {
-			return handleAPIError(err, jsonMode)
-		}
-
-		if jsonMode {
-			fields := getFieldsFlag(cmd)
-			flat := make([]map[string]any, len(branches))
-			for i, b := range branches {
-				b := b
-				flat[i] = output.FilterMap(output.BranchToMap(output.ToFlatBranch(&b)), fields)
-			}
-			printSimpleListJSON(cmd, flat, limit)
-			return nil
-		}
-		if len(branches) == 0 {
-			output.Info("No branches found.")
-			return nil
-		}
-		headers := []string{"NAME", "DEFAULT", "PROTECTED", "MERGED", "COMMIT"}
-		rows := make([][]string, len(branches))
-		for i, b := range branches {
-			commitID := ""
-			if b.Commit != nil {
-				commitID = b.Commit.ShortID
-			}
-			rows[i] = []string{b.Name, boolStr(b.Default), boolStr(b.Protected), boolStr(b.Merged), commitID}
-		}
-		output.Table(headers, rows)
-		return nil
-	},
-}
-
-// 鈹€鈹€鈹€ repo branch create 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
-
-var repoBranchCreateCmd = &cobra.Command{
-	Use:   "create",
-	Short: "Create a new branch",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		project, _ := cmd.Flags().GetString("project")
-		name, _ := cmd.Flags().GetString("name")
-		ref, _ := cmd.Flags().GetString("ref")
-
-		if project == "" || name == "" || ref == "" {
-			return failArg("--project, --name, and --ref are required")
-		}
-
-		confirmDetail := map[string]any{"project": project, "name": name, "ref": ref}
-		if key := idempotencyKeyOf(cmd); key != "" {
-			confirmDetail["idempotencyKey"] = key
-		}
-		if done, err := prepareWrite(cmd, "repo branch create", confirmDetail); done || err != nil {
-			return err
-		}
-
-		client, _, err := newClient()
-		if err != nil {
-			return err
-		}
-
-		b, err := client.Repos.CreateBranch(idempotentCtx(cmd), project, name, ref)
-		if err != nil {
-			return handleAPIError(err, jsonMode)
-		}
-
-		if jsonMode {
-			output.PrintJSON(output.BranchToMap(output.ToFlatBranch(b)))
-			return nil
-		}
-		output.Success(fmt.Sprintf("Created branch %s from %s", b.Name, ref))
-		return nil
-	},
-}
-
-// 鈹€鈹€鈹€ repo branch delete 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
-
-var repoBranchDeleteCmd = &cobra.Command{
-	Use:   "delete",
-	Short: "Delete a branch",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		project, _ := cmd.Flags().GetString("project")
-		name, _ := cmd.Flags().GetString("name")
-
-		if project == "" || name == "" {
-			return failArg("--project and --name are required")
-		}
-
-		confirmPayload := map[string]any{"project": project, "name": name}
-		if done, err := prepareWrite(cmd, "repo branch delete", confirmPayload); done || err != nil {
-			return err
-		}
-
-		client, _, err := newClient()
-		if err != nil {
-			return err
-		}
-
-		if err := client.Repos.DeleteBranch(apiCtx(), project, name); err != nil {
-			return handleAPIError(err, jsonMode)
-		}
-
-		if jsonMode {
-			output.PrintJSON(output.MarkUntrusted(map[string]any{"name": name, "action": "deleted"}, "name"))
-			return nil
-		}
-		output.Success(fmt.Sprintf("Deleted branch %s", name))
-		return nil
-	},
-}
-
-// 鈹€鈹€鈹€ repo commit list 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
-
-var repoCommitListCmd = &cobra.Command{
-	Use:   "list",
-	Short: "List commits",
-	Long: "List commits in one project, several projects, a group tree, or every " +
-		"project the token can see.\n\n" +
-		"Scope (choose exactly one):\n" +
-		"  --project a,b      one or more projects (repeatable / comma-separated)\n" +
-		"  --group g1,g2      every project under these groups, subgroups included\n" +
-		"  --all-projects     every project you can see; requires --author\n\n" +
-		"Filters apply to each project: --author (server-side, GitLab 15.10+), " +
-		"--since/--until, --ref-name, --path, --with-stats (per-commit line counts), " +
-		"--all-branches (every ref, not just one branch).",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		client, _, err := newClient()
-		if err != nil {
-			return err
-		}
-		limit, err := requireLimit(cmd)
-		if err != nil {
-			return err
-		}
-		opts := &api.CommitListOpts{Limit: limit}
-		opts.RefName, _ = cmd.Flags().GetString("ref-name")
-		opts.Since, _ = cmd.Flags().GetString("since")
-		opts.Until, _ = cmd.Flags().GetString("until")
-		opts.Path, _ = cmd.Flags().GetString("path")
-		opts.Author, _ = cmd.Flags().GetString("author")
-		opts.WithStats, _ = cmd.Flags().GetBool("with-stats")
-		opts.AllBranches, _ = cmd.Flags().GetBool("all-branches")
-
-		projects, scope, err := resolveCommitScope(cmd, client)
-		if err != nil {
-			return err
-		}
-
-		// Single explicit project keeps the original flat commit[] shape so
-		// existing agents and tests see no change.
-		if scope == "project" && len(projects) == 1 {
-			commits, err := client.Repos.ListCommits(apiCtx(), projects[0], opts)
-			if err != nil {
-				return handleAPIError(err, jsonMode)
-			}
-			return renderCommitList(cmd, commits, limit)
-		}
-
-		// Multi-project: fan out (CLI-SPEC §15 client-side loop), aggregate
-		// per-project, and report which projects were scanned / failed.
-		return runCommitFanOut(cmd, client, projects, scope, opts, limit)
-	},
-}
-
-// 鈹€鈹€鈹€ repo commit get 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
-
-var repoCommitGetCmd = &cobra.Command{
-	Use:   "get <sha>",
-	Short: "Get a commit by SHA",
-	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		client, _, err := newClient()
-		if err != nil {
-			return err
-		}
-		project, _ := cmd.Flags().GetString("project")
-		if project == "" {
-			return failArg("--project is required")
-		}
-
-		c, err := client.Repos.GetCommit(apiCtx(), project, args[0])
-		if err != nil {
-			return handleAPIError(err, jsonMode)
-		}
-
-		if jsonMode {
-			fields := getFieldsFlag(cmd)
-			output.PrintJSON(output.FilterMap(output.CommitToMap(output.ToFlatCommit(c)), fields))
-			return nil
-		}
-		output.Table([]string{"FIELD", "VALUE"}, [][]string{
-			{"ID", c.ID},
-			{"Short ID", c.ShortID},
-			{"Title", c.Title},
-			{"Author", c.AuthorName},
-			{"Date", c.AuthoredDate},
-			{"URL", c.WebURL},
-		})
-		return nil
-	},
-}
-
-// 鈹€鈹€鈹€ repo tree 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
-
-var repoTreeCmd = &cobra.Command{
-	Use:   "tree",
-	Short: "List repository tree entries",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		client, _, err := newClient()
-		if err != nil {
-			return err
-		}
-		project, _ := cmd.Flags().GetString("project")
-		path, _ := cmd.Flags().GetString("path")
-		ref, _ := cmd.Flags().GetString("ref")
-		recursive, _ := cmd.Flags().GetBool("recursive")
-		limit, err := requireLimit(cmd)
-		if err != nil {
-			return err
-		}
-
-		if project == "" {
-			return failArg("--project is required")
-		}
-
-		entries, err := client.Repos.ListTree(apiCtx(), project, &api.TreeOpts{
-			Path: path, Ref: ref, Recursive: recursive, Limit: limit,
-		})
-		if err != nil {
-			return handleAPIError(err, jsonMode)
-		}
-
-		if jsonMode {
-			fields := getFieldsFlag(cmd)
-			flat := make([]map[string]any, len(entries))
-			for i, e := range entries {
-				e := e
-				flat[i] = output.FilterMap(output.TreeEntryToMap(output.ToFlatTreeEntry(&e)), fields)
-			}
-			printSimpleListJSON(cmd, flat, limit)
-			return nil
-		}
-		if len(entries) == 0 {
-			output.Info("No entries found.")
-			return nil
-		}
-		headers := []string{"TYPE", "NAME", "PATH", "MODE"}
-		rows := make([][]string, len(entries))
-		for i, e := range entries {
-			rows[i] = []string{e.Type, e.Name, e.Path, e.Mode}
-		}
-		output.Table(headers, rows)
-		return nil
-	},
-}
-
-// 鈹€鈹€鈹€ init 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
-
-func init() {
-	rootCmd.AddCommand(repoCmd)
-
-	// file subcommands
-	repoCmd.AddCommand(repoFileCmd)
-	repoFileCmd.AddCommand(repoFileGetCmd)
-	repoFileGetCmd.Flags().String("project", "", "Project ID or path (required)")
-	repoFileGetCmd.Flags().String("path", "", "File path in repository (required)")
-	repoFileGetCmd.Flags().String("ref", "", "Branch/tag/commit (default: HEAD)")
-	repoFileGetCmd.Flags().String("output", "", "Output file path (default: stdout)")
-	markOutputType(repoFileGetCmd, "json")
-	markOutputFormats(repoFileGetCmd, formatJSON, formatText, formatRaw)
-
-	repoFileCmd.AddCommand(repoFileCreateCmd)
-	repoFileCreateCmd.Flags().String("project", "", "Project ID or path (required)")
-	repoFileCreateCmd.Flags().String("path", "", "File path in repository (required)")
-	repoFileCreateCmd.Flags().String("branch", "", "Target branch (required)")
-	repoFileCreateCmd.Flags().String("content", "", "File content as text")
-	repoFileCreateCmd.Flags().String("content-file", "", "Read content from local file")
-	repoFileCreateCmd.Flags().String("commit-message", "", "Commit message (required)")
-	repoFileCreateCmd.Flags().String("encoding", "", "Encoding: text|base64 (auto-detected if omitted)")
-	repoFileCreateCmd.Flags().String("idempotency-key", "", "Idempotency-Key sent to GitLab so a retried create cannot duplicate the commit")
-	markWrite(repoFileCreateCmd)
-
-	repoFileCmd.AddCommand(repoFileUpdateCmd)
-	repoFileUpdateCmd.Flags().String("project", "", "Project ID or path (required)")
-	repoFileUpdateCmd.Flags().String("path", "", "File path in repository (required)")
-	repoFileUpdateCmd.Flags().String("branch", "", "Target branch (required)")
-	repoFileUpdateCmd.Flags().String("content", "", "File content as text")
-	repoFileUpdateCmd.Flags().String("content-file", "", "Read content from local file")
-	repoFileUpdateCmd.Flags().String("commit-message", "", "Commit message (required)")
-	repoFileUpdateCmd.Flags().String("encoding", "", "Encoding: text|base64 (auto-detected if omitted)")
-	markWrite(repoFileUpdateCmd)
-
-	repoFileCmd.AddCommand(repoFileDeleteCmd)
-	repoFileDeleteCmd.Flags().String("project", "", "Project ID or path (required)")
-	repoFileDeleteCmd.Flags().String("path", "", "File path in repository (required)")
-	repoFileDeleteCmd.Flags().String("branch", "", "Target branch (required)")
-	repoFileDeleteCmd.Flags().String("commit-message", "", "Commit message (required)")
-	markWrite(repoFileDeleteCmd)
-	markConfirm(repoFileDeleteCmd)
-
-	// branch subcommands
-	repoCmd.AddCommand(repoBranchCmd)
-	repoBranchCmd.AddCommand(repoBranchListCmd)
-	repoBranchListCmd.Flags().String("project", "", "Project ID or path (required)")
-	repoBranchListCmd.Flags().String("search", "", "Search query")
-	repoBranchListCmd.Flags().Int("limit", 20, "Max results (1-100)")
-	repoBranchListCmd.Flags().String("fields", "", "Comma-separated fields for JSON output")
-
-	repoBranchCmd.AddCommand(repoBranchCreateCmd)
-	repoBranchCreateCmd.Flags().String("project", "", "Project ID or path (required)")
-	repoBranchCreateCmd.Flags().String("name", "", "Branch name (required)")
-	repoBranchCreateCmd.Flags().String("ref", "", "Source branch or SHA (required)")
-	repoBranchCreateCmd.Flags().String("idempotency-key", "", "Idempotency-Key sent to GitLab so a retried create cannot duplicate the branch")
-	markWrite(repoBranchCreateCmd)
-
-	repoBranchCmd.AddCommand(repoBranchDeleteCmd)
-	repoBranchDeleteCmd.Flags().String("project", "", "Project ID or path (required)")
-	repoBranchDeleteCmd.Flags().String("name", "", "Branch name (required)")
-	markWrite(repoBranchDeleteCmd)
-	markConfirm(repoBranchDeleteCmd)
-
-	// commit subcommands
-	repoCmd.AddCommand(repoCommitCmd)
-	repoCommitCmd.AddCommand(repoCommitListCmd)
-	repoCommitListCmd.Flags().StringSlice("project", nil, "Project ID(s) or path(s); repeatable or comma-separated")
-	repoCommitListCmd.Flags().StringSlice("group", nil, "Group ID(s) or path(s); lists every project under the group(s), subgroups included")
-	repoCommitListCmd.Flags().Bool("all-projects", false, "Scan every project the token can see (requires --author)")
-	repoCommitListCmd.Flags().String("author", "", "Filter commits by author name or email (server-side; GitLab 15.10+)")
-	repoCommitListCmd.Flags().Bool("with-stats", false, "Include per-commit line counts (additions/deletions/total)")
-	repoCommitListCmd.Flags().Bool("all-branches", false, "List commits across all refs, not just one branch")
-	repoCommitListCmd.Flags().String("ref-name", "", "Branch/tag/commit")
-	repoCommitListCmd.Flags().String("since", "", "ISO 8601 date (e.g. 2024-01-01T00:00:00Z)")
-	repoCommitListCmd.Flags().String("until", "", "ISO 8601 date")
-	repoCommitListCmd.Flags().String("path", "", "Filter by file path")
-	repoCommitListCmd.Flags().Int("limit", 20, "Max results per project (1-100)")
-	repoCommitListCmd.Flags().String("fields", "", "Comma-separated fields for JSON output")
-
-	repoCommitCmd.AddCommand(repoCommitGetCmd)
-	repoCommitGetCmd.Flags().String("project", "", "Project ID or path (required)")
-	repoCommitGetCmd.Flags().String("fields", "", "Comma-separated fields for JSON output")
-
-	// commit diff (per-file diff for one commit)
-	repoCommitCmd.AddCommand(repoCommitDiffCmd)
-	repoCommitDiffCmd.Flags().String("project", "", "Project ID or path (required)")
-	repoCommitDiffCmd.Flags().String("path", "", "Show only this file's diff")
-	repoCommitDiffCmd.Flags().String("fields", "", "Comma-separated fields per file (e.g. newPath,additions,deletions to drop patch text)")
-	markOutputType(repoCommitDiffCmd, "json")
-	markOutputFormats(repoCommitDiffCmd, formatJSON, formatText)
-
-	// commit create (atomic multi-file commit)
-	repoCommitCmd.AddCommand(repoCommitCreateCmd)
-	repoCommitCreateCmd.Flags().String("project", "", "Project ID or path (required)")
-	repoCommitCreateCmd.Flags().String("branch", "", "Target branch (required)")
-	repoCommitCreateCmd.Flags().String("message", "", "Commit message (required)")
-	repoCommitCreateCmd.Flags().String("start-branch", "", "Create the target branch from this ref if it does not exist")
-	repoCommitCreateCmd.Flags().StringArray("action", nil, "Repeatable file action 'type:field=value;...' (create|update|delete|move)")
-	repoCommitCreateCmd.Flags().String("idempotency-key", "", "Idempotency-Key sent to GitLab so a retried commit cannot duplicate it")
-	markWrite(repoCommitCreateCmd)
-
-	// tree
-	repoCmd.AddCommand(repoTreeCmd)
-	repoTreeCmd.Flags().String("project", "", "Project ID or path (required)")
-	repoTreeCmd.Flags().String("path", "", "Subdirectory path")
-	repoTreeCmd.Flags().String("ref", "", "Branch/tag/commit")
-	repoTreeCmd.Flags().Bool("recursive", false, "List recursively")
-	repoTreeCmd.Flags().Int("limit", 20, "Max results (1-100)")
-	repoTreeCmd.Flags().String("fields", "", "Comma-separated fields for JSON output")
-}
-
-// 鈹€鈹€鈹€ helpers 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
-
-// resolveContent returns (content, encoding) from --content or --content-file.
-// If the file is binary, it base64-encodes it and returns encoding="base64".
-func resolveContent(content, contentFile, encoding string) (string, string, error) {
-	if contentFile != "" {
-		raw, err := os.ReadFile(contentFile)
-		if err != nil {
-			return "", "", fmt.Errorf("reading content file: %w", err)
-		}
-		if encoding == "base64" || !utf8.Valid(raw) {
-			return base64.StdEncoding.EncodeToString(raw), "base64", nil
-		}
-		return string(raw), "text", nil
+// The repository group (spec 2.0): `repo tree`, `repo file`, `repo branch` and
+// `repo commit`, plus the `release` group (release.go). Every resource carries a
+// ref that mirrors its GitLab web path, and every command takes the ref, the web
+// URL or the plain name (CLI-048):
+//
+//	branch     acme/web/-/branches/<name>        (web: /-/tree/<name> or /-/branches/<name>)
+//	file       acme/web/-/blob/<ref>/<path>      (web: the same path)
+//	directory  acme/web/-/tree/<ref>/<path>
+//	commit     acme/web/-/commit/<sha>           (also GitLab's acme/web@<sha>)
+//	release    acme/web/-/releases/<tag>         (also /-/tags/<tag>)
+//
+// A file write's target key is the file's ref on the branch it commits to, so a
+// scope grant for acme/web/-/blob/<branch> covers the files of that branch and
+// acme/web/-/blob/<branch>/docs only those under docs/. A branch name, a tag or a
+// path inside a ref is text people wrote, so refs that hold one are untrusted
+// (CLI-046). Diffs, file contents and commit bodies are their own commands, with
+// bounded summaries in lists (CLI-043).
+
+const (
+	repoEvidence       = "simulated:cmd/repo_test.go"
+	repoFileEvidence   = "simulated:cmd/repo_file_test.go"
+	repoBranchEvidence = "simulated:cmd/repo_branch_test.go"
+	repoCommitEvidence = "simulated:cmd/repo_commit_test.go"
+)
+
+var (
+	repoTreeEntryFields = []string{"ref", "path", "name", "type", "mode", "id"}
+	repoFileFields      = []string{"ref", "path", "name", "ref_name", "size", "content_sha256", "blob_id", "commit_id",
+		"last_commit_id", "web_url"}
+	repoFileContentFields = []string{"ref", "path", "ref_name", "size", "binary", "content", "truncated", "start_line",
+		"line_count", "total_lines", "has_more", "next_offset"}
+	repoBranchFields = []string{"ref", "name", "default", "protected", "merged", "developers_can_push", "developers_can_merge",
+		"can_push", "commit_sha", "commit_title", "committed_date", "web_url"}
+	repoCommitListFields = []string{"ref", "sha", "short_sha", "title", "author_name", "author_email", "authored_date",
+		"committer_name", "committer_email", "committed_date", "parent_shas", "web_url", "additions", "deletions", "total"}
+	repoCommitFields        = append(append([]string{}, repoCommitListFields...), "message", "message_truncated")
+	repoCommitListUntrusted = []string{"title", "author_name", "author_email", "committer_name", "committer_email"}
+	repoCommitUntrusted     = append(append([]string{}, repoCommitListUntrusted...), "message")
+	repoCommitDiffFields    = []string{"ref", "path", "old_path", "new_path", "change", "additions", "deletions", "diff", "diff_truncated"}
+)
+
+// registerRepo registers the repo group and its nested groups, the release group,
+// and the root shortcuts for the nested nouns (CLI-022, R02).
+func registerRepo(app *aicli.App) {
+	repo := addGroup(app, "repo", "Browse and change a project's repository: tree, files, branches and commits", "repos")
+	registerRepoSchemas(app)
+	addRepoTree(app, repo)
+
+	file := repoSubgroup(app, repo, "file", "Read a file's metadata and content; create, update or delete a file in one commit", "files")
+	addRepoFileGet(app, file)
+	addRepoFileContent(app, file)
+	addRepoFileCreate(app, file)
+	addRepoFileUpdate(app, file)
+	addRepoFileDelete(app, file)
+
+	branch := repoSubgroup(app, repo, "branch", "List, read, create and delete branches", "branches")
+	addRepoBranchList(app, branch)
+	addRepoBranchGet(app, branch)
+	addRepoBranchCreate(app, branch)
+	addRepoBranchDelete(app, branch)
+
+	commit := repoSubgroup(app, repo, "commit", "List and read commits and their diffs; create one commit from several file changes", "commits")
+	addRepoCommitList(app, commit)
+	addRepoCommitGet(app, commit)
+	addRepoCommitDiff(app, commit)
+	addRepoCommitCreate(app, commit)
+
+	// The nouns agents type at the root (the fleet's guess list, CLI-022).
+	for word, path := range map[string][]string{
+		"branch": {"repo", "branch"}, "branches": {"repo", "branch"},
+		"file": {"repo", "file"}, "files": {"repo", "file"},
+		"commit": {"repo", "commit"}, "commits": {"repo", "commit"},
+		"tree": {"repo", "tree"},
+	} {
+		app.AddShortcut(word, path...)
 	}
-	if encoding == "" {
-		encoding = "text"
-	}
-	return content, encoding, nil
+	registerRelease(app)
 }
 
-// repoFileLastCommitID fetches the current last_commit_id of a file on a branch.
-// It is the optimistic-concurrency token GitLab exposes for repository files: the
-// value is bound into the confirm scope so an update/delete confirmed against a
-// stale dry-run is rejected once the file has moved on.
-func repoFileLastCommitID(client *api.Client, project, path, branch string) (string, error) {
-	f, err := client.Repos.GetFile(apiCtx(), project, path, branch)
+func registerRepoSchemas(app *aicli.App) {
+	app.Schema("tree_entry_page", aicli.SchemaDef{Shape: "page", Fields: repoTreeEntryFields,
+		DefaultFields: []string{"ref", "path", "type"}, Untrusted: []string{"ref", "path", "name"}})
+	app.Schema("file", aicli.SchemaDef{Shape: "object", Fields: repoFileFields, Untrusted: []string{"ref", "path", "name"}})
+	app.Schema("file_content", aicli.SchemaDef{Shape: "object", Fields: repoFileContentFields, Untrusted: []string{"ref", "path", "content"}})
+	app.Schema("file_deleted", aicli.SchemaDef{Shape: "object", Fields: []string{"ref", "deleted"}, Untrusted: []string{"ref"}})
+	app.Schema("branch", aicli.SchemaDef{Shape: "object", Fields: repoBranchFields, Untrusted: []string{"ref", "name", "commit_title"}})
+	app.Schema("branch_page", aicli.SchemaDef{Shape: "page", Fields: repoBranchFields,
+		DefaultFields: []string{"ref", "name", "default", "protected", "merged", "committed_date"},
+		Untrusted:     []string{"ref", "name", "commit_title"}})
+	app.Schema("branch_deleted", aicli.SchemaDef{Shape: "object", Fields: []string{"ref", "deleted"}, Untrusted: []string{"ref"}})
+	app.Schema("commit", aicli.SchemaDef{Shape: "object", Fields: repoCommitFields, Untrusted: repoCommitUntrusted})
+	// Lists carry the title, never the message body (CLI-043); the line counts are
+	// default fields, present when GitLab computed them (--with-stats).
+	app.Schema("commit_page", aicli.SchemaDef{Shape: "page", Fields: repoCommitListFields,
+		DefaultFields: []string{"ref", "short_sha", "title", "author_name", "committed_date", "additions", "deletions"},
+		Untrusted:     repoCommitListUntrusted})
+	// A diff entry's ref is the file as the commit left it (null for a deleted file),
+	// ready for repo file content.
+	app.Schema("commit_diff_page", aicli.SchemaDef{Shape: "page", Fields: repoCommitDiffFields,
+		DefaultFields: repoCommitDiffFields, Untrusted: []string{"ref", "path", "old_path", "new_path", "diff"}})
+	app.Schema("commit_action", aicli.SchemaDef{Shape: "object", Fields: []string{"ref", "path", "action", "commit_ref", "commit_sha"},
+		Untrusted: []string{"ref", "path"}})
+}
+
+// repoSubgroup adds a nested noun (repo file, repo branch, repo commit).
+func repoSubgroup(app *aicli.App, parent *cobra.Command, use, summary string, aliases ...string) *cobra.Command {
+	g := &cobra.Command{Use: use, Aliases: aliases}
+	parent.AddCommand(g)
+	app.Group(g, summary)
+	return g
+}
+
+// ---------------------------------------------------------------- refs
+
+func repoBranchRef(project, name string) string { return project + "/-/branches/" + name }
+func repoCommitRef(project, sha string) string  { return project + "/-/commit/" + sha }
+func repoBlobRef(project, ref, path string) string {
+	return project + "/-/blob/" + ref + "/" + path
+}
+
+// repoTreeRef is a directory's ref; the root directory has no path.
+func repoTreeRef(project, ref, path string) string {
+	if path == "" {
+		return project + "/-/tree/" + ref
+	}
+	return project + "/-/tree/" + ref + "/" + path
+}
+
+// repoWebURL is a GitLab web URL for a ref-style path, each segment escaped.
+func repoWebURL(host, refPath string) string {
+	segs := strings.Split(refPath, "/")
+	for i, s := range segs {
+		segs[i] = url.PathEscape(s)
+	}
+	return strings.TrimSuffix(host, "/") + "/" + strings.Join(segs, "/")
+}
+
+// repoWebArg is an argument split at a GitLab web-path part ("/-/blob/"): the
+// project before it and the rest after it. web is false for a plain value.
+type repoWebArg struct {
+	project, part, rest string
+	web                 bool
+}
+
+// parseRepoWebArg reads a ref or web URL whose path holds one of parts ("blob",
+// "tree", "branches"). A URL without one of them is an error; a value without one is
+// plain (web false).
+func parseRepoWebArg(raw string, parts ...string) (repoWebArg, error) {
+	s := strings.TrimSpace(raw)
+	isURL := strings.Contains(s, "://")
+	if isURL {
+		u, err := url.Parse(s)
+		if err != nil || u.Host == "" {
+			return repoWebArg{}, errors.New("not a GitLab URL")
+		}
+		s = u.Path
+	}
+	best, bestPart := -1, ""
+	for _, p := range parts {
+		if i := strings.Index(s, "/-/"+p+"/"); i >= 0 && (best < 0 || i < best) {
+			best, bestPart = i, p
+		}
+	}
+	if best < 0 {
+		if isURL {
+			return repoWebArg{}, errors.New("the URL names no " + strings.Join(parts, " or "))
+		}
+		return repoWebArg{rest: s}, nil
+	}
+	project, _, err := parseProject(s[:best])
 	if err != nil {
-		return "", handleAPIError(err, jsonMode)
+		return repoWebArg{}, err
 	}
-	return f.LastCommitID, nil
+	// A ref is taken as written (refs are never escaped); a URL's path is decoded.
+	rest := s[best+len("/-/"+bestPart+"/"):]
+	if rest == "" {
+		return repoWebArg{}, errors.New("nothing after the " + bestPart + " part")
+	}
+	return repoWebArg{project: project, part: bestPart, rest: rest, web: true}, nil
 }
 
-func boolStr(b bool) string {
-	if b {
-		return "yes"
+// repoRefPath is one way to split "<ref>/<path>": a ref name may hold slashes
+// (feat/login), so the web path alone does not say where the ref ends.
+type repoRefPath struct{ ref, path string }
+
+// refPathSplits lists the splits of rest, shortest ref first; a split whose path
+// is empty is kept only when allowEmpty (a tree's root).
+func refPathSplits(rest string, allowEmpty bool) []repoRefPath {
+	var out []repoRefPath
+	for i := 0; i < len(rest); i++ {
+		if rest[i] == '/' && i > 0 && i < len(rest)-1 {
+			out = append(out, repoRefPath{ref: rest[:i], path: rest[i+1:]})
+		}
 	}
-	return "no"
+	if allowEmpty {
+		out = append(out, repoRefPath{ref: strings.TrimSuffix(rest, "/")})
+	}
+	return out
 }
 
-func truncate(s string, n int) string {
-	if len(s) <= n {
+// ---------------------------------------------------------------- validation
+
+var (
+	// repoRefForbidden are the characters git refuses in a ref name (git check-ref-format).
+	repoRefForbidden = regexp.MustCompile(`[\x00-\x20\x7f~^:?*\[\\]`)
+	repoHexSHA       = regexp.MustCompile(`^[0-9a-fA-F]{7,64}$`)
+)
+
+// repoRefName checks a branch or tag name by git's rules (git check-ref-format),
+// so an invalid name is refused before anything is sent and a target key never
+// holds a "." or ".." segment.
+func repoRefName(raw, flag, what string) (string, error) {
+	name := strings.TrimSpace(raw)
+	bad := name == "" || name == "@" || repoRefForbidden.MatchString(name) || strings.Contains(name, "..") ||
+		strings.Contains(name, "@{") || strings.Contains(name, "//") || strings.HasPrefix(name, "-") ||
+		strings.HasPrefix(name, "/") || strings.HasSuffix(name, "/") || strings.HasSuffix(name, ".")
+	for _, seg := range strings.Split(name, "/") {
+		if strings.HasPrefix(seg, ".") || strings.HasSuffix(seg, ".lock") {
+			bad = true
+		}
+	}
+	if bad {
+		e := aicli.Validation(flag, "a "+what+" name git accepts: no spaces, ~ ^ : ? * [ \\, '..' or '@{', no leading '-' or '.'",
+			"That is not a valid "+what+" name.")
+		return "", e
+	}
+	return name, nil
+}
+
+// repoRevision checks a ref read by name: a branch, a tag or a commit SHA.
+func repoRevision(raw, flag string) (string, error) {
+	s := strings.TrimSpace(raw)
+	if s == "" || strings.ContainsFunc(s, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) {
+		return "", aicli.Validation(flag, "a branch, tag or commit SHA", "That is not a branch, tag or commit SHA.")
+	}
+	return s, nil
+}
+
+// repoFilePath canonicalises a path in the repository: relative, "/" separators, no
+// empty, "." or ".." segment, so one file has one spelling (SEC-012). A leading "/"
+// or "./" is dropped. dir allows the root ("") and a trailing "/".
+func repoFilePath(raw, flag string, dir bool) (string, error) {
+	p := strings.TrimSpace(raw)
+	p = strings.TrimLeft(strings.TrimPrefix(p, "./"), "/")
+	if dir {
+		p = strings.TrimSuffix(p, "/")
+		if p == "" {
+			return "", nil
+		}
+	}
+	bad := p == "" || strings.ContainsFunc(p, unicode.IsControl) || strings.Contains(p, "\\")
+	for _, seg := range strings.Split(p, "/") {
+		if seg == "" || seg == "." || seg == ".." {
+			bad = true
+		}
+	}
+	if bad {
+		what := "a file path in the repository, like docs/guide.md"
+		if dir {
+			what = "a directory path in the repository, like src/api, or nothing for the root"
+		}
+		return "", aicli.Validation(flag, what, "That is not a path in the repository: use / between names, without '.' or '..' segments.")
+	}
+	return p, nil
+}
+
+// ---------------------------------------------------------------- errors
+
+func repoBranchNotFound(project string) errOpt {
+	return onNotFound("The project has no branch with that name, or this account cannot see it.",
+		fmt.Sprintf("Run `gitlab-cli repo branch list --project %s` to find the branch.", project))
+}
+
+func repoFileNotFound(project string) errOpt {
+	return onNotFound("No file at that path on that ref, or the ref does not exist.",
+		fmt.Sprintf("Run `gitlab-cli repo tree --project %s --recursive` to find the file; a ref with a / in its name needs --ref.", project))
+}
+
+func repoTreeNotFound(project string) errOpt {
+	return onNotFound("No directory at that path on that ref, or the ref does not exist.",
+		fmt.Sprintf("Run `gitlab-cli repo tree --project %s` from the root, or `gitlab-cli repo branch list --project %s` for the ref.", project, project))
+}
+
+func repoCommitNotFound(project string) errOpt {
+	return onNotFound("The project has no commit, branch or tag by that SHA or name, or this account cannot see it.",
+		fmt.Sprintf("Run `gitlab-cli repo commit list --project %s` to find the commit.", project))
+}
+
+// repoEmpty reports whether the project's repository has no commit yet (GitLab's
+// empty_repo), as a project `project create` just made. GitLab's first commit
+// there creates the branch it names, so a file create, or a commit of new files,
+// to a branch that does not exist yet is no error in an empty repository.
+func repoEmpty(ctx context.Context, c *api.Client, project string) bool {
+	p, err := c.Projects.Get(ctx, project)
+	return err == nil && p.EmptyRepo
+}
+
+// repoIsNotFound reports a GitLab 404 (or an aicli E_NOT_FOUND).
+func repoIsNotFound(err error) bool {
+	var apiErr *api.APIError
+	if errors.As(err, &apiErr) {
+		return apiErr.StatusCode == 404
+	}
+	var ae *aicli.Error
+	return errors.As(err, &ae) && ae.Code == "E_NOT_FOUND"
+}
+
+// ---------------------------------------------------------------- values
+
+// repoClip cuts s to at most max runes, at the last line end in the second half
+// when there is one, and reports whether it cut.
+func repoClip(s string, max int) (string, bool) {
+	if utf8.RuneCountInString(s) <= max {
+		return s, false
+	}
+	cut := string([]rune(s)[:max])
+	if i := strings.LastIndexByte(cut, '\n'); i > len(cut)/2 {
+		cut = cut[:i+1]
+	}
+	return cut, true
+}
+
+// repoTextValue is a long text as a preview shows it: itself up to 256 characters,
+// its digest above (as preview.inputs shows long values), so previews stay small
+// and the read-back compares the same form.
+func repoTextValue(s string) any {
+	if utf8.RuneCountInString(s) <= 256 {
 		return s
 	}
-	// Trim at rune boundary
-	r := []rune(s)
-	if len(r) <= n {
-		return s
+	return map[string]any{"sha256": repoSHA256([]byte(s)), "bytes": len(s)}
+}
+
+func repoSHA256(b []byte) string {
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
+}
+
+// repoTimeFlag reads a --since or --until time: ISO 8601 (2026-06-01 or
+// 2026-06-01T08:00:00Z) or relative to now (7d, 24h, 30m), as absolute UTC
+// (CLI-028, aicli.ParseTime); "" when the flag is unset.
+func repoTimeFlag(cmd *cobra.Command, name string, now time.Time) (string, error) {
+	raw, _ := cmd.Flags().GetString(name)
+	if strings.TrimSpace(raw) == "" {
+		return "", nil
 	}
-	return string(r[:n-1]) + "\u2026"
+	t, err := aicli.ParseTime(raw, now)
+	if err != nil {
+		return "", aicli.Validation("--"+name, "ISO 8601 (2026-06-01 or 2026-06-01T08:00:00Z) or a time ago (7d, 24h, 30m)",
+			"--"+name+" must be a date, a date and time, or a time ago like 7d.")
+	}
+	return t.Format(time.RFC3339), nil
+}
+
+// repoNow is the App's clock (App.Now, else the system clock).
+func repoNow(app *aicli.App) time.Time {
+	if app.Now != nil {
+		return app.Now()
+	}
+	return time.Now()
+}
+
+// repoRawFormat reports a run with --format raw (aicli.OutputFormat, Q14).
+func repoRawFormat(cmd *cobra.Command) bool { return aicli.OutputFormat(cmd) == "raw" }
+
+// ---------------------------------------------------------------- repo tree
+
+func repoTreeEntryOut(project, ref string, e api.TreeEntry) map[string]any {
+	r := repoTreeRef(project, ref, e.Path)
+	if e.Type == "blob" {
+		r = repoBlobRef(project, ref, e.Path)
+	}
+	return map[string]any{"ref": r, "path": e.Path, "name": e.Name, "type": e.Type, "mode": e.Mode, "id": e.ID}
+}
+
+func addRepoTree(app *aicli.App, parent *cobra.Command) {
+	c := &cobra.Command{Use: "tree [<path>]", RunE: func(cmd *cobra.Command, _ []string) error {
+		req, err := readPage(cmd)
+		if err != nil {
+			return err
+		}
+		raw, _ := cmd.Flags().GetString("path")
+		arg, err := parseRepoWebArg(raw, "tree", "blob")
+		if err != nil {
+			e := aicli.Validation("--path", "a directory path (src/api), its ref (acme/web/-/tree/main/src/api) or web URL",
+				"That is not a directory path, ref or URL.")
+			return e
+		}
+		gl := gitlabFor(app)
+		project, err := projectFlag(cmd, arg.project, gl)
+		if err != nil {
+			return err
+		}
+		cands, err := repoReadSplits(cmd, arg, "ref", true)
+		if err != nil {
+			return err
+		}
+		recursive, _ := cmd.Flags().GetBool("recursive")
+		client, err := gl.get()
+		if err != nil {
+			return err
+		}
+		type treePage struct {
+			entries []api.TreeEntry
+			pag     api.Pagination
+		}
+		page, used, err := repoTryRead(cmd.Context(), cands, func(ctx context.Context, at repoRefPath) (treePage, error) {
+			entries, pag, err := client.Repos.ListTreePage(ctx, project, api.TreeOpts{Path: at.path, Ref: at.ref,
+				Recursive: recursive, Page: req.Page, PerPage: req.Limit})
+			return treePage{entries, pag}, err
+		})
+		if err != nil {
+			return readError(err, repoTreeNotFound(project))
+		}
+		items := make([]map[string]any, 0, len(page.entries))
+		for _, e := range page.entries {
+			items = append(items, repoTreeEntryOut(project, used.ref, e))
+		}
+		scope := map[string]any{"project": project, "ref_name": used.ref, "path": used.path, "recursive": recursive}
+		return app.List(cmd, gitlabPage(items, len(items), req, page.pag, scope, ""))
+	}}
+	c.Flags().String("path", "", "Directory: a path (src/api), its ref (acme/web/-/tree/main/src/api) or web URL; the root when empty")
+	c.Flags().String("project", "", "Project path (acme/web), web URL or numeric ID; optional when the path is a ref")
+	c.Flags().String("ref", "", "Branch, tag or commit SHA (default: the default branch)")
+	c.Flags().Bool("recursive", false, "List the whole subtree, not only the directory's own entries")
+	addPageFlags(c)
+	parent.AddCommand(c)
+	app.Register(c, aicli.Meta{Summary: "List the files and directories of a project's repository at a ref",
+		Aliases: []string{"ls"}, Effects: []aicli.Effect{aicli.Observe}, Output: "tree_entry_page", Positional: "path",
+		ErrorCodes: gitlabReadCodes, Maturity: aicli.Verified, Evidence: []string{repoEvidence, liveEvidence("repo")},
+		Examples: []string{"gitlab-cli repo tree --project acme/web", "gitlab-cli repo tree src --project acme/web --ref main --recursive",
+			"gitlab-cli repo tree acme/web/-/tree/main/src"}})
+}
+
+// repoReadSplits is the ref/path pairs a read tries for its path argument: one for a
+// plain path (at --ref, or HEAD), every split of a ref or URL (a ref name may hold
+// slashes), or the one split --ref gives. dir allows directories (the root too).
+func repoReadSplits(cmd *cobra.Command, arg repoWebArg, refFlag string, dir bool) ([]repoRefPath, error) {
+	refRaw, _ := cmd.Flags().GetString(refFlag)
+	ref := ""
+	if strings.TrimSpace(refRaw) != "" {
+		r, err := repoRevision(refRaw, "--"+refFlag)
+		if err != nil {
+			return nil, err
+		}
+		ref = r
+	}
+	if !arg.web {
+		path, err := repoFilePath(arg.rest, "--path", dir)
+		if err != nil {
+			return nil, err
+		}
+		if ref == "" {
+			ref = "HEAD"
+		}
+		return []repoRefPath{{ref: ref, path: path}}, nil
+	}
+	if ref != "" {
+		rest := arg.rest
+		if rest != ref && !strings.HasPrefix(rest, ref+"/") {
+			e := aicli.Usage("conflicting_flags", "--"+refFlag, "--"+refFlag+" names another ref than the one in the path's ref or URL.")
+			e.Details["next_action"] = "Drop --" + refFlag + ", or pass the bare path with it."
+			return nil, e
+		}
+		path, err := repoFilePath(strings.TrimPrefix(strings.TrimPrefix(rest, ref), "/"), "--path", dir)
+		if err != nil {
+			return nil, err
+		}
+		return []repoRefPath{{ref: ref, path: path}}, nil
+	}
+	var out []repoRefPath
+	for _, s := range refPathSplits(arg.rest, dir) {
+		if p, err := repoFilePath(s.path, "--path", dir); err == nil {
+			out = append(out, repoRefPath{ref: s.ref, path: p})
+		}
+	}
+	if len(out) == 0 {
+		return nil, aicli.Validation("--path", "a ref like acme/web/-/blob/main/README.md", "The ref or URL names no file path after the branch.")
+	}
+	return out, nil
+}
+
+// repoTryRead runs read for each split until one is not a 404; it returns the split
+// that answered, or the last error.
+func repoTryRead[T any](ctx context.Context, cands []repoRefPath, read func(context.Context, repoRefPath) (T, error)) (T, repoRefPath, error) {
+	var zero T
+	var last error
+	for _, cand := range cands {
+		v, err := read(ctx, cand)
+		if err == nil {
+			return v, cand, nil
+		}
+		last = err
+		if !repoIsNotFound(err) {
+			break
+		}
+	}
+	return zero, repoRefPath{}, last
 }

@@ -88,7 +88,7 @@ Write-Host ""
 Write-Host "Then create a PAT (scope: api) and run:" -ForegroundColor Yellow
 Write-Host "  `$env:GITLAB_CLI_HOST = '$BaseUrl'"
 Write-Host "  `$env:GITLAB_CLI_TOKEN = '<your-pat>'"
-Write-Host "  gitlab-cli doctor --json"
+Write-Host "  gitlab-cli doctor"
 Write-Host ""
 
 if ($Wait) {

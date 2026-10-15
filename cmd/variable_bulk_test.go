@@ -2,182 +2,178 @@ package cmd
 
 import (
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
-func writeTempFile(t *testing.T, name, content string) string {
-	t.Helper()
-	p := filepath.Join(t.TempDir(), name)
-	if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
-		t.Fatalf("write temp file: %v", err)
+// ---------------------------------------------------------------- behaviour matrix
+
+func TestVariableBulkMatrix(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "ci.env")
+	if err := os.WriteFile(file, []byte("# imported\nBULK_ONE=alpha-secret-1\nexport DEPLOY_ENV=\"from bulk\"\n"), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	return p
+	empty := filepath.Join(t.TempDir(), "empty.env")
+	if err := os.WriteFile(empty, []byte("# nothing\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// A batch (CLI-063): the shared matrix's batch rows check every item; the
+	// command is dangerous, so it stops at its first failure. Its reads before the
+	// first write: the two variables and the project.
+	runMatrix(t, matrixCase{Path: "variable bulk-import", Args: []string{"--project", "acme/web", "--file", file}, PreviewReads: 3,
+		Invalid: []invalidCase{
+			{[]string{"--project", "acme/web"}, "E_USAGE", "missing_parameter", "--file"},
+			{[]string{"--project", "acme/web", "--file", empty}, "E_USAGE", "missing_parameter", "--file"},
+			{[]string{"--project", "acme/web", "--file", filepath.Join(t.TempDir(), "missing.env")}, "E_USAGE", "invalid_value", "--file"},
+			{[]string{"--project", "acme/web", "--file", file, "--env-scope", "a/../b"}, "E_VALIDATION", "invalid_value", "--env-scope"},
+		}})
 }
 
-// variableImportServer mocks create (POST) + update (PUT). Keys in existing
-// already exist, so create returns 400 and the importer falls back to update.
-func variableImportServer(t *testing.T, existing map[string]bool) *httptest.Server {
-	t.Helper()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch r.Method {
-		case http.MethodPost:
-			// create: key is in the JSON body; infer "exists" by counting — simpler
-			// to key off a header is not possible, so read query/body minimally.
-			// We treat any key marked existing as a 400 conflict.
-			body := readAllForTest(r)
-			for k := range existing {
-				if strings.Contains(body, `"`+k+`"`) {
-					w.WriteHeader(http.StatusBadRequest)
-					_, _ = w.Write([]byte(`{"message":{"key":["has already been taken"]}}`))
-					return
-				}
+// TestVariableBulkImportPlansAndKeepsValuesSecret: one plan per variable (a create
+// or an update), the file's content bound as a keyed digest, the requests the plans
+// named, and no value in any output (SEC-021).
+func TestVariableBulkImportPlansAndKeepsValuesSecret(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "ci.env")
+	if err := os.WriteFile(file, []byte("# imported\nBULK_ONE=alpha-secret-1\nexport DEPLOY_ENV=\"from bulk\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	args := []string{"variable", "bulk-import", "--project", "acme/web", "--file", file, "--dangerous"}
+	e := newTestEnv(t)
+	dry := e.run(append(append([]string{}, args...), "--dry-run")...)
+	p := dry.preview()
+	// The file's content binds under the name it fills, as a keyed digest (SEC-021).
+	if dry.token() == "" || ciTargetKeys(p) != "acme/web/-/variables/BULK_ONE acme/web/-/variables/DEPLOY_ENV" ||
+		p["inputs"].(map[string]any)["variables"] != "***" {
+		t.Fatalf("the batch preview: %s", dry.out)
+	}
+	pitems, _ := p["items"].([]any)
+	if len(pitems) != 2 || !strings.HasPrefix(pitems[0].(map[string]any)["changes"].([]any)[0].(map[string]any)["field"].(string), "environment_scope") {
+		t.Fatalf("item plans: %s", dry.out)
+	}
+	r := e.confirm(dry.token(), args...)
+	if r.exit != 0 || len(r.batchItems()) != 2 {
+		t.Fatalf("confirm: %s", r.out)
+	}
+	for _, it := range r.batchItems() {
+		if rc, _ := it["receipt"].(map[string]any); rc["observed"].(map[string]any)["value"] != "***" {
+			t.Fatalf("item %v: %s", it["target"], r.out)
+		}
+	}
+	var writes []fakeRequest
+	for _, q := range e.gl.Requests() {
+		if q.Method != http.MethodGet {
+			writes = append(writes, q)
+		}
+	}
+	if len(writes) != 2 || writes[0].Method != http.MethodPost || writes[0].Body["key"] != "BULK_ONE" ||
+		writes[1].Method != http.MethodPut || writes[1].Body["value"] != "from bulk" {
+		t.Fatalf("the requests the plans named: %+v", writes)
+	}
+	var vals []string
+	e.gl.locked(func() {
+		for _, v := range fakeCIState(e.gl).variables["acme/web"] {
+			if v.Key == "BULK_ONE" || v.Key == "DEPLOY_ENV" {
+				vals = append(vals, v.Key+"="+v.Value)
 			}
-			_, _ = w.Write([]byte(`{"key":"X","value":"v","environment_scope":"*"}`))
-		case http.MethodPut:
-			_, _ = w.Write([]byte(`{"key":"X","value":"v","environment_scope":"*"}`))
-		default:
-			w.WriteHeader(http.StatusMethodNotAllowed)
 		}
-	}))
-	return srv
-}
-
-func readAllForTest(r *http.Request) string {
-	if r.Body == nil {
-		return ""
-	}
-	buf := make([]byte, 4096)
-	n, _ := r.Body.Read(buf)
-	return string(buf[:n])
-}
-
-func TestVariableBulkImport_DryRun_Dotenv(t *testing.T) {
-	resetRootPersistentFlags(t)
-	resetCompactForTest(t)
-	resetSliceFlagsForTest(t, []string{"variable", "bulk-import"})
-	file := writeTempFile(t, "vars.env", "FOO=bar\n# comment\nexport BAZ=\"qux\"\n")
-	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
-	t.Setenv("GITLAB_CLI_TOKEN", "x")
-
-	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"variable", "bulk-import", "--project", "g/r", "--file", file, "--dangerous", "--dry-run", "--json", "--compact"})
-		_ = rootCmd.Execute()
 	})
-	for _, want := range []string{`"confirm_token"`, `"total":2`, `"targets":["FOO","BAZ"]`, `"action":"variable bulk-import"`} {
-		if !strings.Contains(out, want) {
-			t.Errorf("missing %q in dry-run, got:\n%s", want, out)
+	if strings.Join(vals, ",") != "DEPLOY_ENV=from bulk,BULK_ONE=alpha-secret-1" {
+		t.Fatalf("GitLab's variables: %v", vals)
+	}
+	ciAssertNoSecret(t, e, "alpha-secret-1", dry.out, r.out, r.errOut)
+}
+
+// ciTargetKeys is a batch preview's target keys, space-separated.
+func ciTargetKeys(preview map[string]any) string {
+	list, _ := preview["targets"].([]any)
+	var keys []string
+	for _, t := range list {
+		if m, ok := t.(map[string]any); ok {
+			keys = append(keys, m["key"].(string))
 		}
 	}
+	return strings.Join(keys, " ")
 }
 
-func TestVariableBulkImport_DryRun_JSON(t *testing.T) {
-	resetRootPersistentFlags(t)
-	resetCompactForTest(t)
-	resetSliceFlagsForTest(t, []string{"variable", "bulk-import"})
-	file := writeTempFile(t, "vars.json", `{"A":"1","B":"2"}`)
-	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
-	t.Setenv("GITLAB_CLI_TOKEN", "x")
+// ---------------------------------------------------------------- focused tests
 
-	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"variable", "bulk-import", "--project", "g/r", "--file", file, "--dangerous", "--dry-run", "--json", "--compact"})
-		_ = rootCmd.Execute()
-	})
-	if !strings.Contains(out, `"targets":["A","B"]`) {
-		t.Errorf("expected JSON key order A,B, got:\n%s", out)
+func TestParseVariableImport(t *testing.T) {
+	vars, err := parseVariableImport("ci.env", []byte("# c\r\n\r\nexport A=1\r\nB = 'two words' \nC=\"x=y\"\nD=\n"))
+	if err != nil {
+		t.Fatal(err)
 	}
-}
-
-func TestVariableBulkImport_Confirm_CreateAndUpdate(t *testing.T) {
-	resetRootPersistentFlags(t)
-	resetCompactForTest(t)
-	srv := variableImportServer(t, map[string]bool{"EXISTING": true})
-	defer srv.Close()
-	file := writeTempFile(t, "vars.env", "NEWKEY=a\nEXISTING=b\n")
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "x")
-	dryRun = false
-
-	out := captureStdout(t, func() {
-		rootCmd.SetArgs(withConfirmForTest(t, []string{"variable", "bulk-import", "--project", "g/r", "--file", file, "--dangerous", "--json", "--compact"}))
-		_ = rootCmd.Execute()
-	})
-	for _, want := range []string{`"succeeded":2`, `"failed":0`, `"action":"created"`, `"action":"updated"`} {
-		if !strings.Contains(out, want) {
-			t.Errorf("missing %q in import output, got:\n%s", want, out)
+	var got []string
+	for _, v := range vars {
+		got = append(got, v.key+"="+v.value)
+	}
+	if strings.Join(got, "|") != "A=1|B=two words|C=x=y|D=" {
+		t.Fatalf("dotenv: %q", got)
+	}
+	vars, err = parseVariableImport("vars.json", []byte(`{"Z": "last", "A": "first"}`))
+	if err != nil || len(vars) != 2 || vars[0].key != "Z" || vars[1].value != "first" {
+		t.Fatalf("JSON keeps the file's order: %+v %v", vars, err)
+	}
+	for _, c := range []struct{ path, content string }{
+		{"a.env", "GOOD=1\nnot a pair\n"},
+		{"a.env", "BAD-KEY=secret-value\n"},
+		{"a.env", "A=secret-1\nA=secret-2\n"},
+		{"a.json", `{"A": 1}`},
+		{"a.json", `["A"]`},
+		{"a.json", `{"A": "x"`},
+		{"a.env", "# only comments\n"},
+	} {
+		_, err := parseVariableImport(c.path, []byte(c.content))
+		if err == nil {
+			t.Errorf("%q should fail", c.content)
+			continue
+		}
+		for _, leak := range []string{"secret-value", "secret-1", "secret-2", "BAD-KEY"} {
+			if strings.Contains(err.Error(), leak) {
+				t.Errorf("the error quotes the file: %v", err)
+			}
 		}
 	}
 }
 
-func TestVariableBulkImport_PartialFailure(t *testing.T) {
-	resetRootPersistentFlags(t)
-	resetCompactForTest(t)
-	// Server returns 403 on POST for forbidden keys (not an "exists" conflict),
-	// so the importer surfaces a per-item failure.
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		body := readAllForTest(r)
-		if strings.Contains(body, `"DENIED"`) {
-			w.WriteHeader(http.StatusForbidden)
-			_, _ = w.Write([]byte(`{"message":"403 Forbidden"}`))
-			return
-		}
-		_, _ = w.Write([]byte(`{"key":"OK","value":"v","environment_scope":"*"}`))
-	}))
-	defer srv.Close()
-	file := writeTempFile(t, "vars.env", "OKKEY=a\nDENIED=b\n")
-	t.Setenv("GITLAB_CLI_HOST", srv.URL)
-	t.Setenv("GITLAB_CLI_TOKEN", "x")
-	dryRun = false
-
-	out := captureStdout(t, func() {
-		rootCmd.SetArgs(withConfirmForTest(t, []string{"variable", "bulk-import", "--project", "g/r", "--file", file, "--dangerous", "--json", "--compact"}))
-		_ = rootCmd.Execute()
+// TestVariableBulkImportRefusesDrift: a key created between the dry-run and the
+// confirm turns a planned create into an update; the confirm refuses (CLI-057).
+func TestVariableBulkImportRefusesDrift(t *testing.T) {
+	e := newTestEnv(t)
+	e.stdin = "BULK_TWO=beta-secret-2\n"
+	args := []string{"variable", "bulk-import", "--project", "acme/web", "--file", "-", "--dangerous"}
+	tok := e.dryRun(args...)
+	e.gl.locked(func() {
+		ci := fakeCIState(e.gl)
+		ci.variables["acme/web"] = append(ci.variables["acme/web"], &fakeVariable{Key: "BULK_TWO", Value: "other", Type: "env_var", Scope: "*"})
 	})
-	for _, want := range []string{`"ok":true`, `"succeeded":1`, `"failed":1`, `"E_FORBIDDEN"`, `"target":"DENIED"`} {
-		if !strings.Contains(out, want) {
-			t.Errorf("missing %q in partial-failure output, got:\n%s", want, out)
-		}
+	r := e.confirm(tok, args...)
+	if r.code() != "E_CONFLICT" || r.details()["conflict"] != "state_drift" || e.gl.Writes() != 0 {
+		t.Fatalf("drift: %s", r.out)
 	}
 }
 
-// bulk-import writes/overwrites secret CI variables, so it is write-dangerous:
-// even with a valid file and --dry-run it must be rejected without --dangerous,
-// mirroring TestMRBulkMerge_MissingDangerous_Rejected.
-func TestVariableBulkImport_MissingDangerous_Rejected(t *testing.T) {
-	resetRootPersistentFlags(t)
-	resetCompactForTest(t)
-	resetSliceFlagsForTest(t, []string{"variable", "bulk-import"})
-	file := writeTempFile(t, "vars.env", "FOO=bar\nBAZ=qux\n")
-	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
-	t.Setenv("GITLAB_CLI_TOKEN", "x")
-
-	out := captureStdout(t, func() {
-		// Dangerous batch without --dangerous is rejected even with --dry-run.
-		rootCmd.SetArgs([]string{"variable", "bulk-import", "--project", "g/r", "--file", file, "--dry-run", "--json", "--compact"})
-		_ = rootCmd.Execute()
-	})
-	if !strings.Contains(out, "E_CONFIRMATION_REQUIRED") || !strings.Contains(out, "--dangerous") {
-		t.Errorf("expected dangerous-gate rejection, got:\n%s", out)
+// TestVariableBulkImportScopeAndJSON: every variable goes to --env-scope; a JSON file
+// works like a .env one.
+func TestVariableBulkImportScopeAndJSON(t *testing.T) {
+	e := newTestEnv(t)
+	file := filepath.Join(t.TempDir(), "vars.json")
+	if err := os.WriteFile(file, []byte(`{"DATABASE_URL": "postgres://review", "NEW_ONE": "n-1"}`), 0o600); err != nil {
+		t.Fatal(err)
 	}
-}
-
-func TestVariableBulkImport_MissingFile(t *testing.T) {
-	resetRootPersistentFlags(t)
-	resetCompactForTest(t)
-	resetSliceFlagsForTest(t, []string{"variable", "bulk-import"})
-	t.Setenv("GITLAB_CLI_HOST", "https://gitlab.example.com")
-	t.Setenv("GITLAB_CLI_TOKEN", "x")
-
-	out := captureStdout(t, func() {
-		rootCmd.SetArgs([]string{"variable", "bulk-import", "--project", "g/r", "--file", "/nonexistent/path.env", "--dry-run", "--json", "--compact"})
-		_ = rootCmd.Execute()
-	})
-	if !strings.Contains(out, "E_VALIDATION") {
-		t.Errorf("expected E_VALIDATION for missing file, got:\n%s", out)
+	args := []string{"variable", "bulk-import", "--project", "acme/web", "--file", file, "--env-scope", "production", "--dangerous"}
+	dry := e.run(append(args, "--dry-run")...)
+	if ciTargetKeys(dry.preview()) != "acme/web/-/variables/DATABASE_URL:production acme/web/-/variables/NEW_ONE:production" {
+		t.Fatalf("targets: %s", dry.out)
+	}
+	r := e.confirm(dry.token(), args...)
+	if r.exit != 0 {
+		t.Fatalf("import: %s", r.out)
+	}
+	var prod string
+	e.gl.locked(func() { prod = fakeCIState(e.gl).variables["acme/web"][1].Value })
+	if prod != "postgres://review" {
+		t.Fatalf("the production DATABASE_URL was updated: %q", prod)
 	}
 }
